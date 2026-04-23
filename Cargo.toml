@@ -1,6 +1,6 @@
 [package]
 name = "H7CAD"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 build = "build.rs"
 
@@ -12,7 +12,7 @@ truck-modeling = "0.6"
 truck-meshalgo = { version = "0.4", default-features = false, features = ["tessellation"] }
 truck-polymesh = "0.6"
 rfd = "0.15"
-acadrust = "0.3.3"
+acadrust = "0.3.4"
 open = "5"
 printpdf = "0.9.1"
 flate2 = "1"
