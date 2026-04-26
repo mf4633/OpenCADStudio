@@ -85,6 +85,7 @@ impl CadCommand for RayCommand {
             tangent_geoms: vec![],
             aci: 0,
             key_vertices: vec![],
+            aabb: WireModel::UNBOUNDED_AABB,
         })
     }
 }
@@ -162,6 +163,7 @@ impl CadCommand for XLineCommand {
             tangent_geoms: vec![],
             aci: 0,
             key_vertices: vec![],
+            aabb: WireModel::UNBOUNDED_AABB,
         })
     }
 }

@@ -96,6 +96,7 @@ pub fn tessellate(
                     tangent_geoms: te.tangent_geoms,
                     aci: 0,
             key_vertices: te.key_vertices,
+            aabb: WireModel::UNBOUNDED_AABB,
                 };
             }
 
@@ -122,6 +123,7 @@ pub fn tessellate(
                             tangent_geoms: te.tangent_geoms,
                             aci: 0,
             key_vertices: te.key_vertices,
+            aabb: WireModel::UNBOUNDED_AABB,
                         };
                     }
                     _ => {}
@@ -142,6 +144,7 @@ pub fn tessellate(
                         tangent_geoms: te.tangent_geoms,
                         aci: 0,
             key_vertices: te.key_vertices,
+            aabb: WireModel::UNBOUNDED_AABB,
                     };
                 }
             }
@@ -160,6 +163,7 @@ pub fn tessellate(
                         tangent_geoms: te.tangent_geoms,
                         aci: 0,
             key_vertices: te.key_vertices,
+            aabb: WireModel::UNBOUNDED_AABB,
                     };
                 }
             }
@@ -177,6 +181,7 @@ pub fn tessellate(
                     tangent_geoms: te.tangent_geoms,
                     aci: 0,
             key_vertices: te.key_vertices,
+            aabb: WireModel::UNBOUNDED_AABB,
                 };
             }
 
@@ -205,6 +210,7 @@ pub fn tessellate(
         snap_pts,
         tangent_geoms,
         key_vertices,
+        aabb: WireModel::UNBOUNDED_AABB,
     }
 }
 
@@ -241,6 +247,7 @@ pub fn tessellate_dimension(
         snap_pts: vec![],
         tangent_geoms: vec![],
         key_vertices,
+        aabb: WireModel::UNBOUNDED_AABB,
     }];
 
     if let Some(text) = dimension_text_entity(dim) {
@@ -287,6 +294,7 @@ fn tessellate_leader(
             tangent_geoms: vec![],
             aci: 0,
             key_vertices: vec![],
+            aabb: WireModel::UNBOUNDED_AABB,
         }];
     }
 
@@ -354,6 +362,7 @@ fn tessellate_leader(
         snap_pts: vec![],
         tangent_geoms: vec![],
         key_vertices,
+        aabb: WireModel::UNBOUNDED_AABB,
     }]
 }
 
@@ -460,6 +469,7 @@ fn tessellate_multileader(
         tangent_geoms: vec![],
         aci: 0,
             key_vertices: key_verts,
+            aabb: WireModel::UNBOUNDED_AABB,
     }];
 
     // Render text content as MText wire

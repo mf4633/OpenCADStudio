@@ -291,29 +291,16 @@ impl Snapper {
             if s > 1e-6 { self.snap_radius_px / s } else { f32::MAX }
         };
 
-        // Returns false when the wire's chord sphere is definitely outside the
-        // snap circle — safe to skip all vertex work for this wire.
-        // Uses first/last point of key_vertices (if any) or tessellated points.
-        // Closed wires (first ≈ last) are always passed through because the
-        // chord radius would be ~0 and their arc can still pass near the cursor.
+        // Returns false when the wire's AABB does not overlap the snap circle —
+        // safe to skip all vertex work for this wire.
+        // UNBOUNDED_AABB (±infinity) passes through automatically without a
+        // special-case branch because the arithmetic is exact for infinities.
         let wire_in_range = |wire: &WireModel| -> bool {
-            let pts: &[[f32; 3]] = if !wire.key_vertices.is_empty() {
-                &wire.key_vertices
-            } else {
-                &wire.points
-            };
-            let (Some(&f), Some(&l)) = (pts.first(), pts.last()) else {
-                return false;
-            };
-            let dx = l[0] - f[0];
-            let dy = l[1] - f[1];
-            let half_chord = (dx * dx + dy * dy).sqrt() * 0.5;
-            if half_chord < 1e-4 {
-                return true; // closed or degenerate — can't prune
-            }
-            let cx = (f[0] + l[0]) * 0.5 - cursor_world.x;
-            let cy = (f[1] + l[1]) * 0.5 - cursor_world.y;
-            cx * cx + cy * cy <= (world_snap_r + half_chord) * (world_snap_r + half_chord)
+            let r = world_snap_r;
+            cursor_world.x + r >= wire.aabb[0]
+                && cursor_world.x - r <= wire.aabb[2]
+                && cursor_world.y + r >= wire.aabb[1]
+                && cursor_world.y - r <= wire.aabb[3]
         };
 
         let mut try_pt = |world: Vec3, snap_type: SnapType| {

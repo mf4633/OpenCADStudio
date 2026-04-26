@@ -87,6 +87,7 @@ impl CadCommand for LineCommand {
             tangent_geoms: vec![],
             aci: 0,
             key_vertices: vec![],
+            aabb: WireModel::UNBOUNDED_AABB,
         })
     }
 }

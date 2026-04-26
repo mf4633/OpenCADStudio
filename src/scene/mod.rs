@@ -2552,9 +2552,11 @@ fn tessellate_entity(
         } else {
             (0.0_f32, [0.0f32; 8])
         };
-        return vec![tessellate::tessellate(
+        let mut wire = tessellate::tessellate(
             document, h, e, sel, color, pattern_length, pattern, 1.5,
-        )];
+        );
+        wire.aabb = entity_aabb(e);
+        return vec![wire];
     }
 
     let (entity_color, pattern_length, pattern, line_weight_px, aci) =
@@ -2563,11 +2565,13 @@ fn tessellate_entity(
     let lt_name = render::linetype_name_for(document, e);
 
     if let EntityType::Dimension(dim) = e {
+        let aabb = entity_aabb(e);
         let mut wires = tessellate::tessellate_dimension(
             document, h, dim, sel, entity_color, line_weight_px,
         );
         for w in &mut wires {
             w.aci = aci;
+            w.aabb = aabb;
         }
         return wires;
     }
@@ -2583,6 +2587,7 @@ fn tessellate_entity(
             .flat_map(|sub| {
                 let (sub_color, sub_pattern_length, sub_pattern, sub_line_weight_px, sub_aci) =
                     render::render_style_for(document, &sub);
+                let sub_aabb = entity_aabb(&sub);
                 let mut wire = tessellate::tessellate(
                     document,
                     h,
@@ -2595,18 +2600,21 @@ fn tessellate_entity(
                 );
                 wire.name = h.value().to_string();
                 wire.aci = sub_aci;
+                wire.aabb = sub_aabb;
                 vec![wire]
             })
             .collect();
     }
 
+    let aabb = entity_aabb(e);
     let mut base = tessellate::tessellate(
         document, h, e, sel, entity_color, pattern_length, pattern, line_weight_px,
     );
     base.aci = aci;
+    base.aabb = aabb;
 
     if let Some(clt) = crate::linetypes::complex_lt(lt_name) {
-        let wires = complex_lt::apply_along(
+        let mut wires = complex_lt::apply_along(
             &base.name,
             &base.points,
             clt,
@@ -2616,10 +2624,25 @@ fn tessellate_entity(
             base.line_weight_px,
         );
         if !wires.is_empty() {
+            for w in &mut wires { w.aabb = aabb; }
             return wires;
         }
     }
 
     vec![base]
+}
+
+fn entity_aabb(e: &acadrust::EntityType) -> [f32; 4] {
+    let bbox = e.as_entity().bounding_box();
+    let min_x = bbox.min.x as f32;
+    let min_y = bbox.min.y as f32;
+    let max_x = bbox.max.x as f32;
+    let max_y = bbox.max.y as f32;
+    // A degenerate box (min == max == 0) means bounding_box() returned Default —
+    // use UNBOUNDED so the wire is never wrongly pre-rejected.
+    if min_x == 0.0 && min_y == 0.0 && max_x == 0.0 && max_y == 0.0 {
+        return WireModel::UNBOUNDED_AABB;
+    }
+    [min_x, min_y, max_x, max_y]
 }
 
