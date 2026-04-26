@@ -96,11 +96,17 @@ fn to_truck(ell: &Ellipse) -> TruckEntity {
         let v_start = builder::vertex(*ctrl_pts.first().unwrap());
         let v_end = builder::vertex(*ctrl_pts.last().unwrap());
         let edge = Edge::new(&v_start, &v_end, Curve::BSplineCurve(bspline));
+        let pt_start = ctrl_pts.first().unwrap();
+        let pt_end = ctrl_pts.last().unwrap();
+        let key_vertices = vec![
+            [pt_start.x as f32, pt_start.y as f32, pt_start.z as f32],
+            [pt_end.x as f32, pt_end.y as f32, pt_end.z as f32],
+        ];
         TruckEntity {
             object: TruckObject::Curve(edge),
             snap_pts: vec![(center_v3, SnapHint::Center)],
             tangent_geoms: vec![],
-            key_vertices: vec![],
+            key_vertices,
         }
     }
 }
