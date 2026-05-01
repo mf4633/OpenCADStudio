@@ -312,27 +312,44 @@ impl Scene {
     }
 
     /// Returns `(min, max)` paper-space limits for the current layout, or `None`
-    /// when in Model space.  Falls back to `(0,0)-(12,9)` if the layout has
-    /// zero-size limits (common in freshly-created layouts).
+    /// when in Model space.  Falls back to A4 landscape if nothing reliable is found.
     pub fn paper_limits(&self) -> Option<((f64, f64), (f64, f64))> {
         if self.current_layout == "Model" {
             return None;
         }
+
         self.document.objects.values().find_map(|obj| {
             if let ObjectType::Layout(l) = obj {
-                if l.name == self.current_layout {
-                    let (min, max) = (l.min_limits, l.max_limits);
-                    let w = (max.0 - min.0).abs();
-                    let h = (max.1 - min.1).abs();
-                    if w < 1e-6 || h < 1e-6 {
-                        return Some(((0.0, 0.0), (297.0, 210.0)));
-                    }
-                    return Some((min, max));
+                if l.name != self.current_layout {
+                    return None;
                 }
+
+                // Use the physical paper dimensions from PlotSettings if available
+                // (populated from DWG embedded plot settings or DXF codes 44/45/73).
+                // Rotation 1=90° or 3=270° → swap width and height.
+                if l.paper_width > 1e-6 && l.paper_height > 1e-6 {
+                    let (pw, ph) = if l.plot_rotation == 1 || l.plot_rotation == 3 {
+                        (l.paper_height, l.paper_width)
+                    } else {
+                        (l.paper_width, l.paper_height)
+                    };
+                    let ox = l.min_limits.0.min(0.0);
+                    let oy = l.min_limits.1.min(0.0);
+                    return Some(((ox, oy), (ox + pw, oy + ph)));
+                }
+
+                // Fall back to the Layout's drawing limits.
+                let (min, max) = (l.min_limits, l.max_limits);
+                let w = (max.0 - min.0).abs();
+                let h = (max.1 - min.1).abs();
+                if w < 1e-6 || h < 1e-6 {
+                    return Some(((0.0, 0.0), (297.0, 210.0)));
+                }
+                Some((min, max))
+            } else {
+                None
             }
-            None
         })
-        // No Layout object found for the current layout — default to A4 landscape.
         .or(Some(((0.0, 0.0), (297.0, 210.0))))
     }
 
