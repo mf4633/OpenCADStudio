@@ -1085,8 +1085,11 @@ impl H7CAD {
                                 self.tabs[i].scene.orbit_active_viewport(dx, dy);
                                 return Task::none();
                             } else {
-                                self.tabs[i].scene.camera.borrow_mut().orbit(dx, dy);
                                 sel.right_last_pos = Some(p);
+                                drop(sel);
+                                self.tabs[i].scene.camera.borrow_mut().orbit(dx, dy);
+                                self.tabs[i].scene.camera_generation += 1;
+                                return Task::none();
                             }
                         } else {
                             sel.right_last_pos = Some(p);
@@ -1106,6 +1109,7 @@ impl H7CAD {
                             self.tabs[i].scene.pan_active_viewport(dx, dy, bounds);
                         } else {
                             self.tabs[i].scene.camera.borrow_mut().pan(dx, dy);
+                            self.tabs[i].scene.camera_generation += 1;
                         }
                         self.tabs[i].scene.selection.borrow_mut().middle_last_pos = Some(p);
                         return Task::none();
@@ -1826,6 +1830,8 @@ impl H7CAD {
                     } else {
                         cam.zoom(s);
                     }
+                    drop(cam);
+                    self.tabs[i].scene.camera_generation += 1;
                 }
                 Task::none()
             }
