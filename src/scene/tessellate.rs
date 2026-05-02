@@ -281,6 +281,8 @@ pub fn tessellate_dimension(
         .filter(|p| !(p[0].is_nan() || p[1].is_nan() || p[2].is_nan()))
         .collect();
 
+    let snap_pts = dimension_snap_pts(dim, world_offset);
+
     let mut wires = vec![WireModel {
         name: name.clone(),
         points,
@@ -290,7 +292,7 @@ pub fn tessellate_dimension(
         pattern_length: 0.0,
         pattern: [0.0; 8],
         line_weight_px,
-        snap_pts: vec![],
+        snap_pts,
         tangent_geoms: vec![],
         key_vertices,
         aabb: WireModel::UNBOUNDED_AABB,
@@ -954,6 +956,26 @@ fn add_polyline(points: &mut Vec<[f32; 3]>, polyline: &[Vec3]) {
         points.push([f32::NAN, f32::NAN, f32::NAN]);
     }
     points.extend(polyline.iter().map(|p| [p.x, p.y, p.z]));
+}
+
+fn dimension_snap_pts(dim: &Dimension, world_offset: [f64; 3]) -> Vec<(Vec3, SnapHint)> {
+    let lv = |v: acadrust::types::Vector3| {
+        Vec3::new(
+            (v.x - world_offset[0]) as f32,
+            (v.y - world_offset[1]) as f32,
+            (v.z - world_offset[2]) as f32,
+        )
+    };
+    let node = |v: acadrust::types::Vector3| (lv(v), SnapHint::Node);
+    match dim {
+        Dimension::Linear(d) => vec![node(d.first_point), node(d.second_point), node(d.definition_point)],
+        Dimension::Aligned(d) => vec![node(d.first_point), node(d.second_point), node(d.definition_point)],
+        Dimension::Radius(d) => vec![node(d.angle_vertex), node(d.definition_point)],
+        Dimension::Diameter(d) => vec![node(d.angle_vertex), node(d.definition_point)],
+        Dimension::Angular2Ln(d) => vec![node(d.angle_vertex), node(d.first_point), node(d.second_point), node(d.definition_point)],
+        Dimension::Angular3Pt(d) => vec![node(d.angle_vertex), node(d.first_point), node(d.second_point), node(d.definition_point)],
+        Dimension::Ordinate(d) => vec![node(d.definition_point), node(d.feature_location), node(d.leader_endpoint)],
+    }
 }
 
 fn dimension_text_entity(dim: &Dimension) -> Option<Text> {
