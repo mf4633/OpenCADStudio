@@ -138,8 +138,8 @@ fn properties(arc: &Arc) -> PropSection {
             edit("Center Y", "center_y", arc.center.y),
             edit("Center Z", "center_z", arc.center.z),
             edit("Radius", "radius", arc.radius),
-            edit("Start Angle", "start_angle", arc.start_angle),
-            edit("End Angle", "end_angle", arc.end_angle),
+            edit("Start Angle (deg)", "start_angle", arc.start_angle.to_degrees()),
+            edit("End Angle (deg)", "end_angle", arc.end_angle.to_degrees()),
         ],
     }
 }
@@ -153,8 +153,8 @@ fn apply_geom_prop(arc: &mut Arc, field: &str, value: &str) {
         "center_y" => arc.center.y = v,
         "center_z" => arc.center.z = v,
         "radius" if v > 0.0 => arc.radius = v,
-        "start_angle" => arc.start_angle = v,
-        "end_angle" => arc.end_angle = v,
+        "start_angle" => arc.start_angle = v.to_radians(),
+        "end_angle" => arc.end_angle = v.to_radians(),
         _ => {}
     }
 }

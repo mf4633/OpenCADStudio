@@ -96,8 +96,8 @@ fn make_arc(center: Vec3, radius: f32, start_angle: f32, end_angle: f32) -> Enti
     EntityType::Arc(CadArc {
         center: Vector3::new(center.x as f64, center.y as f64, center.z as f64),
         radius: radius as f64,
-        start_angle: start_angle.to_degrees() as f64,
-        end_angle: end_angle.to_degrees() as f64,
+        start_angle: start_angle as f64,
+        end_angle: end_angle as f64,
         ..Default::default()
     })
 }
@@ -156,8 +156,8 @@ fn arc_from_sagitta(s: Vec3, e: Vec3, cursor: Vec3) -> Option<(Vec3, f32)> {
     if chord_len < 1e-6 {
         return None;
     }
-    let unit_chord = Vec3::new(chord_vec.x / chord_len, 0.0, chord_vec.y / chord_len);
-    let perp = Vec3::new(-unit_chord.y, 0.0, unit_chord.x);
+    let unit_chord = Vec3::new(chord_vec.x / chord_len, chord_vec.y / chord_len, 0.0);
+    let perp = Vec3::new(-unit_chord.y, unit_chord.x, 0.0);
     let mid = (s + e) * 0.5;
     let h = (cursor - mid).dot(perp); // signed sagitta
     if h.abs() < 1e-3 {
