@@ -145,6 +145,7 @@ impl CadCommand for TableCommand {
                 aci: 0,
             key_vertices: vec![],
             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
             })
         } else {
             None

@@ -23,6 +23,8 @@ pub enum TruckObject {
     Text(Vec<TextStroke>),
     /// Pre-computed NaN-separated 3-D point list (leader lines, arrowheads, etc.).
     Lines(Vec<[f32; 3]>),
+    /// Like Lines but linetype pattern restarts at each NaN-separated segment (plinegen=false).
+    SegmentedLines(Vec<[f32; 3]>),
     Volume(Solid),
 }
 

@@ -32,7 +32,7 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not done
 | Status | Entity | Ignored Field(s) | Effect |
 |---|---|---|---|
 | ✅ | **Arc / Circle / Line / LwPolyline / Polyline2D** | `thickness` | Extrudes along WCS normal — `src/entities/{arc,circle,line,lwpolyline,polyline}.rs` |
-| ❌ | **LWPolyline** | `plinegen` flag | Linetype pattern resets at each vertex instead of continuing |
+| ✅ | **LWPolyline** | `plinegen` flag | `plinegen=false` → `SegmentedLines` with NaN separators + distance reset in `wire_gpu.rs`; `plinegen=true` → `Contour` (continuous) |
 
 ---
 
@@ -49,7 +49,7 @@ Legend: ✅ Done · ⚠️ Partial · ❌ Not done
 
 | Status | Entity | Missing |
 |---|---|---|
-| ⚠️ | **Solid3D / Region / Body** | `src/scene/solid3d_tess.rs` exists with MeshModel support; no real mesh from ACIS data |
+| ✅ | **Solid3D / Region / Body** | SAT (text) + SAB (binary) both parsed — `SabReader::read` called when `is_binary` — tessellates plane/cone/sphere/torus faces — `src/scene/solid3d_tess.rs` |
 
 ### Partial Render
 
@@ -207,13 +207,13 @@ These are fixed in our post-load `fix_dxf_dimension_rotations()` in `src/io/mod.
 
 | Status | Count |
 |---|---|
-| ✅ Done | 48 |
-| ⚠️ Partial | 2 |
+| ✅ Done | 50 |
+| ⚠️ Partial | 1 |
 | ❌ Not done | 0 |
-| **Total** | **50** |
+| **Total** | **51** |
 
 ### Remaining gaps by priority
 
 **Medium:** Viewport GPU scissor rect (pixel-level boundary clipping for overlapping viewports)
 
-**Low:** LWPolyline plinegen — GPU shader change needed; current behavior is continuous arc-length across vertices (equivalent to plinegen=true). Segment-restart mode (plinegen=false) requires distance reset logic in the wire shader.
+No remaining low-priority gaps.

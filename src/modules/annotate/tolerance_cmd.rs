@@ -98,6 +98,7 @@ impl CadCommand for ToleranceCommand {
             aci: 0,
             key_vertices: vec![],
             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
         })
     }
 }

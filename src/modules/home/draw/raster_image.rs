@@ -112,6 +112,7 @@ impl CadCommand for ImageCommand {
             aci: 0,
             key_vertices: vec![],
             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
         })
     }
 }

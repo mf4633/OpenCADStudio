@@ -60,6 +60,9 @@ pub struct WireModel {
     /// Preview / interim wires use `UNBOUNDED_AABB` so they are never pre-rejected
     /// by the snap world-space filter.
     pub aabb: [f32; 4],
+    /// When false the linetype pattern restarts at each NaN-separated segment
+    /// (DXF PLINEGEN=0).  When true the pattern runs continuously (PLINEGEN=1).
+    pub plinegen: bool,
 }
 
 impl WireModel {
@@ -85,6 +88,7 @@ impl WireModel {
             tangent_geoms: vec![],
             key_vertices: vec![],
             aabb: Self::UNBOUNDED_AABB,
+            plinegen: true,
         }
     }
 
@@ -184,6 +188,7 @@ impl Default for WireModel {
             tangent_geoms: Vec::new(),
             key_vertices: Vec::new(),
             aabb: Self::UNBOUNDED_AABB,
+            plinegen: true,
         }
     }
 }

@@ -113,6 +113,7 @@ impl CadCommand for MlineCommand {
             aci: 0,
             key_vertices: vec![],
             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
         })
     }
 }

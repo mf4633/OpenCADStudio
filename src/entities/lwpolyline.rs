@@ -184,6 +184,62 @@ fn to_truck(pline: &LwPolyline) -> TruckEntity {
         return thick_segments(&seg_data, &path, pline.thickness, normal, kv, tgs);
     }
 
+    // plinegen=false: NaN-separated segments so the linetype pattern restarts per vertex.
+    if !pline.plinegen {
+        let mut pts: Vec<[f32; 3]> = Vec::new();
+        let mut tgs: Vec<TangentGeom> = Vec::new();
+        let mut kv: Vec<[f32; 3]> = Vec::new();
+        for i in 0..seg_count {
+            let va = &verts[i];
+            let vb = &verts[(i + 1) % count];
+            let (ox0, oy0) = (va.location.x, va.location.y);
+            let (ox1, oy1) = (vb.location.x, vb.location.y);
+            let bulge = va.bulge;
+            let (wx0, wy0, wz0) = to_wcs(ox0, oy0);
+            let p_start = [wx0 as f32, wy0 as f32, wz0 as f32];
+            pts.push(p_start);
+            if i == 0 { kv.push(p_start); }
+            if bulge.abs() < 1e-9 {
+                let (wx1, wy1, wz1) = to_wcs(ox1, oy1);
+                let p_end = [wx1 as f32, wy1 as f32, wz1 as f32];
+                pts.push(p_end);
+                kv.push(p_end);
+                tgs.push(TangentGeom::Line { p1: p_start, p2: p_end });
+            } else {
+                let angle = 4.0 * bulge.atan();
+                let dx = ox1 - ox0; let dy = oy1 - oy0;
+                let d = (dx * dx + dy * dy).sqrt().max(1e-12);
+                let r = (d / 2.0) / (angle / 2.0).sin().abs();
+                let mx = (ox0 + ox1) * 0.5; let my = (oy0 + oy1) * 0.5;
+                let px = -dy / d; let py = dx / d;
+                let ss = if bulge > 0.0 { 1.0_f64 } else { -1.0_f64 };
+                let h = r - (r * r - d * d / 4.0).max(0.0).sqrt();
+                let ocx = mx + ss * px * (r - h); let ocy = my + ss * py * (r - h);
+                let a0 = (oy0 - ocy).atan2(ox0 - ocx);
+                let mut a1 = (oy1 - ocy).atan2(ox1 - ocx);
+                if bulge > 0.0 { if a1 < a0 { a1 += TAU; } } else { if a1 > a0 { a1 -= TAU; } }
+                for j in 1..=16usize {
+                    let a = a0 + (a1 - a0) * (j as f64 / 16.0);
+                    let (wx, wy, wz) = to_wcs(ocx + r * a.cos(), ocy + r * a.sin());
+                    pts.push([wx as f32, wy as f32, wz as f32]);
+                }
+                let (wx1, wy1, wz1) = to_wcs(ox1, oy1);
+                kv.push([wx1 as f32, wy1 as f32, wz1 as f32]);
+                let (wcx, wcy, wcz) = to_wcs(ocx, ocy);
+                tgs.push(TangentGeom::Circle { center: [wcx as f32, wcy as f32, wcz as f32], radius: r as f32 });
+            }
+            if i + 1 < seg_count {
+                pts.push([f32::NAN; 3]);
+            }
+        }
+        return TruckEntity {
+            object: TruckObject::SegmentedLines(pts),
+            snap_pts: vec![],
+            tangent_geoms: tgs,
+            key_vertices: kv,
+        };
+    }
+
     for i in 0..seg_count {
         let v0 = &verts[i];
         let v1 = &verts[(i + 1) % count];

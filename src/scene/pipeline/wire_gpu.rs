@@ -148,7 +148,12 @@ impl WireGpu {
                 let p = wire.points[i - 1];
                 let q = wire.points[i];
                 if !p[0].is_finite() || !q[0].is_finite() {
-                    dists[i] = dists[i - 1];
+                    // plinegen=false: reset to 0 at the first real point after a NaN separator.
+                    dists[i] = if !wire.plinegen && !p[0].is_finite() && q[0].is_finite() {
+                        0.0
+                    } else {
+                        dists[i - 1]
+                    };
                 } else {
                     let dx = q[0] - p[0];
                     let dy = q[1] - p[1];
@@ -234,10 +239,13 @@ impl WireGpu {
         for i in 1..n {
             let p = wire.points[i - 1];
             let q = wire.points[i];
-            // If either point is non-finite (NaN sentinel or ±inf from overflow),
-            // keep the same distance — the segment will be skipped anyway.
             if !p[0].is_finite() || !q[0].is_finite() {
-                dists[i] = dists[i - 1];
+                // plinegen=false: reset to 0 at the first real point after a NaN separator.
+                dists[i] = if !wire.plinegen && !p[0].is_finite() && q[0].is_finite() {
+                    0.0
+                } else {
+                    dists[i - 1]
+                };
             } else {
                 let dx = q[0] - p[0];
                 let dy = q[1] - p[1];

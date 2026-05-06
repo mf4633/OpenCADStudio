@@ -125,6 +125,7 @@ fn preview_wire(points: Vec<Vec3>) -> WireModel {
         aci: 0,
             key_vertices: vec![],
             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
     }
 }
 

@@ -3211,6 +3211,7 @@ fn tessellate_entity(
             tangent_geoms: vec![],
             key_vertices: vec![],
             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
         });
         return wires;
     }

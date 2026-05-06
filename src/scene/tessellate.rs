@@ -104,6 +104,7 @@ pub fn tessellate(
                     aci: 0,
             key_vertices: te.key_vertices,
             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
                 };
             }
 
@@ -132,6 +133,7 @@ pub fn tessellate(
                             aci: 0,
                             key_vertices: te.key_vertices,
                             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
                         };
                     }
                     _ => {}
@@ -158,6 +160,7 @@ pub fn tessellate(
                         aci: 0,
                         key_vertices,
                         aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
                     };
                 }
             }
@@ -182,6 +185,7 @@ pub fn tessellate(
                         aci: 0,
                         key_vertices,
                         aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
                     };
                 }
             }
@@ -212,6 +216,34 @@ pub fn tessellate(
                     aci: 0,
                     key_vertices,
                     aabb: WireModel::UNBOUNDED_AABB,
+                    plinegen: true,
+                };
+            }
+
+            TruckObject::SegmentedLines(points) => {
+                let [ox, oy, oz] = world_offset;
+                let local_pts: Vec<[f32; 3]> = points.into_iter().map(|[x, y, z]| {
+                    if x.is_nan() { [x, y, z] }
+                    else { [x - ox as f32, y - oy as f32, z - oz as f32] }
+                }).collect();
+                let snap_pts = offset_snap_pts(te.snap_pts, world_offset);
+                let key_vertices: Vec<[f32; 3]> = te.key_vertices.into_iter()
+                    .map(|[x, y, z]| [x - ox as f32, y - oy as f32, z - oz as f32])
+                    .collect();
+                return WireModel {
+                    name,
+                    points: local_pts,
+                    color,
+                    selected,
+                    pattern_length,
+                    pattern,
+                    line_weight_px,
+                    snap_pts,
+                    tangent_geoms: te.tangent_geoms,
+                    aci: 0,
+                    key_vertices,
+                    plinegen: false,
+                    aabb: WireModel::UNBOUNDED_AABB,
                 };
             }
 
@@ -241,6 +273,7 @@ pub fn tessellate(
         tangent_geoms,
         key_vertices,
         aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
     }
 }
 
@@ -296,6 +329,7 @@ pub fn tessellate_dimension(
         tangent_geoms: vec![],
         key_vertices,
         aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
     }];
 
     if let Some(text) = dimension_text_entity(dim) {
@@ -344,6 +378,7 @@ fn tessellate_leader(
             aci: 0,
             key_vertices: vec![],
             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
         }];
     }
 
@@ -412,6 +447,7 @@ fn tessellate_leader(
         tangent_geoms: vec![],
         key_vertices,
         aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
     }]
 }
 
@@ -521,6 +557,7 @@ fn tessellate_multileader(
         aci: 0,
             key_vertices: key_verts,
             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
     }];
 
     // Render text content as MText wire

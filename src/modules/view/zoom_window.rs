@@ -69,6 +69,7 @@ impl CadCommand for ZoomWindowCommand {
             aci: 0,
             key_vertices: vec![],
             aabb: WireModel::UNBOUNDED_AABB,
+            plinegen: true,
         })
     }
 }

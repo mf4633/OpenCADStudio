@@ -1366,6 +1366,7 @@ impl H7CAD {
                                     tangent_geoms: vec![],
                                     key_vertices: vec![],
                                     aabb: crate::scene::WireModel::UNBOUNDED_AABB,
+                                    plinegen: true,
                                 };
                                 previews.push(guide);
                             }
