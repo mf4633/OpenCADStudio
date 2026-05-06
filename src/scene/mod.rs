@@ -2304,9 +2304,42 @@ impl Scene {
     // ── Grip editing ──────────────────────────────────────────────────────
 
     pub fn apply_grip(&mut self, handle: Handle, grip_id: usize, apply: GripApply) {
+        // For Solid3D / Region / Body, record the old point_of_reference so we
+        // can translate the pre-tessellated MeshModel by the same delta after
+        // the grip is applied (the ACIS data itself is not modified).
+        let old_por: Option<[f64; 3]> = match self.document.get_entity(handle) {
+            Some(EntityType::Solid3D(s)) => Some([s.point_of_reference.x, s.point_of_reference.y, s.point_of_reference.z]),
+            Some(EntityType::Region(r)) => Some([r.point_of_reference.x, r.point_of_reference.y, r.point_of_reference.z]),
+            Some(EntityType::Body(b)) => Some([b.point_of_reference.x, b.point_of_reference.y, b.point_of_reference.z]),
+            _ => None,
+        };
+
         if let Some(entity) = self.document.get_entity_mut(handle) {
             dispatch::apply_grip(entity, grip_id, apply);
         }
+
+        // Translate MeshModel vertices by the same delta the grip applied.
+        if let Some(old) = old_por {
+            let new_por: Option<[f64; 3]> = match self.document.get_entity(handle) {
+                Some(EntityType::Solid3D(s)) => Some([s.point_of_reference.x, s.point_of_reference.y, s.point_of_reference.z]),
+                Some(EntityType::Region(r)) => Some([r.point_of_reference.x, r.point_of_reference.y, r.point_of_reference.z]),
+                Some(EntityType::Body(b)) => Some([b.point_of_reference.x, b.point_of_reference.y, b.point_of_reference.z]),
+                _ => None,
+            };
+            if let Some(new) = new_por {
+                let dx = (new[0] - old[0]) as f32;
+                let dy = (new[1] - old[1]) as f32;
+                let dz = (new[2] - old[2]) as f32;
+                if let Some(mesh) = self.meshes.get_mut(&handle) {
+                    for v in &mut mesh.verts {
+                        v[0] += dx;
+                        v[1] += dy;
+                        v[2] += dz;
+                    }
+                }
+            }
+        }
+
         // Rebuild GPU hatch/solid model when a boundary vertex or corner moves.
         let hatch_offset = if self.current_layout == "Model" { self.world_offset } else { [0.0; 3] };
         match self.document.get_entity(handle) {

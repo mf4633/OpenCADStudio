@@ -259,7 +259,24 @@ pub fn tessellate(
                 // stored in the entity when present (e.g. from SOLVIEW output
                 // or when the SAT kernel cannot parse the ACIS data).
                 let wire_pts = solid_wire_fallback(entity, world_offset);
-                return WireModel::solid(name, wire_pts, color, selected);
+                let mut wm = WireModel::solid(name, wire_pts, color, selected);
+                // Add insertion snap at point_of_reference.
+                let [ox, oy, oz] = world_offset;
+                let por = match entity {
+                    EntityType::Solid3D(s) => Some(&s.point_of_reference),
+                    EntityType::Region(r) => Some(&r.point_of_reference),
+                    EntityType::Body(b) => Some(&b.point_of_reference),
+                    _ => None,
+                };
+                if let Some(p) = por {
+                    let sp = Vec3::new(
+                        (p.x - ox) as f32,
+                        (p.y - oy) as f32,
+                        (p.z - oz) as f32,
+                    );
+                    wm.snap_pts.push((sp, SnapHint::Insertion));
+                }
+                return wm;
             }
         }
     }

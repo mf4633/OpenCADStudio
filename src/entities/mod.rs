@@ -21,6 +21,7 @@ pub mod underlay;
 pub mod ray;
 pub mod shape;
 pub mod solid;
+pub mod solid3d;
 pub mod spline;
 pub mod text;
 pub(crate) mod text_support;

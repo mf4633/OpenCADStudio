@@ -87,6 +87,9 @@ impl EntityTypeOps for EntityType {
             EntityType::MLine(ml) => Grippable::grips(ml),
             EntityType::Tolerance(tol) => Grippable::grips(tol),
             EntityType::Solid(solid) => Grippable::grips(solid),
+            EntityType::Solid3D(s) => Grippable::grips(s),
+            EntityType::Region(r) => Grippable::grips(r),
+            EntityType::Body(b) => Grippable::grips(b),
             EntityType::Face3D(f) => Grippable::grips(f),
             EntityType::PolygonMesh(pm) => Grippable::grips(pm),
             EntityType::PolyfaceMesh(pfm) => Grippable::grips(pfm),
@@ -175,6 +178,18 @@ impl EntityTypeOps for EntityType {
             )),
             EntityType::Solid(solid) => Some(PropertyEditable::geometry_properties(
                 solid,
+                text_style_names,
+            )),
+            EntityType::Solid3D(s) => Some(PropertyEditable::geometry_properties(
+                s,
+                text_style_names,
+            )),
+            EntityType::Region(r) => Some(PropertyEditable::geometry_properties(
+                r,
+                text_style_names,
+            )),
+            EntityType::Body(b) => Some(PropertyEditable::geometry_properties(
+                b,
                 text_style_names,
             )),
             EntityType::Face3D(f) => Some(PropertyEditable::geometry_properties(
@@ -267,6 +282,9 @@ impl EntityTypeOps for EntityType {
             EntityType::MLine(ml) => PropertyEditable::apply_geom_prop(ml, field, value),
             EntityType::Tolerance(tol) => PropertyEditable::apply_geom_prop(tol, field, value),
             EntityType::Solid(solid) => PropertyEditable::apply_geom_prop(solid, field, value),
+            EntityType::Solid3D(s) => PropertyEditable::apply_geom_prop(s, field, value),
+            EntityType::Region(r) => PropertyEditable::apply_geom_prop(r, field, value),
+            EntityType::Body(b) => PropertyEditable::apply_geom_prop(b, field, value),
             EntityType::Face3D(f) => PropertyEditable::apply_geom_prop(f, field, value),
             EntityType::PolygonMesh(pm) => PropertyEditable::apply_geom_prop(pm, field, value),
             EntityType::PolyfaceMesh(pfm) => PropertyEditable::apply_geom_prop(pfm, field, value),
@@ -307,6 +325,9 @@ impl EntityTypeOps for EntityType {
             EntityType::MLine(ml) => Grippable::apply_grip(ml, grip_id, apply),
             EntityType::Tolerance(tol) => Grippable::apply_grip(tol, grip_id, apply),
             EntityType::Solid(solid) => Grippable::apply_grip(solid, grip_id, apply),
+            EntityType::Solid3D(s) => Grippable::apply_grip(s, grip_id, apply),
+            EntityType::Region(r) => Grippable::apply_grip(r, grip_id, apply),
+            EntityType::Body(b) => Grippable::apply_grip(b, grip_id, apply),
             EntityType::Face3D(f) => Grippable::apply_grip(f, grip_id, apply),
             EntityType::PolygonMesh(pm) => Grippable::apply_grip(pm, grip_id, apply),
             EntityType::PolyfaceMesh(pfm) => Grippable::apply_grip(pfm, grip_id, apply),
