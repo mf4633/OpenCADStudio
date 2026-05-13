@@ -27,10 +27,6 @@ use crate::scene::wire_model::WireModel;
 use iced::wgpu;
 use iced::wgpu::util::DeviceExt;
 
-/// Hard cap on segments per wire entity. Entities with more segments are
-/// silently truncated to prevent a single complex object from exhausting GPU memory.
-pub const MAX_SEGS_PER_WIRE: usize = 100_000;
-
 // ── Vertex layout ─────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -160,14 +156,7 @@ impl WireGpu {
             ];
             let half_width = wire.line_weight_px * 0.5;
             let n = wire.points.len();
-            let raw_segs = n.saturating_sub(1);
-            let capped_segs = raw_segs.min(MAX_SEGS_PER_WIRE);
-            if raw_segs > MAX_SEGS_PER_WIRE {
-                eprintln!(
-                    "[H7CAD] wire '{}': {} segments exceeds limit ({MAX_SEGS_PER_WIRE}), truncating",
-                    wire.name, raw_segs
-                );
-            }
+            let capped_segs = n.saturating_sub(1);
 
             // Cumulative arc-length per point.
             let pts_len = capped_segs + 1;
@@ -270,14 +259,7 @@ impl WireGpu {
         let half_width = wire.line_weight_px * 0.5;
 
         let n = wire.points.len();
-        let raw_seg_count = if n >= 2 { n - 1 } else { 0 };
-        let seg_count = raw_seg_count.min(MAX_SEGS_PER_WIRE);
-        if raw_seg_count > MAX_SEGS_PER_WIRE {
-            eprintln!(
-                "[H7CAD] wire '{}': {} segments exceeds limit ({MAX_SEGS_PER_WIRE}), truncating",
-                wire.name, raw_seg_count
-            );
-        }
+        let seg_count = if n >= 2 { n - 1 } else { 0 };
         let mut vertices: Vec<WireVertex> = Vec::with_capacity(seg_count * 6);
 
         // Precompute cumulative arc-length at each point.
