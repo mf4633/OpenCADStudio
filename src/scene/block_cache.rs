@@ -249,10 +249,19 @@ fn build_defn(
     // ── Pass 1: compute a defn-level offset near the geometric centre.
     // Falling back to [0,0,0] for empty / nested-only defns is fine —
     // precision is only at risk when stored points have large magnitudes,
-    // and those come from direct wire entities.
+    // and those come from direct wire entities. Walks Insert sub-entities
+    // too: nested Inserts' insertion_point contribute to the centroid so a
+    // composite block whose only direct children are Inserts still gets a
+    // useful offset.
+    //
+    // Bbox values that aren't finite (corrupt entities) or that exceed
+    // `SANE_EXTENT` are dropped — otherwise a single bad entity would
+    // poison the centroid for the entire block. Tracked per-axis so a
+    // missing-z entity doesn't taint the x/y choice (would have produced
+    // `INFINITY + NEG_INFINITY = NaN` otherwise).
     let mut min = [f64::INFINITY; 3];
     let mut max = [f64::NEG_INFINITY; 3];
-    let mut have_any = false;
+    let mut have = [false; 3];
     for &eh in &br.entity_handles {
         let Some(entity) = doc.get_entity(eh) else {
             continue;
@@ -262,35 +271,41 @@ fn build_defn(
             EntityType::Block(_)
                 | EntityType::BlockEnd(_)
                 | EntityType::AttributeDefinition(_)
-                | EntityType::Insert(_)
         ) {
             continue;
         }
-        let bb = entity.as_entity().bounding_box();
+        // For Inserts, take the insertion_point itself (acadrust's
+        // `Insert::bounding_box` returns just that). One level deep is
+        // enough for an offset-picker — nested Inserts inside that block
+        // contribute via their own defns.
+        let (bmin, bmax) = match entity {
+            EntityType::Insert(ins) => (ins.insert_point, ins.insert_point),
+            _ => {
+                let bb = entity.as_entity().bounding_box();
+                (bb.min, bb.max)
+            }
+        };
+        let lo_arr = [bmin.x, bmin.y, bmin.z];
+        let hi_arr = [bmax.x, bmax.y, bmax.z];
         for i in 0..3 {
-            let lo = [bb.min.x, bb.min.y, bb.min.z][i];
-            let hi = [bb.max.x, bb.max.y, bb.max.z][i];
+            let lo = lo_arr[i];
+            let hi = hi_arr[i];
             if !lo.is_finite() || !hi.is_finite() {
                 continue;
             }
-            if lo < min[i] {
-                min[i] = lo;
+            if lo.abs() > SANE_EXTENT || hi.abs() > SANE_EXTENT {
+                continue;
             }
-            if hi > max[i] {
-                max[i] = hi;
-            }
-            have_any = true;
+            if lo < min[i] { min[i] = lo }
+            if hi > max[i] { max[i] = hi }
+            have[i] = true;
         }
     }
-    let local_offset: [f64; 3] = if have_any {
-        [
-            (min[0] + max[0]) * 0.5,
-            (min[1] + max[1]) * 0.5,
-            (min[2] + max[2]) * 0.5,
-        ]
-    } else {
-        [0.0; 3]
-    };
+    let local_offset: [f64; 3] = [
+        if have[0] { (min[0] + max[0]) * 0.5 } else { 0.0 },
+        if have[1] { (min[1] + max[1]) * 0.5 } else { 0.0 },
+        if have[2] { (min[2] + max[2]) * 0.5 } else { 0.0 },
+    ];
 
     // ── Pass 2: tessellate each sub with the chosen offset so stored
     // coordinates fit into f32 without precision loss.
