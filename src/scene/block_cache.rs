@@ -285,6 +285,19 @@ fn build_defn(
                 (bb.min, bb.max)
             }
         };
+        // Skip the "placeholder ZERO bbox" that empty Polyline / Hatch /
+        // Spline / Mesh / etc. return when they have no vertices —
+        // including these would pull the centroid toward origin and ruin
+        // the precision-preservation for UTM-authored content.
+        let is_zero_placeholder = bmin.x == 0.0
+            && bmin.y == 0.0
+            && bmin.z == 0.0
+            && bmax.x == 0.0
+            && bmax.y == 0.0
+            && bmax.z == 0.0;
+        if is_zero_placeholder {
+            continue;
+        }
         let lo_arr = [bmin.x, bmin.y, bmin.z];
         let hi_arr = [bmax.x, bmax.y, bmax.z];
         for i in 0..3 {
