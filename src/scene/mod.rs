@@ -408,11 +408,17 @@ pub struct Scene {
     /// Maps block_handle → (entity_handle.value() → sort_handle.value()).
     /// Replaces the O(objects) linear scan inside `wires_for_block()` with an O(1) lookup.
     sort_cache: RefCell<Option<(u64, HashMap<Handle, HashMap<u64, u64>>)>>,
-    /// Cached hatch fill models, keyed by geometry_epoch.
-    hatch_cache: RefCell<Option<(u64, Arc<Vec<HatchModel>>)>>,
-    /// Cached wipeout fill models, keyed by geometry_epoch.
-    wipeout_cache: RefCell<Option<(u64, Arc<Vec<HatchModel>>)>>,
-    /// Cached image models, keyed by geometry_epoch.
+    /// Cached hatch fill models, keyed by (geometry_epoch, camera_generation).
+    /// The camera term is needed because `synced_hatch_models` now view-culls
+    /// via the quadtree — a key that ignored camera would return stale culled
+    /// lists across pan/zoom.
+    hatch_cache: RefCell<Option<((u64, u64), Arc<Vec<HatchModel>>)>>,
+    /// Cached wipeout fill models, keyed by (geometry_epoch, camera_generation).
+    /// Same reasoning as `hatch_cache`.
+    wipeout_cache: RefCell<Option<((u64, u64), Arc<Vec<HatchModel>>)>>,
+    /// Cached image models, keyed by geometry_epoch. Images do their own
+    /// per-frame culling in the GPU pipeline (vp_scissor); no camera key
+    /// needed here.
     image_cache: RefCell<Option<(u64, Arc<Vec<ImageModel>>)>>,
     /// Cached mesh models, keyed by geometry_epoch.
     mesh_cache: RefCell<Option<(u64, Arc<Vec<MeshLodSet>>)>>,
@@ -1055,30 +1061,32 @@ impl Scene {
     }
 
     pub(super) fn hatch_models_arc(&self) -> Arc<Vec<HatchModel>> {
+        let key = (self.geometry_epoch, self.camera_generation);
         {
             let cache = self.hatch_cache.borrow();
-            if let Some((cached_epoch, ref arc)) = *cache {
-                if cached_epoch == self.geometry_epoch {
+            if let Some((cached_key, ref arc)) = *cache {
+                if cached_key == key {
                     return Arc::clone(arc);
                 }
             }
         }
         let arc = Arc::new(self.synced_hatch_models());
-        *self.hatch_cache.borrow_mut() = Some((self.geometry_epoch, Arc::clone(&arc)));
+        *self.hatch_cache.borrow_mut() = Some((key, Arc::clone(&arc)));
         arc
     }
 
     pub(super) fn wipeout_models_arc(&self) -> Arc<Vec<HatchModel>> {
+        let key = (self.geometry_epoch, self.camera_generation);
         {
             let cache = self.wipeout_cache.borrow();
-            if let Some((cached_epoch, ref arc)) = *cache {
-                if cached_epoch == self.geometry_epoch {
+            if let Some((cached_key, ref arc)) = *cache {
+                if cached_key == key {
                     return Arc::clone(arc);
                 }
             }
         }
         let arc = Arc::new(self.wipeout_models());
-        *self.wipeout_cache.borrow_mut() = Some((self.geometry_epoch, Arc::clone(&arc)));
+        *self.wipeout_cache.borrow_mut() = Some((key, Arc::clone(&arc)));
         arc
     }
 
