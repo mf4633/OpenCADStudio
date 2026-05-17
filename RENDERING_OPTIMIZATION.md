@@ -12,42 +12,6 @@ Current pipeline order:
 
 ---
 
-## Phase 2 — Spatial Acceleration Structure
-
-**Goal:** O(log n) visibility queries instead of O(n) linear scan.
-
-### 2.1 Quadtree (2D Documents)
-
-Partition world space into a quadtree keyed by `Aabb2`. Build once on document load, update
-incrementally on entity add/remove/modify.
-
-```
-QuadTree<EntityId>
-  ├── query_rect(Aabb2) → Vec<EntityId>
-  └── insert / remove / update
-```
-
-Store in `scene/mod.rs` alongside the entity cache. Invalidate only the nodes touched by a
-modified entity.
-
-### 2.2 Octree (3D Solids)
-
-For `MeshModel` / `solid3d` entities, use an octree with `Aabb3` keys. Query returns candidate
-mesh IDs for frustum culling.
-
-### 2.3 Integration
-
-Replace linear entity scans in `pipeline/mod.rs` render preparation with spatial queries:
-
-```rust
-let candidates = scene.quadtree.query_rect(view_aabb);
-// only upload GPU buffers for candidates
-```
-
-**Estimated gain:** near-constant frame cost regardless of total entity count when zoomed in.
-
----
-
 ## Phase 4 — GPU-Side Culling (Advanced)
 
 **Goal:** Offload culling to the GPU; zero CPU cost for large entity counts.
@@ -89,8 +53,6 @@ Relevant only for perspective (3D) mode with many overlapping solids.
 ## Implementation Order
 
 ```
-Phase 2.1  Quadtree for 2D                  medium complexity, scales 2D docs
-Phase 2.2  Octree for 3D                    medium, needed for dense 3D
 Phase 4.1  Indirect draw + GPU cull         high complexity, defer
 Phase 4.2  Hi-Z occlusion                   high complexity, 3D only, last
 ```
