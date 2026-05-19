@@ -1,8 +1,9 @@
 // SHAPE entity — reference to an .SHX shape-file glyph.
 //
 // Since .SHX binary files are not parsed, we render a small diamond marker
-// at the insertion point (same approach as unknown/unsupported entities).
-// The shape_name and style_name are surfaced as read-only properties.
+// at the insertion point (same approach as unknown/unsupported entities)
+// but apply the SHAPE's own rotation / oblique / width factor so the marker
+// gives a rough indication of the glyph orientation.
 
 use acadrust::entities::Shape;
 use glam::Vec3;
@@ -17,17 +18,36 @@ use crate::scene::wire_model::SnapHint;
 
 // ── Marker geometry ───────────────────────────────────────────────────────────
 
-/// Small diamond marker at the shape insertion point.
-fn shape_marker(ox: f64, oy: f64, oz: f64, size: f64) -> Vec<[f64; 3]> {
-    let s = size * 0.5;
-    vec![
-        [ox, oy + s, oz], // top
-        [ox + s, oy, oz], // right
-        [ox, oy - s, oz], // bottom
-        [ox - s, oy, oz], // left
-        [ox, oy + s, oz], // close
-        [f64::NAN; 3],
-    ]
+/// Small diamond marker at the shape insertion point. The diamond is sized
+/// by `size`, stretched horizontally by `relative_x_scale`, sheared by
+/// `oblique_angle`, and rotated by `rotation`.
+fn shape_marker(
+    ox: f64,
+    oy: f64,
+    oz: f64,
+    size: f64,
+    rotation: f64,
+    rel_x_scale: f64,
+    oblique_angle: f64,
+) -> Vec<[f64; 3]> {
+    let s = size.abs().max(0.001) * 0.5;
+    let rx = s * if rel_x_scale.abs() < 1e-9 { 1.0 } else { rel_x_scale };
+    let ry = s;
+    let local = [(0.0, ry), (rx, 0.0), (0.0, -ry), (-rx, 0.0)];
+    let (sin_r, cos_r) = (rotation.sin(), rotation.cos());
+    let ob = oblique_angle.tan();
+    let mut out: Vec<[f64; 3]> = Vec::with_capacity(6);
+    for &(x, y) in &local {
+        let sx = x + y * ob;
+        let lx = sx * cos_r - y * sin_r + ox;
+        let ly = sx * sin_r + y * cos_r + oy;
+        out.push([lx, ly, oz]);
+    }
+    // Close polygon + segment separator.
+    let first = out[0];
+    out.push(first);
+    out.push([f64::NAN; 3]);
+    out
 }
 
 // ── TruckConvertible ──────────────────────────────────────────────────────────
@@ -40,7 +60,15 @@ impl TruckConvertible for Shape {
         let size = self.size.abs().max(0.5);
 
         let snap_pt = Vec3::new(ox as f32, oy as f32, oz as f32);
-        let pts = shape_marker(ox, oy, oz, size);
+        let pts = shape_marker(
+            ox,
+            oy,
+            oz,
+            size,
+            self.rotation,
+            self.relative_x_scale,
+            self.oblique_angle,
+        );
 
         Some(TruckEntity {
             object: TruckObject::Lines(pts),
@@ -88,16 +116,28 @@ impl Grippable for Shape {
 
 impl PropertyEditable for Shape {
     fn geometry_properties(&self, _text_style_names: &[String]) -> PropSection {
+        let style_handle_display = match self.style_handle {
+            Some(h) if !h.is_null() => format!("{:X}", h.value()),
+            _ => "(none)".to_string(),
+        };
         PropSection {
             title: "Geometry".into(),
             props: vec![
                 ro("Name", "shp_name", self.shape_name.clone()),
+                ro("Number", "shp_number", self.shape_number.to_string()),
                 ro("Style", "shp_style", self.style_name.clone()),
+                ro("Style Handle", "shp_style_handle", style_handle_display),
                 edit("Insert X", "shp_ix", self.insertion_point.x),
                 edit("Insert Y", "shp_iy", self.insertion_point.y),
                 edit("Insert Z", "shp_iz", self.insertion_point.z),
                 edit("Size", "shp_sz", self.size),
                 edit("Rotation", "shp_rot", self.rotation.to_degrees()),
+                edit("Width Factor", "shp_xs", self.relative_x_scale),
+                edit("Oblique Angle", "shp_ob", self.oblique_angle.to_degrees()),
+                edit("Thickness", "shp_th", self.thickness),
+                edit("Normal X", "shp_nx", self.normal.x),
+                edit("Normal Y", "shp_ny", self.normal.y),
+                edit("Normal Z", "shp_nz", self.normal.z),
             ],
         }
     }
@@ -112,6 +152,12 @@ impl PropertyEditable for Shape {
             "shp_iz" => self.insertion_point.z = v,
             "shp_sz" => self.size = v.max(0.001),
             "shp_rot" => self.rotation = v.to_radians(),
+            "shp_xs" if v.abs() > 1e-9 => self.relative_x_scale = v,
+            "shp_ob" => self.oblique_angle = v.to_radians(),
+            "shp_th" => self.thickness = v,
+            "shp_nx" => self.normal.x = v,
+            "shp_ny" => self.normal.y = v,
+            "shp_nz" => self.normal.z = v,
             _ => {}
         }
     }
