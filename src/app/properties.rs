@@ -286,11 +286,36 @@ impl H7CAD {
         let i = self.active_tab;
         let selected = self.tabs[i].scene.selected_entities();
         if selected.is_empty() {
-            let layer = self.tabs[i].active_layer.clone();
+            // Creation defaults: prefer the file's saved CECOLOR / CELTYPE /
+            // CELWEIGHT (and current_layer_name); fall back to ByLayer when
+            // those slots are still at their factory default.
+            let header = &self.tabs[i].scene.document.header;
+            let layer = if header.current_layer_name.is_empty() {
+                self.tabs[i].active_layer.clone()
+            } else {
+                header.current_layer_name.clone()
+            };
             self.ribbon.active_layer = layer;
-            self.ribbon.active_color = acadrust::types::Color::ByLayer;
-            self.ribbon.active_linetype = "ByLayer".to_string();
-            self.ribbon.active_lineweight = acadrust::types::LineWeight::ByLayer;
+            self.ribbon.active_color = header.current_entity_color;
+            // current_linetype_name may be empty when only the handle was
+            // written; resolve via line_types table in that case.
+            let lt = if !header.current_linetype_name.is_empty() {
+                header.current_linetype_name.clone()
+            } else if !header.current_linetype_handle.is_null() {
+                self.tabs[i]
+                    .scene
+                    .document
+                    .line_types
+                    .iter()
+                    .find(|lt| lt.handle == header.current_linetype_handle)
+                    .map(|lt| lt.name.clone())
+                    .unwrap_or_else(|| "ByLayer".to_string())
+            } else {
+                "ByLayer".to_string()
+            };
+            self.ribbon.active_linetype = lt;
+            self.ribbon.active_lineweight =
+                acadrust::types::LineWeight::from_value(header.current_line_weight);
             return;
         }
 
@@ -410,6 +435,13 @@ impl H7CAD {
             &self.ribbon.active_linetype.clone(),
         );
         crate::scene::dispatch::apply_line_weight(&mut entity, self.ribbon.active_lineweight);
+        // CELTSCALE (header.current_entity_linetype_scale): new entities
+        // pick up the document's saved per-entity linetype scale. The user
+        // can override per entity later via the properties panel.
+        let celtscale = self.tabs[i].scene.document.header.current_entity_linetype_scale;
+        if (celtscale - 1.0).abs() > 1e-9 && celtscale.abs() > 1e-9 {
+            entity.common_mut().linetype_scale = celtscale;
+        }
 
         // Commands pick points in local space (camera coordinates with world_offset
         // already subtracted). Re-add world_offset so the entity lands at the correct
