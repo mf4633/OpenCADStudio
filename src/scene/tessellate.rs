@@ -464,6 +464,59 @@ pub fn tessellate_dimension(
     anno_scale: f32,
 ) -> Vec<WireModel> {
     let name = handle.value().to_string();
+
+    // ── Anonymous-block fast path ───────────────────────────────────────────
+    //
+    // AutoCAD bakes each dimension's final geometry (extension lines, dim
+    // line, arrows, text MText) into a per-instance block — usually named
+    // `*D<n>`, but some authoring tools use a custom name like
+    // `DIMBLOCK###-4NP`. When that block exists we render its contents
+    // directly: the text height inside the block is the FINAL displayed
+    // height (DIMTXT × DIMSCALE already applied at creation), so
+    // synthesising it from the dim style would double-apply DIMSCALE.
+    let dim_block_name = &dim.base().block_name;
+    if !dim_block_name.trim().is_empty() {
+        if let Some(br) = document
+            .block_records
+            .iter()
+            .find(|br| br.name.eq_ignore_ascii_case(dim_block_name))
+        {
+            if !br.entity_handles.is_empty() {
+                let mut wires: Vec<WireModel> =
+                    Vec::with_capacity(br.entity_handles.len());
+                for &eh in &br.entity_handles {
+                    let Some(sub) = document.get_entity(eh) else { continue };
+                    // Inherit dim's color + line weight when the sub-entity is
+                    // ByBlock; ByLayer stays on its own layer.
+                    let sub_color = if selected {
+                        WireModel::SELECTED
+                    } else {
+                        entity_color
+                    };
+                    let mut wire = tessellate(
+                        document,
+                        handle,
+                        sub,
+                        selected,
+                        sub_color,
+                        0.0,
+                        [0.0; 8],
+                        line_weight_px,
+                        world_offset,
+                        // Sub-entities are already baked at the final WCS
+                        // size; don't re-apply anno_scale.
+                        1.0,
+                    );
+                    wire.name = name.clone();
+                    wires.push(wire);
+                }
+                if !wires.is_empty() {
+                    return wires;
+                }
+            }
+        }
+    }
+
     let style_name = &dim.base().style_name;
     let style = document.dim_styles.iter().find(|s| {
         s.name.eq_ignore_ascii_case(style_name)

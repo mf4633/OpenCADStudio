@@ -4814,6 +4814,48 @@ fn tessellate_entity(
         return wires;
     }
 
+    // ── Table baked-block fast path ─────────────────────────────────────────
+    //
+    // AutoCAD bakes a Table's final rendered geometry (cell text, gridlines,
+    // fill) into a per-instance block (usually `*T###`) referenced through
+    // `table.block_record_handle`. The block's text uses the *displayed*
+    // height; synthesising cells from `self.rows + TableStyle` instead would
+    // re-apply the table's scale factor on top of already-baked geometry.
+    // When the block exists we render it directly. Same pattern as
+    // Dimension's `block_name`.
+    if let EntityType::Table(tab) = e {
+        if let Some(br_h) = tab.block_record_handle {
+            if let Some(br) = document
+                .block_records
+                .iter()
+                .find(|br| br.handle == br_h)
+            {
+                if !br.entity_handles.is_empty() {
+                    let mut wires: Vec<WireModel> =
+                        Vec::with_capacity(br.entity_handles.len());
+                    for &eh in &br.entity_handles {
+                        let Some(sub) = document.get_entity(eh) else { continue };
+                        let sub_wires = tessellate_entity(
+                            document, selected, active_viewport, world_offset, bg_color,
+                            anno_scale, sub, block_cache, view_aabb, world_per_pixel,
+                        );
+                        for mut w in sub_wires {
+                            w.name = h.value().to_string();
+                            wires.push(w);
+                        }
+                    }
+                    if !wires.is_empty() {
+                        let aabb = entity_aabb(e, world_offset);
+                        for w in &mut wires {
+                            w.aabb = aabb;
+                        }
+                        return wires;
+                    }
+                }
+            }
+        }
+    }
+
     if let EntityType::Insert(ins) = e {
         // Resolve the INSERT's own style so ByBlock sub-entities can inherit it.
         let (ins_color, ins_pat_len, ins_pat, ins_lw_px, _) = render::render_style_for(document, e);
