@@ -3688,16 +3688,20 @@ impl H7CAD {
                 }
             }
             Message::UpdateCheckResult(latest) => {
-                let Some(version) = latest else {
+                let Some(info) = latest else {
                     return Task::none();
                 };
-                self.update_notice_version = Some(version);
+                self.update_notice_version = Some(info.version);
+                self.update_notice_body = Some(info.body);
                 if let Some(id) = self.update_notice_window {
                     return window::gain_focus(id);
                 }
                 let (id, task) = window::open(window::Settings {
-                    size: iced::Size::new(480.0, 240.0),
-                    resizable: false,
+                    // Sized for the new release-notes panel — wide enough
+                    // for typical GitHub release headlines, tall enough for
+                    // a meaningful scroll preview without dwarfing the app.
+                    size: iced::Size::new(560.0, 460.0),
+                    resizable: true,
                     ..Default::default()
                 });
                 self.update_notice_window = Some(id);

@@ -104,6 +104,10 @@ pub(super) struct H7CAD {
     /// Tag of the latest available release (without the leading "v"),
     /// e.g. `"0.3.0"`. `None` when up-to-date or check hasn't returned.
     update_notice_version: Option<String>,
+    /// Release-notes body for the version above (GitHub release "body"
+    /// markdown, as returned by the API). May be empty when the release
+    /// shipped without notes.
+    update_notice_body: Option<String>,
     /// In-memory clipboard: cloned entities waiting to be pasted.
     clipboard: Vec<acadrust::EntityType>,
     /// Centroid of the clipboard entities (XZ plane, Y-up).
@@ -542,7 +546,7 @@ pub enum Message {
     Noop,
     /// GitHub releases API returned a result. `Some(version)` means a
     /// newer release exists; we open the update-notice window.
-    UpdateCheckResult(Option<String>),
+    UpdateCheckResult(Option<crate::update_check::UpdateInfo>),
     /// User dismissed the update-notice window.
     UpdateNoticeClose,
     /// User clicked the "Open release page" button — opens the GitHub
@@ -739,6 +743,7 @@ impl H7CAD {
             about_window: None,
             update_notice_window: None,
             update_notice_version: None,
+            update_notice_body: None,
             clipboard: Vec::new(),
             clipboard_centroid: glam::Vec3::ZERO,
             layout_context_menu: None,

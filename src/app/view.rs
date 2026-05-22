@@ -195,7 +195,8 @@ impl H7CAD {
                 .update_notice_version
                 .as_deref()
                 .unwrap_or("?");
-            return crate::ui::update_notice::view_window(latest);
+            let body = self.update_notice_body.as_deref().unwrap_or("");
+            return crate::ui::update_notice::view_window(latest, body);
         }
         if Some(window_id) == self.unsaved_dialog_window {
             let tab_name = match &self.pending_close {
