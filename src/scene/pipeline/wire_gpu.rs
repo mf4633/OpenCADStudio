@@ -9,18 +9,18 @@
 // WireModel, separated by [NaN, NaN, NaN] points. Segments where either
 // endpoint contains NaN are silently skipped during emission.
 //
-// Instance layout (88 bytes, stride = 88, step_mode = Instance):
+// Instance layout (76 bytes, stride = 76, step_mode = Instance):
 //   pos_a          [f32; 3]   offset  0   12 B  — segment start (world)
 //   pos_b          [f32; 3]   offset 12   12 B  — segment end   (world)
-//   color          [f32; 4]   offset 24   16 B  — RGBA [0,1]
-//   distance_a     f32        offset 40    4 B  — arc-length at endpoint A
-//   distance_b     f32        offset 44    4 B  — arc-length at endpoint B
-//   half_width     f32        offset 48    4 B  — half line width in pixels
-//   pattern_length f32        offset 52    4 B  — dash pattern total length
-//   pat0           [f32; 4]   offset 56   16 B  — pattern elements 0-3
-//   pat1           [f32; 4]   offset 72   16 B  — pattern elements 4-7
+//   color          [u8;  4]   offset 24    4 B  — RGBA, Unorm8x4 → vec4<f32> in shader
+//   distance_a     f32        offset 28    4 B  — arc-length at endpoint A
+//   distance_b     f32        offset 32    4 B  — arc-length at endpoint B
+//   half_width     f32        offset 36    4 B  — half line width in pixels
+//   pattern_length f32        offset 40    4 B  — dash pattern total length
+//   pat0           [f32; 4]   offset 44   16 B  — pattern elements 0-3
+//   pat1           [f32; 4]   offset 60   16 B  — pattern elements 4-7
 //                                          ------
-//                                           88 B / instance
+//                                           76 B / instance
 
 use crate::scene::wire_model::WireModel;
 use iced::wgpu;
@@ -61,7 +61,10 @@ fn instance_buffer_mapped(
 pub struct WireInstance {
     pub pos_a: [f32; 3],
     pub pos_b: [f32; 3],
-    pub color: [f32; 4],
+    /// RGBA packed as `Unorm8x4` — the vertex shader receives a `vec4<f32>`
+    /// in [0, 1] after the GPU does the conversion. 8 bits per channel is
+    /// indistinguishable from f32 at 8-bit display output.
+    pub color: [u8; 4],
     pub distance_a: f32,
     pub distance_b: f32,
     pub half_width: f32,
@@ -89,35 +92,35 @@ impl WireInstance {
                 wgpu::VertexAttribute {
                     offset: 24,
                     shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: wgpu::VertexFormat::Unorm8x4,
                 }, // color
                 wgpu::VertexAttribute {
-                    offset: 40,
+                    offset: 28,
                     shader_location: 3,
                     format: wgpu::VertexFormat::Float32,
                 }, // distance_a
                 wgpu::VertexAttribute {
-                    offset: 44,
+                    offset: 32,
                     shader_location: 4,
                     format: wgpu::VertexFormat::Float32,
                 }, // distance_b
                 wgpu::VertexAttribute {
-                    offset: 48,
+                    offset: 36,
                     shader_location: 5,
                     format: wgpu::VertexFormat::Float32,
                 }, // half_width
                 wgpu::VertexAttribute {
-                    offset: 52,
+                    offset: 40,
                     shader_location: 6,
                     format: wgpu::VertexFormat::Float32,
                 }, // pattern_length
                 wgpu::VertexAttribute {
-                    offset: 56,
+                    offset: 44,
                     shader_location: 7,
                     format: wgpu::VertexFormat::Float32x4,
                 }, // pat0
                 wgpu::VertexAttribute {
-                    offset: 72,
+                    offset: 60,
                     shader_location: 8,
                     format: wgpu::VertexFormat::Float32x4,
                 }, // pat1
@@ -140,7 +143,17 @@ pub struct WireGpu {
 /// finite segment). Pulled out so both the single-wire and batched paths share
 /// the same emission logic, and so the batched path can `par_iter` across
 /// wires on cold open.
+fn pack_color(color: [f32; 4]) -> [u8; 4] {
+    [
+        (color[0].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+        (color[1].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+        (color[2].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+        (color[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+    ]
+}
+
 fn emit_wire_instances(wire: &WireModel, color: [f32; 4]) -> Vec<WireInstance> {
+    let color_u8 = pack_color(color);
     let pat0 = [
         wire.pattern[0],
         wire.pattern[1],
@@ -196,7 +209,7 @@ fn emit_wire_instances(wire: &WireModel, color: [f32; 4]) -> Vec<WireInstance> {
         instances.push(WireInstance {
             pos_a: a,
             pos_b: b,
-            color,
+            color: color_u8,
             distance_a: dists[i],
             distance_b: dists[i + 1],
             half_width,
