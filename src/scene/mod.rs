@@ -213,13 +213,8 @@ pub fn build_derived_caches(doc: &CadDocument) -> DerivedCaches {
         .filter_map(|&handle| {
             let e = doc.get_entity(handle)?;
             let color = tess_util::aci_to_rgba(&e.common().color);
-            let model = match e {
-                EntityType::Solid3D(s) => solid3d_tess::tessellate_solid3d(s, color, facet_res),
-                EntityType::Region(r) => solid3d_tess::tessellate_region(r, color, facet_res),
-                EntityType::Body(b) => solid3d_tess::tessellate_body(b, color, facet_res),
-                _ => None,
-            };
-            model.map(|m| (handle, m))
+            crate::entities::solid3d::tessellate_volume(e, color, facet_res)
+                .map(|m| (handle, m))
         })
         .collect();
 
@@ -2377,20 +2372,14 @@ impl Scene {
             None
         };
         let facet_res = self.document.header.facet_resolution;
-        let mesh_seed = match &entity {
-            EntityType::Solid3D(s3d) => {
-                let color = self.render_style(&entity).0;
-                solid3d_tess::tessellate_solid3d(s3d, color, facet_res)
-            }
-            EntityType::Region(r) => {
-                let color = self.render_style(&entity).0;
-                solid3d_tess::tessellate_region(r, color, facet_res)
-            }
-            EntityType::Body(b) => {
-                let color = self.render_style(&entity).0;
-                solid3d_tess::tessellate_body(b, color, facet_res)
-            }
-            _ => None,
+        let mesh_seed = if matches!(
+            &entity,
+            EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_)
+        ) {
+            let color = self.render_style(&entity).0;
+            crate::entities::solid3d::tessellate_volume(&entity, color, facet_res)
+        } else {
+            None
         };
 
         // Auto-create an ImageDefinition object for new RasterImage entities
@@ -3230,15 +3219,8 @@ impl Scene {
         self.meshes = entries
             .into_par_iter()
             .filter_map(|(handle, entity, color)| {
-                let model = match &entity {
-                    EntityType::Solid3D(s) => {
-                        solid3d_tess::tessellate_solid3d(s, color, facet_res)
-                    }
-                    EntityType::Region(r) => solid3d_tess::tessellate_region(r, color, facet_res),
-                    EntityType::Body(b) => solid3d_tess::tessellate_body(b, color, facet_res),
-                    _ => None,
-                };
-                model.map(|m| (handle, m))
+                crate::entities::solid3d::tessellate_volume(&entity, color, facet_res)
+                    .map(|m| (handle, m))
             })
             .collect();
 
@@ -3642,24 +3624,11 @@ impl Scene {
         // For Solid3D / Region / Body, record the old point_of_reference so we
         // can translate the pre-tessellated MeshModel by the same delta after
         // the grip is applied (the ACIS data itself is not modified).
-        let old_por: Option<[f64; 3]> = match self.document.get_entity(handle) {
-            Some(EntityType::Solid3D(s)) => Some([
-                s.point_of_reference.x,
-                s.point_of_reference.y,
-                s.point_of_reference.z,
-            ]),
-            Some(EntityType::Region(r)) => Some([
-                r.point_of_reference.x,
-                r.point_of_reference.y,
-                r.point_of_reference.z,
-            ]),
-            Some(EntityType::Body(b)) => Some([
-                b.point_of_reference.x,
-                b.point_of_reference.y,
-                b.point_of_reference.z,
-            ]),
-            _ => None,
-        };
+        let old_por: Option<[f64; 3]> = self
+            .document
+            .get_entity(handle)
+            .and_then(crate::entities::solid3d::point_of_reference)
+            .map(|p| [p.x, p.y, p.z]);
 
         if let Some(entity) = self.document.get_entity_mut(handle) {
             dispatch::apply_grip(entity, grip_id, apply);
@@ -3667,24 +3636,11 @@ impl Scene {
 
         // Translate MeshModel vertices by the same delta the grip applied.
         if let Some(old) = old_por {
-            let new_por: Option<[f64; 3]> = match self.document.get_entity(handle) {
-                Some(EntityType::Solid3D(s)) => Some([
-                    s.point_of_reference.x,
-                    s.point_of_reference.y,
-                    s.point_of_reference.z,
-                ]),
-                Some(EntityType::Region(r)) => Some([
-                    r.point_of_reference.x,
-                    r.point_of_reference.y,
-                    r.point_of_reference.z,
-                ]),
-                Some(EntityType::Body(b)) => Some([
-                    b.point_of_reference.x,
-                    b.point_of_reference.y,
-                    b.point_of_reference.z,
-                ]),
-                _ => None,
-            };
+            let new_por: Option<[f64; 3]> = self
+                .document
+                .get_entity(handle)
+                .and_then(crate::entities::solid3d::point_of_reference)
+                .map(|p| [p.x, p.y, p.z]);
             if let Some(new) = new_por {
                 let dx = (new[0] - old[0]) as f32;
                 let dy = (new[1] - old[1]) as f32;

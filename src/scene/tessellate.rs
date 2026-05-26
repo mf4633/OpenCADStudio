@@ -413,13 +413,7 @@ pub fn tessellate(
                 let mut wm = WireModel::solid(name, wire_pts, color, selected);
                 // Add insertion snap at point_of_reference.
                 let [ox, oy, oz] = world_offset;
-                let por = match entity {
-                    EntityType::Solid3D(s) => Some(&s.point_of_reference),
-                    EntityType::Region(r) => Some(&r.point_of_reference),
-                    EntityType::Body(b) => Some(&b.point_of_reference),
-                    _ => None,
-                };
-                if let Some(p) = por {
+                if let Some(p) = crate::entities::solid3d::point_of_reference(entity) {
                     let sp = Vec3::new((p.x - ox) as f32, (p.y - oy) as f32, (p.z - oz) as f32);
                     wm.snap_pts.push((sp, SnapHint::Insertion));
                 }
@@ -632,13 +626,9 @@ fn fallback_geometry(entity: &EntityType, world_offset: [f64; 3]) -> Geometry {
 /// produces no mesh (e.g. binary SAB data or unsupported geometry).
 fn solid_wire_fallback(entity: &EntityType, world_offset: [f64; 3]) -> Vec<[f32; 3]> {
     let [ox, oy, oz] = world_offset;
-    let wires: &[acadrust::entities::Wire] = match entity {
-        EntityType::Solid3D(s) => &s.wires,
-        EntityType::Region(r) => &r.wires,
-        EntityType::Body(b) => &b.wires,
-        _ => return vec![],
+    let Some(wires) = crate::entities::solid3d::fallback_wires(entity) else {
+        return vec![];
     };
-
     if wires.is_empty() {
         return vec![];
     }

@@ -251,3 +251,52 @@ impl PropertyEditable for Body {
 
     fn apply_geom_prop(&mut self, _field: &str, _value: &str) {}
 }
+
+// ── Accessors for the Solid3D / Region / Body trio ─────────────────────────
+//
+// These three entity types share a common subset of fields (ACIS data
+// + point_of_reference + wires fallback). Code that needs to treat them
+// uniformly (mesh tess dispatch, fallback wires, grip translate) used
+// to repeat a three-arm `match entity` block at every callsite — the
+// helpers below collapse those to a single call.
+
+use acadrust::{types::Vector3, EntityType};
+use crate::scene::mesh_model::MeshLodSet;
+use crate::scene::solid3d_tess;
+
+/// `point_of_reference` of an ACIS-backed volume entity, if applicable.
+pub fn point_of_reference(e: &EntityType) -> Option<&Vector3> {
+    match e {
+        EntityType::Solid3D(s) => Some(&s.point_of_reference),
+        EntityType::Region(r) => Some(&r.point_of_reference),
+        EntityType::Body(b) => Some(&b.point_of_reference),
+        _ => None,
+    }
+}
+
+/// Pre-stored edge-wire fallback list (used when the SAT/SAB kernel
+/// can't produce a mesh — drawings authored by SOLVIEW / 3DPLOT carry
+/// these explicitly).
+pub fn fallback_wires(e: &EntityType) -> Option<&[acadrust::entities::Wire]> {
+    match e {
+        EntityType::Solid3D(s) => Some(&s.wires),
+        EntityType::Region(r) => Some(&r.wires),
+        EntityType::Body(b) => Some(&b.wires),
+        _ => None,
+    }
+}
+
+/// Run the appropriate `solid3d_tess::tessellate_*` for the entity,
+/// returning `None` for non-volume entities or when the kernel fails.
+pub fn tessellate_volume(
+    e: &EntityType,
+    color: [f32; 4],
+    facet_res: f64,
+) -> Option<MeshLodSet> {
+    match e {
+        EntityType::Solid3D(s) => solid3d_tess::tessellate_solid3d(s, color, facet_res),
+        EntityType::Region(r) => solid3d_tess::tessellate_region(r, color, facet_res),
+        EntityType::Body(b) => solid3d_tess::tessellate_body(b, color, facet_res),
+        _ => None,
+    }
+}
