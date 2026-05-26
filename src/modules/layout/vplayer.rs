@@ -106,3 +106,7 @@ impl CadCommand for VplayerCommand {
         None
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["VPLAYER"] });  // VplayerCommand

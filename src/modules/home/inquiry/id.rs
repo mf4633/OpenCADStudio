@@ -34,3 +34,7 @@ impl CadCommand for IdCommand {
         CmdResult::Cancel
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["ID"] });  // IdCommand

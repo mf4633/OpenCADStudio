@@ -163,3 +163,7 @@ fn linear_text_pos(first: Vec3, second: Vec3, def: Vec3) -> Vec3 {
     let d2 = second + perp * offset;
     (d1 + d2) * 0.5 + perp * 0.15
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["DIMLINEAR"] });  // LinearDimensionCommand

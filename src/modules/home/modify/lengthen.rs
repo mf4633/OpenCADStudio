@@ -500,3 +500,7 @@ fn lengthen_spline(spl: &SplineEnt, pick_pt: Vec3, mode: &LenMode) -> Option<Ent
         Some(EntityType::Spline(bspline_to_spline(&right, spl)))
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["LEN", "LENGTHEN"] });  // LengthenCommand

@@ -508,7 +508,10 @@ impl OpenCADStudio {
         // viewport stack rather than as a separate row in the main
         // column — frees up vertical space when no command is active
         // and keeps the input close to where the cursor is drawing.
-        let command_line_overlay = iced::widget::container(self.command_line.view())
+        // Autocomplete shows only when no command is collecting its
+        // own input (otherwise typed prefixes are coordinates / values).
+        let allow_autocomplete = tab.active_cmd.is_none();
+        let command_line_overlay = iced::widget::container(self.command_line.view(allow_autocomplete))
             .width(Fill)
             .height(Fill)
             .align_x(iced::alignment::Horizontal::Center)

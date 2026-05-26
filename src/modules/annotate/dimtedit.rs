@@ -128,3 +128,7 @@ impl CadCommand for DimTeditCommand {
         }
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["DIMTED", "DIMTEDIT"] });  // DimTeditCommand

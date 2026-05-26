@@ -321,3 +321,7 @@ impl CadCommand for PlineCommand {
         ))
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["PL", "PLINE"] });  // PlineCommand

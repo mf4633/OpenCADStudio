@@ -184,3 +184,7 @@ impl CadCommand for AttdefCommand {
         })
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["ATTDEF"] });  // AttdefCommand

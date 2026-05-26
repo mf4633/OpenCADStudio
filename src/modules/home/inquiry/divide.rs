@@ -295,3 +295,8 @@ fn arc_span_rad(start: f64, end: f64) -> f64 {
         span
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["DIV", "DIVIDE"] });  // DivideCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["ME", "MEASURE"] });  // MeasureCommand

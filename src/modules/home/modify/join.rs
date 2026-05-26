@@ -237,3 +237,7 @@ fn try_join_arcs(arcs: &[&(Handle, &EntityType)]) -> Option<(Vec<Handle>, Vec<En
 fn vec3_xz_to_v3(v: Vec3, z: f64) -> Vector3 {
     Vector3::new(v.x as f64, v.y as f64, z)
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["J", "JOIN"] });  // JoinCommand

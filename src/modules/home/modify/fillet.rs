@@ -1706,3 +1706,8 @@ impl CadCommand for ChamferCommand {
         CmdResult::Cancel
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["CHA", "CHAMFER"] });  // ChamferCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["F", "FILLET"] });  // FilletCommand

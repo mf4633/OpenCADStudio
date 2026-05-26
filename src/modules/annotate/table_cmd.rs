@@ -169,3 +169,7 @@ impl CadCommand for TableCommand {
         }
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["TABLE"] });  // TableCommand

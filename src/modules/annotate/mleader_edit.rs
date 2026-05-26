@@ -476,3 +476,10 @@ fn preview_wire(pts: &[Vec3]) -> WireModel {
 
 // Silence unused-import warning for MultiLeader and LeaderLine if not used in all paths
 fn _uses_ml_types(_ml: &MultiLeader, _ll: &LeaderLine) {}
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["MLA", "MLEADERADD"] });  // MLeaderAddCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["MLAL", "MLEADERALIGN"] });  // MLeaderAlignCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["MLC", "MLEADERCOLLECT"] });  // MLeaderCollectCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["MLEADERREMOVE", "MLR"] });  // MLeaderRemoveCommand

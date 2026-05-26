@@ -112,3 +112,7 @@ fn preview_line(a: Vec3, b: Vec3) -> WireModel {
         fill_tris: vec![],
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["DDI", "DIMDIAMETER"] });  // DiameterDimensionCommand

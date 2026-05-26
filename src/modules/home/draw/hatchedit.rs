@@ -161,3 +161,7 @@ impl CadCommand for HatcheditCommand {
         CmdResult::Cancel
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["HATCHEDIT", "HE"] });  // HatcheditCommand

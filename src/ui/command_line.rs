@@ -12,6 +12,9 @@ pub const CMD_INPUT_ID: &str = "cmd_input";
 /// out. Picking the full archive happens through the dropdown button.
 const HISTORY_VISIBLE_SECS: f32 = 3.0;
 
+/// How many autocomplete matches the suggestion popup shows at once.
+const AUTOCOMPLETE_LIMIT: usize = 8;
+
 fn cmd_input_id() -> iced::widget::Id {
     iced::widget::Id::new(CMD_INPUT_ID)
 }
@@ -30,6 +33,10 @@ pub struct CommandLine {
     recall_draft: String,
     /// When `true`, the dropdown showing the full backlog is open.
     pub history_open: bool,
+    /// Index of the currently-highlighted autocomplete suggestion, or
+    /// `None` when the user hasn't yet started navigating with the
+    /// arrow keys. Reset on every keystroke.
+    pub autocomplete_cursor: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -152,7 +159,74 @@ impl CommandLine {
         self.history_open = false;
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    /// Move the autocomplete highlight up one entry. Wraps to the last
+    /// match. Returns `true` when there was a list to navigate.
+    pub fn autocomplete_prev(&mut self) -> bool {
+        let len = self.autocomplete_matches().len();
+        if len == 0 {
+            return false;
+        }
+        let next = match self.autocomplete_cursor {
+            None => len - 1,
+            Some(0) => len - 1,
+            Some(i) => i - 1,
+        };
+        self.autocomplete_cursor = Some(next);
+        true
+    }
+
+    /// Move the autocomplete highlight down one entry. Wraps to the
+    /// first match. Returns `true` when there was a list to navigate.
+    pub fn autocomplete_next(&mut self) -> bool {
+        let len = self.autocomplete_matches().len();
+        if len == 0 {
+            return false;
+        }
+        let next = match self.autocomplete_cursor {
+            None => 0,
+            Some(i) if i + 1 < len => i + 1,
+            Some(_) => 0,
+        };
+        self.autocomplete_cursor = Some(next);
+        true
+    }
+
+    /// The command name the user has currently highlighted in the
+    /// autocomplete popup, if any.
+    pub fn selected_suggestion(&self) -> Option<&'static str> {
+        let matches = self.autocomplete_matches();
+        self.autocomplete_cursor
+            .and_then(|i| matches.get(i).copied())
+    }
+
+    /// Autocomplete suggestions for the current input, capped at
+    /// [`AUTOCOMPLETE_LIMIT`]. Match is substring-anywhere (typing
+    /// `LEADER` surfaces `LEADER` and `MLEADER` and `QLEADER`); the
+    /// list is sorted so prefix matches come first.
+    ///
+    /// Names come from `crate::command::all_registered_command_names()`
+    /// which collects every `inventory::submit!` block placed next to a
+    /// `CadCommand` impl — no central list to maintain.
+    pub fn autocomplete_matches(&self) -> Vec<&'static str> {
+        let typed = self.input.trim();
+        if typed.is_empty() {
+            return Vec::new();
+        }
+        let needle = typed.to_uppercase();
+        let mut matches: Vec<&'static str> = crate::command::all_registered_command_names()
+            .into_iter()
+            .filter(|cmd| cmd.contains(&needle))
+            .collect();
+        matches.sort();
+        matches.dedup();
+        // Prefix matches rank above mid-string ones, then alphabetical
+        // so the order is stable as the user keeps typing.
+        matches.sort_by_key(|cmd| (!cmd.starts_with(&needle), *cmd));
+        matches.truncate(AUTOCOMPLETE_LIMIT);
+        matches
+    }
+
+    pub fn view(&self, show_autocomplete: bool) -> Element<'_, Message> {
         // Only the most recent entries pushed within the last few
         // seconds show on the overlay. The dropdown button keeps the
         // full backlog reachable when the user actually wants it.
@@ -207,6 +281,67 @@ impl CommandLine {
             })
             .size(11)
             .padding([4, 6]);
+        // Autocomplete suggestions panel, shown above the input row
+        // when the user has typed a prefix that matches at least one
+        // command. Each row is a button — clicking it dispatches the
+        // command directly.
+        let autocomplete: Element<'_, Message> = if show_autocomplete {
+            let matches = self.autocomplete_matches();
+            if matches.is_empty() {
+                container(column![]).height(0).into()
+            } else {
+                let cursor = self.autocomplete_cursor;
+                let mut col = column![].spacing(0).width(Length::Fill);
+                for (idx, cmd) in matches.iter().enumerate() {
+                    let is_selected = cursor == Some(idx);
+                    let row = button(text(*cmd).size(11).color(CMD_COLOR))
+                        .on_press(Message::CommandSuggestionPick(cmd.to_string()))
+                        .width(Length::Fill)
+                        .padding([2, 8])
+                        .style(move |_: &Theme, status| {
+                            let bg = if is_selected {
+                                Color {
+                                    r: 0.28,
+                                    g: 0.40,
+                                    b: 0.56,
+                                    a: 1.0,
+                                }
+                            } else if matches!(status, button::Status::Hovered) {
+                                Color {
+                                    r: 0.22,
+                                    g: 0.30,
+                                    b: 0.42,
+                                    a: 1.0,
+                                }
+                            } else {
+                                PANEL_BG
+                            };
+                            button::Style {
+                                background: Some(Background::Color(bg)),
+                                text_color: Color::WHITE,
+                                border: Border::default(),
+                                ..Default::default()
+                            }
+                        });
+                    col = col.push(row);
+                }
+                container(col)
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(PANEL_BG)),
+                        border: Border {
+                            color: BORDER_COLOR,
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .width(Length::Fill)
+                    .into()
+            }
+        } else {
+            container(column![]).height(0).into()
+        };
+
         // Dropdown trigger next to the input. Clicking it pops up the
         // full backlog (everything pushed since the app started) so the
         // user can recover anything that has already faded off the
@@ -275,6 +410,7 @@ impl CommandLine {
         };
 
         container(column![
+            autocomplete,
             dropdown,
             container(history_rows)
                 .style(|_: &Theme| container::Style {
@@ -369,3 +505,4 @@ const INFO_COLOR: Color = Color {
     b: 0.90,
     a: 1.0,
 };
+

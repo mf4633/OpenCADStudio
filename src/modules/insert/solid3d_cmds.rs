@@ -658,3 +658,13 @@ impl CadCommand for LoftCommand {
 pub fn empty_solid3d() -> EntityType {
     EntityType::Solid3D(Solid3D::new())
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["BOX"] });  // BoxCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["CYLINDER"] });  // CylinderCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["EXT", "EXTRUDE"] });  // ExtrudeCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["LOFT"] });  // LoftCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["REV", "REVOLVE"] });  // RevolveCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["SPHERE"] });  // SphereCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["SWEEP"] });  // SweepCommand

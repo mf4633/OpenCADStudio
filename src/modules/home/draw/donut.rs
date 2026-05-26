@@ -132,3 +132,7 @@ fn make_donut(cx: f64, cy: f64, inner_r: f64, outer_r: f64) -> EntityType {
     p.vertices = vec![v0, v1];
     EntityType::LwPolyline(p)
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["DO", "DONUT"] });  // DonutCommand

@@ -2457,3 +2457,8 @@ impl CadCommand for ExtendCommand {
         CmdResult::Cancel
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["EX", "EXTEND"] });  // ExtendCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["TR", "TRIM"] });  // TrimCommand

@@ -357,6 +357,9 @@ pub enum Message {
     CommandHistoryNext,
     /// Toggle the dropdown listing the full command-line history.
     CommandHistoryToggle,
+    /// User clicked an autocomplete suggestion — fill the input with
+    /// the chosen command name and dispatch it.
+    CommandSuggestionPick(String),
     ToggleLayers,
     LayerToggleVisible(usize),
     LayerToggleLock(usize),

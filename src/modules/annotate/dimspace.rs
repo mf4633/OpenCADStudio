@@ -125,3 +125,7 @@ impl CadCommand for DimSpaceCommand {
         }
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["DIMSPACE", "DSPACE"] });  // DimSpaceCommand

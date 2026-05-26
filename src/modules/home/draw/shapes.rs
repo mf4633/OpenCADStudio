@@ -633,3 +633,12 @@ fn edge_poly_params(a: Vec3, b: Vec3, sides: u32) -> Option<(Vec3, f32, f32)> {
     let sa = angle_xy(center, a);
     Some((center, vr, sa))
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["POLY_C"] });  // PolyCCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["POL", "POLY", "POLYGON"] });  // PolyCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["POLY_E"] });  // PolyECommand
+inventory::submit!(crate::command::CommandRegistration { names: &["RECT_CEN"] });  // RectCenCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["REC", "RECT", "RECTANG"] });  // RectCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["RECT_ROT"] });  // RectRotCommand

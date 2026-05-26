@@ -210,3 +210,7 @@ impl InsertBlockCommand {
         }
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["INSERT"] });  // InsertBlockCommand

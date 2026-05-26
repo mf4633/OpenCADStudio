@@ -189,3 +189,7 @@ impl AlignCommand {
         }
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["AL", "ALIGN"] });  // AlignCommand

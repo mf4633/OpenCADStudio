@@ -532,3 +532,9 @@ fn line_wire(from: Vec3, to: Vec3) -> WireModel {
         fill_tris: vec![],
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["ELLIPSE_ARC"] });  // EllipseArcCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["ELLIPSE_AXIS"] });  // EllipseAxisCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["EL", "ELLIPSE"] });  // EllipseCommand

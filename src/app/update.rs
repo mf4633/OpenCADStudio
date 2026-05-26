@@ -824,6 +824,9 @@ impl OpenCADStudio {
                     return Task::done(Message::CommandSubmit);
                 }
                 self.command_line.input = s;
+                // Typing invalidates the previous arrow-key cursor —
+                // the matches list has likely changed.
+                self.command_line.autocomplete_cursor = None;
                 Task::none()
             }
 
@@ -833,20 +836,36 @@ impl OpenCADStudio {
                 if s.chars().all(|c| !c.is_control()) {
                     self.command_line.input.push_str(&s);
                 }
+                self.command_line.autocomplete_cursor = None;
                 self.focus_cmd_input()
             }
 
             Message::CommandBackspace => {
                 self.command_line.input.pop();
+                self.command_line.autocomplete_cursor = None;
                 self.focus_cmd_input()
             }
 
             Message::CommandHistoryPrev => {
+                // While autocomplete is showing suggestions, ↑ walks up
+                // that list. Otherwise it falls back to recall history.
+                let i = self.active_tab;
+                if self.tabs[i].active_cmd.is_none()
+                    && self.command_line.autocomplete_prev()
+                {
+                    return Task::none();
+                }
                 self.command_line.history_prev();
                 Task::none()
             }
 
             Message::CommandHistoryNext => {
+                let i = self.active_tab;
+                if self.tabs[i].active_cmd.is_none()
+                    && self.command_line.autocomplete_next()
+                {
+                    return Task::none();
+                }
                 self.command_line.history_next();
                 Task::none()
             }
@@ -856,11 +875,29 @@ impl OpenCADStudio {
                 Task::none()
             }
 
+            Message::CommandSuggestionPick(cmd) => {
+                self.command_line.input.clear();
+                self.command_line.close_history();
+                self.dispatch_command(&cmd)
+            }
+
             Message::CommandSubmit => {
                 // Submitting a command implicitly dismisses the history
                 // dropdown so the dispatched command's new prompt is
                 // immediately visible on the overlay.
                 self.command_line.close_history();
+                // If the user navigated the autocomplete list with the
+                // arrow keys, Enter dispatches the highlighted command
+                // rather than the partial text actually in the buffer.
+                let i_tab = self.active_tab;
+                if self.tabs[i_tab].active_cmd.is_none() {
+                    if let Some(picked) = self.command_line.selected_suggestion() {
+                        let cmd = picked.to_string();
+                        self.command_line.input.clear();
+                        self.command_line.autocomplete_cursor = None;
+                        return self.dispatch_command(&cmd);
+                    }
+                }
                 let i = self.active_tab;
                 if self.tabs[i].active_cmd.is_some() {
                     let text = self.command_line.input.trim().to_string();
@@ -969,6 +1006,16 @@ impl OpenCADStudio {
                 if self.layout_rename_state.take().is_some()
                     || self.layout_context_menu.take().is_some()
                 {
+                    return Task::none();
+                }
+                // Typed text on the command line cancels first — one
+                // Esc empties the buffer, a second Esc then escalates
+                // to whatever the current mode would otherwise do
+                // (cancel command / exit viewport / deselect).
+                if !self.command_line.input.is_empty() {
+                    self.command_line.input.clear();
+                    self.command_line.autocomplete_cursor = None;
+                    self.command_line.close_history();
                     return Task::none();
                 }
                 let i = self.active_tab;

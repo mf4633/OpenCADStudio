@@ -82,3 +82,7 @@ impl CadCommand for AreaCommand {
         })
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["AREA"] });  // AreaCommand

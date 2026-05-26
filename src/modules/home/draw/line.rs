@@ -94,3 +94,7 @@ impl CadCommand for LineCommand {
         })
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["L", "LINE"] });  // LineCommand

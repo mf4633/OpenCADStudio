@@ -157,3 +157,7 @@ fn build_mline(pts: &[Vec3], scale: f64, closed: bool, style_name: &str) -> Enti
     mline.style_name = style_name.to_string();
     EntityType::MLine(mline)
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["ML", "MLINE"] });  // MlineCommand

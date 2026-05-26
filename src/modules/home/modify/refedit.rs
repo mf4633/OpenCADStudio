@@ -206,3 +206,8 @@ pub fn apply_insert_inverse_transform(entity: &mut EntityType, session: &RefEdit
         );
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["REFCLOSE"] });  // RefCloseCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["REFEDIT"] });  // RefEditPickCommand

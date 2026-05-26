@@ -79,3 +79,7 @@ impl CadCommand for LayMatchCommand {
         vec![]
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["LAYMATCH", "LAYMCH"] });  // LayMatchCommand

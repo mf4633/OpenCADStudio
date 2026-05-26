@@ -60,3 +60,7 @@ impl CadCommand for SelectObjectsCommand {
         vec![]
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["AR", "ARRAY", "ARRAYPATH", "ARRAYPOLAR", "ARRAYRECT", "BLOCK", "CC", "CO", "COPY", "COPYCLIP", "CUTCLIP", "CX", "E", "ERASE", "EXPLODE", "G", "GROUP", "LAYFRZ", "LAYLCK", "LAYMCUR", "LAYOFF", "LAYULK", "M", "MI", "MIRROR", "MOVE", "RO", "ROTATE", "SC", "SCALE", "SS", "STRETCH", "X"] });  // SelectObjectsCommand

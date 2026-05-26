@@ -104,3 +104,7 @@ impl CadCommand for MviewCommand {
         })
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["MV", "MVIEW"] });  // MviewCommand

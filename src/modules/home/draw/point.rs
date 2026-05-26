@@ -55,3 +55,7 @@ impl CadCommand for PointCommand {
         None
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["PO", "POINT"] });  // PointCommand

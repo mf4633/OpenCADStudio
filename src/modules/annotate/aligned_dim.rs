@@ -149,3 +149,7 @@ fn preview_aligned(p1: Vec3, p2: Vec3, dim_pt: Vec3) -> WireModel {
         fill_tris: vec![],
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["DAL", "DIMALIGNED"] });  // AlignedDimensionCommand

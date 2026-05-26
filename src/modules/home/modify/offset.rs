@@ -714,3 +714,7 @@ impl CadCommand for OffsetCommand {
         CmdResult::Cancel
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["O", "OFFSET"] });  // OffsetCommand

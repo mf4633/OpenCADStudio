@@ -85,3 +85,7 @@ impl CadCommand for DimEditCommand {
         CmdResult::Cancel
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["DED", "DIMEDIT"] });  // DimEditCommand

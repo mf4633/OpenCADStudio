@@ -117,3 +117,7 @@ fn preview_wire(points: Vec<Vec3>) -> WireModel {
         fill_tris: vec![],
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["DIMRADIUS"] });  // RadiusDimensionCommand

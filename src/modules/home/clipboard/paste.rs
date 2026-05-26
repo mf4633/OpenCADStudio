@@ -58,3 +58,7 @@ impl CadCommand for PasteCommand {
         self.wires.iter().map(|w| w.translated(delta)).collect()
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["PASTECLIP", "PC"] });  // PasteCommand

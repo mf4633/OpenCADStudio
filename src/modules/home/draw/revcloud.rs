@@ -133,3 +133,7 @@ fn make_revcloud(pts: &[Vec3], arc_len: f64) -> EntityType {
     p.vertices = vertices;
     EntityType::LwPolyline(p)
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["REVCLOUD"] });  // RevCloudCommand

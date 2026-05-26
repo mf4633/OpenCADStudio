@@ -158,3 +158,7 @@ impl CadCommand for DimContinueCommand {
 fn v3(p: Vec3) -> Vector3 {
     Vector3::new(p.x as f64, p.y as f64, p.z as f64)
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["DCO", "DIMCONTINUE"] });  // DimContinueCommand

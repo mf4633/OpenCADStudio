@@ -317,3 +317,29 @@ pub trait CadCommand: Send {
     /// Default: no-op.
     fn inject_picked_entity(&mut self, _entity: acadrust::EntityType) {}
 }
+
+// ── Autocomplete registry ─────────────────────────────────────────────────
+//
+// Every `impl CadCommand for Foo` module submits the names it answers to
+// at compile time via `inventory::submit!`. The command-line autocomplete
+// then iterates the resulting collection at runtime — no central list to
+// keep in sync.
+//
+// Non-interactive one-shot dispatch arms (NEW, OPEN, SAVE, …) live in
+// `app/commands.rs` and don't have a `CadCommand` impl; they're absent
+// from autocomplete by design. Add an explicit `inventory::submit!` next
+// to their dispatch arm if you want them surfaced.
+
+pub struct CommandRegistration {
+    pub names: &'static [&'static str],
+}
+
+inventory::collect!(CommandRegistration);
+
+/// All registered command names, including aliases.
+pub fn all_registered_command_names() -> Vec<&'static str> {
+    inventory::iter::<CommandRegistration>
+        .into_iter()
+        .flat_map(|r| r.names.iter().copied())
+        .collect()
+}

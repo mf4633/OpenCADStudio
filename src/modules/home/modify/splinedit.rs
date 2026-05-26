@@ -200,3 +200,7 @@ pub fn apply_spline_op(doc: &mut acadrust::CadDocument, handle: acadrust::Handle
         _ => {}
     }
 }
+
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["SPE", "SPLINEDIT"] });  // SplineditCommand
