@@ -9,7 +9,7 @@
 use acadrust::Handle;
 use glam::Vec3;
 
-use crate::command::{CadCommand, CmdResult, EntityTransform};
+use crate::command::{CadCommand, CmdResult, DynField, EntityTransform};
 use crate::modules::home::defaults;
 use crate::modules::{IconKind, ModuleEvent, ToolDef};
 use crate::scene::wire_model::WireModel;
@@ -186,5 +186,12 @@ impl CadCommand for RotateCommand {
             false,
         ));
         out
+    }
+
+    fn dyn_field(&self) -> DynField {
+        match self.step {
+            Step::Angle { .. } => DynField::Angle,
+            _ => DynField::Point,
+        }
     }
 }

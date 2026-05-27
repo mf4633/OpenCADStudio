@@ -2,6 +2,7 @@ use super::document::DocumentTab;
 use super::helpers::grid_plane_from_camera;
 use super::history::history_dropdown_labels;
 use super::{Message, OpenCADStudio};
+use crate::command::DynField;
 use crate::scene::grip::{grips_to_screen, grips_to_screen_paper};
 use crate::scene::paper_canvas::PaperCanvas;
 use crate::scene::viewport_pane::{PaperViewportPane, ViewportPane};
@@ -463,18 +464,40 @@ impl OpenCADStudio {
         };
 
         // Dynamic input overlay — shown when a command is active and DYN is on.
+        // The label adapts to what the command is currently asking for:
+        // a point shows coordinates (or polar distance+angle once a base
+        // point exists); a radius/length prompt shows a single distance;
+        // an angle prompt shows degrees.
         let dyn_input_overlay: Option<Element<'_, Message>> =
             if self.dyn_input && tab.active_cmd.is_some() {
                 let w = tab.last_cursor_world;
-                let label = if let Some(base) = self.last_point {
-                    // Show relative distance + angle when we have a base point.
-                    let dx = (w.x - base.x) as f64;
-                    let dy = (w.z - base.z) as f64;
-                    let dist = (dx * dx + dy * dy).sqrt();
-                    let ang = dy.atan2(dx).to_degrees();
-                    format!("d={:.3}  <{:.1}°", dist, ang)
-                } else {
-                    format!("X:{:.3}  Y:{:.3}", w.x, w.z)
+                let field = tab
+                    .active_cmd
+                    .as_ref()
+                    .map(|c| c.dyn_field())
+                    .unwrap_or(DynField::Point);
+                // World is Z-up: the drawing plane is X/Y, so screen "up"
+                // maps to world Y — use w.y, not w.z (issue #27).
+                let label = match (field, self.last_point) {
+                    (DynField::Distance, Some(base)) => {
+                        let dx = (w.x - base.x) as f64;
+                        let dy = (w.y - base.y) as f64;
+                        format!("d={:.3}", (dx * dx + dy * dy).sqrt())
+                    }
+                    (DynField::Angle, Some(base)) => {
+                        let dx = (w.x - base.x) as f64;
+                        let dy = (w.y - base.y) as f64;
+                        format!("<{:.1}°", dy.atan2(dx).to_degrees().rem_euclid(360.0))
+                    }
+                    (_, Some(base)) => {
+                        // Point with a base: polar distance + angle.
+                        let dx = (w.x - base.x) as f64;
+                        let dy = (w.y - base.y) as f64;
+                        let dist = (dx * dx + dy * dy).sqrt();
+                        let ang = dy.atan2(dx).to_degrees().rem_euclid(360.0);
+                        format!("d={:.3}  <{:.1}°", dist, ang)
+                    }
+                    (_, None) => format!("X:{:.3}  Y:{:.3}", w.x, w.y),
                 };
                 Some(overlay::dynamic_input_overlay(
                     tab.last_cursor_screen,

@@ -179,6 +179,23 @@ pub enum CmdResult {
     AttreqNeeded { block_name: String },
 }
 
+/// What kind of value the active command is currently asking for. Drives
+/// the dynamic-input overlay so the tooltip shows the relevant quantity
+/// (coordinates for a point pick, a single length for a radius/distance
+/// prompt, degrees for an angle prompt).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DynField {
+    /// A position — X/Y coordinates (or distance+angle relative to the
+    /// last point). The default for every command step.
+    #[default]
+    Point,
+    /// A single linear distance (radius, length, offset) measured from
+    /// the last point.
+    Distance,
+    /// An angle, shown in degrees, measured from the last point.
+    Angle,
+}
+
 // ── Trait ─────────────────────────────────────────────────────────────────
 
 /// An interactive CAD command that collects user input step-by-step.
@@ -316,6 +333,14 @@ pub trait CadCommand: Send {
     /// that need to read/modify it (e.g. DIMTEDIT, MLEADERADD, MLEADERREMOVE).
     /// Default: no-op.
     fn inject_picked_entity(&mut self, _entity: acadrust::EntityType) {}
+
+    /// What the command is asking for at this step, used to label the
+    /// dynamic-input overlay. Default is a point pick; commands waiting
+    /// on a radius/length return `Distance` and angle prompts return
+    /// `Angle`.
+    fn dyn_field(&self) -> DynField {
+        DynField::Point
+    }
 }
 
 // ── Autocomplete registry ─────────────────────────────────────────────────

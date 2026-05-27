@@ -11,7 +11,7 @@
 use acadrust::types::Vector3;
 use acadrust::{Circle, EntityType};
 
-use crate::command::{CadCommand, CmdResult, TangentObject};
+use crate::command::{CadCommand, CmdResult, DynField, TangentObject};
 use crate::modules::home::defaults;
 use crate::modules::IconKind;
 use crate::scene::wire_model::WireModel;
@@ -182,6 +182,12 @@ impl CadCommand for CircleCommand {
             }
         }
         None
+    }
+    fn dyn_field(&self) -> DynField {
+        match self.step {
+            StepCR::Center => DynField::Point,
+            StepCR::Radius(_) => DynField::Distance,
+        }
     }
 }
 
