@@ -216,7 +216,7 @@ pub fn build_derived_caches(doc: &CadDocument) -> DerivedCaches {
             let e = doc.get_entity(handle)?;
             let color = tess_util::aci_to_rgba(&e.common().color);
             crate::entities::solid3d::tessellate_volume(e, color, facet_res)
-                .map(|m| (handle, m))
+                .map(|m| (handle, offset_mesh_lod_set(m, world_offset)))
         })
         .collect();
 
@@ -475,6 +475,37 @@ enum ContactSide {
 
 fn overlap_len(a: (f32, f32), b: (f32, f32)) -> f32 {
     (a.1.min(b.1) - a.0.max(b.0)).max(0.0)
+}
+
+/// Shift every vertex of a freshly tessellated `MeshLodSet` into the
+/// scene's local f32 space by subtracting `world_offset`. ACIS / SAT
+/// tessellation hands us WCS coordinates; the wire / hatch / face3d
+/// paths run in `(WCS - world_offset)` so meshes at large UTM-scale
+/// origins would otherwise float far away from the rest of the
+/// geometry. Also recomputes `world_aabb` so per-frame LOD / cull math
+/// uses the same space.
+fn offset_mesh_lod_set(mut set: MeshLodSet, world_offset: [f64; 3]) -> MeshLodSet {
+    let [ox, oy, oz] = world_offset;
+    let (fx, fy, fz) = (ox as f32, oy as f32, oz as f32);
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for lod in &mut set.lods {
+        for v in &mut lod.verts {
+            v[0] -= fx;
+            v[1] -= fy;
+            v[2] -= fz;
+            if v[0] < min_x { min_x = v[0]; }
+            if v[1] < min_y { min_y = v[1]; }
+            if v[0] > max_x { max_x = v[0]; }
+            if v[1] > max_y { max_y = v[1]; }
+        }
+    }
+    if min_x.is_finite() {
+        set.world_aabb = [min_x, min_y, max_x, max_y];
+    }
+    set
 }
 
 /// Stable hash of a `Camera`'s pose for use as a per-tile cache key.
@@ -2624,7 +2655,9 @@ impl Scene {
             EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_)
         ) {
             let color = self.render_style(&entity).0;
+            let woff = self.world_offset;
             crate::entities::solid3d::tessellate_volume(&entity, color, facet_res)
+                .map(|m| offset_mesh_lod_set(m, woff))
         } else {
             None
         };
@@ -3463,11 +3496,12 @@ impl Scene {
 
         use rayon::prelude::*;
         let facet_res = self.document.header.facet_resolution;
+        let woff = self.world_offset;
         self.meshes = entries
             .into_par_iter()
             .filter_map(|(handle, entity, color)| {
                 crate::entities::solid3d::tessellate_volume(&entity, color, facet_res)
-                    .map(|m| (handle, m))
+                    .map(|m| (handle, offset_mesh_lod_set(m, woff)))
             })
             .collect();
 
@@ -5275,23 +5309,55 @@ impl Scene {
         };
 
         let rotation = camera::yaw_pitch_to_quat(yaw, pitch, 0.0);
-        let view_right = rotation * glam::Vec3::X;
-        let view_up = rotation * glam::Vec3::Y;
 
         // view_target is in raw model/WCS coords; the GPU renderer works in
         // wire-space (model - world_offset), so subtract world_offset here.
         // view_center is a 2-D DCS offset of the display centre from view_target.
+        //
+        // UTM / coordinate-shifted drawings often arrive with
+        // `view_target = (0, 0, 0)` and a stale `view_center` from before
+        // the file was geo-referenced; the saved view points at empty
+        // WCS while the actual model sits ~`world_offset` away. The CPU
+        // projection path in `viewport_content_wires` already auto-fits
+        // to the content cluster in that case — apply the same fallback
+        // here so the GPU-rendered viewport shows the model instead of
+        // an empty rectangle.
+        let mut effective_target_wcs = (
+            vp.view_target.x + vp.view_center.x,
+            vp.view_target.y + vp.view_center.y,
+        );
+        let mut effective_view_height = vp.view_height.abs().max(1e-9);
+        let aspect_d = (vp.width / vp.height.max(1.0)).max(1e-9);
+        let cluster_half = self.local_extent_max.max(1.0) as f64;
+        let saved_half_h = effective_view_height * 0.5;
+        let saved_half_w = saved_half_h * aspect_d;
+        let cluster_min_x = self.world_offset[0] - cluster_half;
+        let cluster_max_x = self.world_offset[0] + cluster_half;
+        let cluster_min_y = self.world_offset[1] - cluster_half;
+        let cluster_max_y = self.world_offset[1] + cluster_half;
+        let saved_overlaps = effective_target_wcs.0 + saved_half_w >= cluster_min_x
+            && effective_target_wcs.0 - saved_half_w <= cluster_max_x
+            && effective_target_wcs.1 + saved_half_h >= cluster_min_y
+            && effective_target_wcs.1 - saved_half_h <= cluster_max_y;
+        if !saved_overlaps {
+            let margin = 1.05_f64;
+            effective_view_height = cluster_half * 2.0 * margin;
+            effective_target_wcs = (self.world_offset[0], self.world_offset[1]);
+        }
+
         let base_target = glam::Vec3::new(
-            (vp.view_target.x - self.world_offset[0]) as f32,
-            (vp.view_target.y - self.world_offset[1]) as f32,
+            (effective_target_wcs.0 - self.world_offset[0]) as f32,
+            (effective_target_wcs.1 - self.world_offset[1]) as f32,
             (vp.view_target.z - self.world_offset[2]) as f32,
         );
-        let target =
-            base_target + view_right * vp.view_center.x as f32 + view_up * vp.view_center.y as f32;
+        // `effective_target_wcs` already folded `view_center` in above
+        // (CPU path does the same via `display_center_*`), so no extra
+        // `view_right * view_center` shift here — that would double-count.
+        let target = base_target;
 
         let fov_y = 45.0_f32.to_radians();
-        let view_height = if vp.view_height.abs() > 1e-9 {
-            vp.view_height as f32
+        let view_height = if effective_view_height > 1e-9 {
+            effective_view_height as f32
         } else {
             vp.height as f32
         };
@@ -5320,10 +5386,7 @@ impl Scene {
     ) -> Vec<WireModel> {
         use std::collections::HashSet as HSet;
 
-        let (frozen, vp_anno_scale, vp_aspect, vp_target, vp_ortho_h) = match self
-            .document
-            .get_entity(vp_handle)
-        {
+        let (frozen, vp_anno_scale, vp_aspect) = match self.document.get_entity(vp_handle) {
             Some(EntityType::Viewport(vp)) => {
                 let f: HSet<Handle> = vp.frozen_layers.iter().cloned().collect();
                 let vp_scale =
@@ -5338,27 +5401,28 @@ impl Scene {
                 } else {
                     1.0_f32
                 };
-                let half_h = (vp.view_height as f32) * 0.5;
-                let target = glam::Vec3::new(
-                    (vp.view_target.x - self.world_offset[0]) as f32,
-                    (vp.view_target.y - self.world_offset[1]) as f32,
-                    (vp.view_target.z - self.world_offset[2]) as f32,
-                );
-                (f, anno, aspect, target, half_h)
+                (f, anno, aspect)
             }
-            _ => (HSet::new(), 1.0_f32, 1.0_f32, glam::Vec3::ZERO, 1.0_f32),
+            _ => (HSet::new(), 1.0_f32, 1.0_f32),
         };
 
-        // Per-viewport frustum AABB in the same f32 wire space (already
-        // `world_offset`-subtracted). Matches the margin used by
-        // `view_world_aabb` so pan inertia doesn't pop edges.
+        // Drive the per-viewport view_aabb / wpp from the *effective* camera
+        // `camera_for_viewport` produces — it folds in the auto-fit
+        // fallback for UTM-style files whose saved `view_target` sits at
+        // empty WCS. Without that, the GPU pass would frustum-cull every
+        // entity (saved-view rect doesn't overlap the offset-subtracted
+        // model cluster) and the viewport would render blank.
+        let Some(cam) = self.camera_for_viewport(vp_handle) else {
+            return Vec::new();
+        };
+        let vp_ortho_h = cam.ortho_size();
         let half_w = vp_ortho_h * vp_aspect.max(0.01);
         let margin = 1.25_f32;
         let view_aabb = Some([
-            vp_target.x - half_w * margin,
-            vp_target.y - vp_ortho_h * margin,
-            vp_target.x + half_w * margin,
-            vp_target.y + vp_ortho_h * margin,
+            cam.target.x - half_w * margin,
+            cam.target.y - vp_ortho_h * margin,
+            cam.target.x + half_w * margin,
+            cam.target.y + vp_ortho_h * margin,
         ]);
         // World units per on-screen pixel for LOD substitution + curve
         // tolerance. Tracks the paper-zoom-driven pixel height the
