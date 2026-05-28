@@ -51,12 +51,23 @@ pub struct PropSection {
 
 // ── Grip types ─────────────────────────────────────────────────────────────
 
-/// Describes one grip point for an entity.
+/// Visual marker shape for a grip point. The complete vocabulary used
+/// across entity types:
+/// * `Square` — vertex / endpoint that moves a single point.
+/// * `Rectangle` — direction-aware mid-segment stretch (polyline
+///   straight segments, dimension extension lines).
+/// * `Diamond` — midpoint of a curve / centre of a closed shape (drags
+///   the whole shape or stretches the midpoint).
+/// * `Triangle` — directional control (rotate / add vertex / continue).
+/// * `Circle` — parametric control (radius / dimension value).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum GripShape {
     Square,
+    Rectangle,
     Diamond,
     Triangle,
+    Circle,
 }
 
 /// Describes one grip point for an entity.

@@ -423,6 +423,16 @@ impl canvas::Program<Message> for SelectionCanvas {
                     Point::new(sp.x - h, sp.y - h),
                     Size::new(h * 2.0, h * 2.0),
                 ),
+                GripShape::Rectangle => {
+                    // Wider-than-tall box — direction-aware mid-segment
+                    // stretch handle.
+                    let w = h * 1.4;
+                    let t = h * 0.7;
+                    canvas::Path::rectangle(
+                        Point::new(sp.x - w, sp.y - t),
+                        Size::new(w * 2.0, t * 2.0),
+                    )
+                }
                 GripShape::Diamond => canvas::Path::new(|b| {
                     b.move_to(Point::new(sp.x, sp.y - h));
                     b.line_to(Point::new(sp.x + h, sp.y));
@@ -436,6 +446,7 @@ impl canvas::Program<Message> for SelectionCanvas {
                     b.line_to(Point::new(sp.x - h, sp.y + h));
                     b.close();
                 }),
+                GripShape::Circle => canvas::Path::circle(sp, h),
             };
 
             if grip.is_hot {

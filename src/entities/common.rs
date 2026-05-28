@@ -148,6 +148,26 @@ pub fn triangle_grip(id: usize, world: Vec3) -> GripDef {
     }
 }
 
+#[allow(dead_code)]
+pub fn rectangle_grip(id: usize, world: Vec3) -> GripDef {
+    GripDef {
+        id,
+        world,
+        is_midpoint: true,
+        shape: GripShape::Rectangle,
+    }
+}
+
+#[allow(dead_code)]
+pub fn circle_grip(id: usize, world: Vec3) -> GripDef {
+    GripDef {
+        id,
+        world,
+        is_midpoint: false,
+        shape: GripShape::Circle,
+    }
+}
+
 pub fn edit_prop(label: &'static str, field: &'static str, value: f64) -> Property {
     Property {
         label: label.into(),
