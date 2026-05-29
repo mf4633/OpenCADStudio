@@ -55,6 +55,16 @@ pub struct GripPendingValue {
     pub action: crate::scene::object::GripMenuAction,
     pub label: &'static str,
 }
+
+/// Open Quick Select panel state. `type_filter` / `layer_filter` of
+/// `None` match every entity in that field; otherwise the filter is the
+/// literal name to compare against.
+#[derive(Clone, Debug)]
+pub struct QSelectState {
+    pub type_filter: Option<String>,
+    pub layer_filter: Option<String>,
+    pub append: bool,
+}
 use crate::snap::Snapper;
 use crate::ui::{AppMenu, CommandLine, Ribbon, StatusBar};
 use acadrust::types::{Color as AcadColor, LineWeight};
@@ -135,6 +145,10 @@ pub(super) struct OpenCADStudio {
     /// until dismissed (click outside, ESC, cursor leaves the grip).
     grip_popup: Option<GripPopup>,
     grip_pending: Option<GripPendingValue>,
+    /// Open Quick Select panel state. `None` = panel closed. Filters are
+    /// applied via `Message::QSelectApply`; the panel is dismissed on
+    /// Apply / Cancel / Esc / outside-click.
+    qselect: Option<QSelectState>,
     /// Show the UCS icon in the bottom-left corner of model space (UCSICON).
     show_ucs_icon: bool,
     /// Whether the ViewCube 3D gizmo is visible in model space (NAVVCUBE).
@@ -627,6 +641,23 @@ pub enum Message {
     // ── About window ────────────────────────────────────────────────────
     AboutOpen,
     AboutCopyInfo,
+    // ── Quick Select / Select Similar ───────────────────────────────────
+    /// Extend the current selection with every entity in the active
+    /// layout that matches a selected entity by (type, layer).
+    SelectSimilar,
+    /// Open the Quick Select panel. Initialises filters from the current
+    /// selection's first entity (type + layer) when one is selected.
+    QSelectOpen,
+    /// Close the Quick Select panel without applying.
+    QSelectClose,
+    /// Type filter — `None` means "any type".
+    QSelectSetType(Option<String>),
+    /// Layer filter — `None` means "any layer".
+    QSelectSetLayer(Option<String>),
+    /// Append-to-current-selection toggle.
+    QSelectSetAppend(bool),
+    /// Apply the current filter and close the panel.
+    QSelectApply,
     /// The user clicked the title-bar ✕ (fires before the window closes).
     WindowCloseRequested(window::Id),
     /// A window was fully closed (fires after `window::close()` is called).
@@ -818,6 +849,7 @@ impl OpenCADStudio {
             grip_hover: None,
             grip_popup: None,
             grip_pending: None,
+            qselect: None,
             show_ucs_icon: true,
             show_viewcube: true,
             show_properties: true,

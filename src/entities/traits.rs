@@ -92,6 +92,56 @@ pub trait TextContent {
     fn replace_text(&mut self, search: &str, rep: &str);
 }
 
+/// Human-readable variant name used by Quick Select / Select Similar
+/// filtering. Stable across releases — the strings here are the canonical
+/// type identifiers throughout the UI.
+pub fn entity_type_name(et: &EntityType) -> &'static str {
+    match et {
+        EntityType::Point(_) => "Point",
+        EntityType::Line(_) => "Line",
+        EntityType::Circle(_) => "Circle",
+        EntityType::Arc(_) => "Arc",
+        EntityType::Ellipse(_) => "Ellipse",
+        EntityType::Polyline(_) => "Polyline",
+        EntityType::Polyline2D(_) => "Polyline2D",
+        EntityType::Polyline3D(_) => "Polyline3D",
+        EntityType::LwPolyline(_) => "LwPolyline",
+        EntityType::Text(_) => "Text",
+        EntityType::MText(_) => "MText",
+        EntityType::Spline(_) => "Spline",
+        EntityType::Dimension(_) => "Dimension",
+        EntityType::Hatch(_) => "Hatch",
+        EntityType::Solid(_) => "Solid",
+        EntityType::Face3D(_) => "3DFace",
+        EntityType::Insert(_) => "Insert",
+        EntityType::Block(_) => "Block",
+        EntityType::BlockEnd(_) => "BlockEnd",
+        EntityType::Ray(_) => "Ray",
+        EntityType::XLine(_) => "XLine",
+        EntityType::Viewport(_) => "Viewport",
+        EntityType::AttributeDefinition(_) => "AttributeDefinition",
+        EntityType::AttributeEntity(_) => "Attribute",
+        EntityType::Leader(_) => "Leader",
+        EntityType::MultiLeader(_) => "MultiLeader",
+        EntityType::MLine(_) => "MLine",
+        EntityType::Mesh(_) => "Mesh",
+        EntityType::RasterImage(_) => "RasterImage",
+        EntityType::Solid3D(_) => "Solid3D",
+        EntityType::Region(_) => "Region",
+        EntityType::Body(_) => "Body",
+        EntityType::Table(_) => "Table",
+        EntityType::Tolerance(_) => "Tolerance",
+        EntityType::PolyfaceMesh(_) => "PolyfaceMesh",
+        EntityType::Wipeout(_) => "Wipeout",
+        EntityType::Shape(_) => "Shape",
+        EntityType::Underlay(_) => "Underlay",
+        EntityType::Seqend(_) => "Seqend",
+        EntityType::Ole2Frame(_) => "Ole2Frame",
+        EntityType::PolygonMesh(_) => "PolygonMesh",
+        EntityType::Unknown(_) => "Unknown",
+    }
+}
+
 pub trait EntityTypeOps {
     fn to_truck_entity(&self, document: &CadDocument) -> Option<TruckEntity>;
     fn grips(&self) -> Vec<GripDef>;

@@ -1738,6 +1738,17 @@ impl OpenCADStudio {
                 self.refresh_properties();
             }
 
+            "SELECTSIMILAR" | "SELSIM" => {
+                let added = self.tabs[i].scene.select_similar();
+                self.command_line
+                    .push_output(&format!("Select Similar: {} added.", added));
+                self.refresh_properties();
+            }
+
+            "QSELECT" | "QS" => {
+                return Task::done(Message::QSelectOpen);
+            }
+
             // ── LIST — entity info ────────────────────────────────────────
             "LIST" | "LI" => {
                 let selected: Vec<_> = self.tabs[i].scene.selected_entities();

@@ -1242,6 +1242,9 @@ impl OpenCADStudio {
                 }
                 // Cancel layout rename / context menus first, then fall through.
                 let i_e = self.active_tab;
+                if self.qselect.take().is_some() {
+                    return Task::none();
+                }
                 {
                     let mut sel = self.tabs[i_e].scene.selection.borrow_mut();
                     if sel.context_menu.is_some() {
@@ -3373,6 +3376,82 @@ impl OpenCADStudio {
                     self.tabs[i].dirty = true;
                     self.refresh_properties();
                 }
+                Task::none()
+            }
+
+            Message::SelectSimilar => {
+                let i = self.active_tab;
+                self.tabs[i].scene.selection.borrow_mut().context_menu = None;
+                let added = self.tabs[i].scene.select_similar();
+                self.command_line
+                    .push_output(&format!("Select Similar: {} added.", added));
+                self.refresh_properties();
+                Task::none()
+            }
+
+            Message::QSelectOpen => {
+                let i = self.active_tab;
+                self.tabs[i].scene.selection.borrow_mut().context_menu = None;
+                // Seed filters from the first selected entity (if any) so
+                // a right-click → Quick Select on a known object pre-fills
+                // the panel — same idea as Select Similar but exposes the
+                // pairing for editing.
+                let mut type_filter: Option<String> = None;
+                let mut layer_filter: Option<String> = None;
+                if let Some(&h) = self.tabs[i].scene.selected.iter().next() {
+                    if let Some(e) = self.tabs[i].scene.document.get_entity(h) {
+                        use crate::entities::traits::entity_type_name;
+                        type_filter = Some(entity_type_name(e).to_string());
+                        layer_filter = Some(e.as_entity().layer().to_string());
+                    }
+                }
+                self.qselect = Some(crate::app::QSelectState {
+                    type_filter,
+                    layer_filter,
+                    append: false,
+                });
+                Task::none()
+            }
+
+            Message::QSelectClose => {
+                self.qselect = None;
+                Task::none()
+            }
+
+            Message::QSelectSetType(t) => {
+                if let Some(state) = self.qselect.as_mut() {
+                    state.type_filter = t;
+                }
+                Task::none()
+            }
+
+            Message::QSelectSetLayer(l) => {
+                if let Some(state) = self.qselect.as_mut() {
+                    state.layer_filter = l;
+                }
+                Task::none()
+            }
+
+            Message::QSelectSetAppend(b) => {
+                if let Some(state) = self.qselect.as_mut() {
+                    state.append = b;
+                }
+                Task::none()
+            }
+
+            Message::QSelectApply => {
+                let Some(state) = self.qselect.take() else {
+                    return Task::none();
+                };
+                let i = self.active_tab;
+                let matched = self.tabs[i].scene.qselect(
+                    state.type_filter.as_deref(),
+                    state.layer_filter.as_deref(),
+                    state.append,
+                );
+                self.command_line
+                    .push_output(&format!("QSELECT: {} object(s) selected.", matched));
+                self.refresh_properties();
                 Task::none()
             }
 

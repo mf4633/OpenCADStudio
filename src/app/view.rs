@@ -910,6 +910,14 @@ impl OpenCADStudio {
             iced::widget::Space::new().width(0).height(0).into()
         };
 
+        let qselect_layer: Element<'_, Message> = if let Some(state) = &self.qselect {
+            let types = tab.scene.entity_type_names_in_layout();
+            let layers = tab.scene.entity_layers_in_layout();
+            qselect_overlay(state, &types, &layers)
+        } else {
+            iced::widget::Space::new().width(0).height(0).into()
+        };
+
         let open_progress_layer: Element<'_, Message> = if let Some(p) = &self.opening {
             crate::ui::open_progress::view(p, iced::time::Instant::now())
         } else {
@@ -923,6 +931,7 @@ impl OpenCADStudio {
             scale_layer,
             dropdown_layer,
             layout_ctx_layer,
+            qselect_layer,
             open_progress_layer,
         ]
         .into()
@@ -1384,11 +1393,13 @@ fn viewport_context_menu_overlay(
                 Message::Command("COPY".to_string()),
             ));
             items.push(sep());
+            items.push(item("Select Similar".to_string(), Message::SelectSimilar));
         }
         items.push(item(
             "Select All".to_string(),
             Message::Command("SELECTALL".to_string()),
         ));
+        items.push(item("Quick Select...".to_string(), Message::QSelectOpen));
         items.push(item(
             "Zoom Extents".to_string(),
             Message::Command("ZOOM".to_string()),
@@ -1501,6 +1512,147 @@ fn layout_context_menu_overlay(name: &str) -> Element<'_, Message> {
         });
 
     stack![catcher, positioned].into()
+}
+
+// ── Quick Select panel ─────────────────────────────────────────────────────
+
+const QSELECT_ANY: &str = "(Any)";
+
+/// Floating panel for the Quick Select feature. Two pick_lists (object
+/// type, layer) filter the candidate set down to entities matching both;
+/// "(Any)" in either slot skips that filter. The panel returns to the
+/// stored state on every render, so editing one filter doesn't reset the
+/// other. Outside-click and Cancel both dismiss without applying.
+fn qselect_overlay<'a>(
+    state: &'a crate::app::QSelectState,
+    types: &[&'static str],
+    layers: &[String],
+) -> Element<'a, Message> {
+    use iced::widget::{checkbox, pick_list};
+    const BG: Color = Color { r: 0.12, g: 0.12, b: 0.12, a: 0.98 };
+    const BORDER: Color = Color { r: 0.35, g: 0.35, b: 0.35, a: 1.0 };
+    const TEXT: Color = Color { r: 0.88, g: 0.88, b: 0.88, a: 1.0 };
+    const BTN_OK: Color = Color { r: 0.22, g: 0.42, b: 0.68, a: 1.0 };
+    const BTN_OK_HOV: Color = Color { r: 0.30, g: 0.52, b: 0.80, a: 1.0 };
+    const BTN_BG: Color = Color { r: 0.22, g: 0.22, b: 0.22, a: 1.0 };
+    const BTN_HOV: Color = Color { r: 0.30, g: 0.30, b: 0.30, a: 1.0 };
+
+    let mut type_options: Vec<String> = vec![QSELECT_ANY.to_string()];
+    type_options.extend(types.iter().map(|s| (*s).to_string()));
+    let mut layer_options: Vec<String> = vec![QSELECT_ANY.to_string()];
+    layer_options.extend(layers.iter().cloned());
+
+    let type_sel = state
+        .type_filter
+        .clone()
+        .unwrap_or_else(|| QSELECT_ANY.to_string());
+    let layer_sel = state
+        .layer_filter
+        .clone()
+        .unwrap_or_else(|| QSELECT_ANY.to_string());
+
+    let label = |s: &'static str| text(s).size(12).color(TEXT).width(iced::Length::Fixed(90.0));
+
+    let btn = |lbl: &'static str, msg: Message, base: Color, hov: Color| {
+        button(text(lbl).size(12).color(TEXT))
+            .on_press(msg)
+            .style(move |_: &Theme, st| button::Style {
+                background: Some(Background::Color(
+                    if matches!(st, button::Status::Hovered | button::Status::Pressed) {
+                        hov
+                    } else {
+                        base
+                    },
+                )),
+                text_color: TEXT,
+                border: Border {
+                    color: BORDER,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            })
+            .padding([4, 14])
+    };
+
+    let panel_body = column![
+        text("Quick Select").size(14).color(TEXT),
+        Space::new().height(10),
+        row![
+            label("Object type:"),
+            pick_list(type_options, Some(type_sel), |s: String| {
+                if s == QSELECT_ANY {
+                    Message::QSelectSetType(None)
+                } else {
+                    Message::QSelectSetType(Some(s))
+                }
+            })
+            .width(Fill),
+        ]
+        .align_y(iced::Alignment::Center)
+        .spacing(8),
+        Space::new().height(6),
+        row![
+            label("Layer:"),
+            pick_list(layer_options, Some(layer_sel), |s: String| {
+                if s == QSELECT_ANY {
+                    Message::QSelectSetLayer(None)
+                } else {
+                    Message::QSelectSetLayer(Some(s))
+                }
+            })
+            .width(Fill),
+        ]
+        .align_y(iced::Alignment::Center)
+        .spacing(8),
+        Space::new().height(10),
+        row![
+            checkbox(state.append)
+                .on_toggle(Message::QSelectSetAppend)
+                .size(14),
+            Space::new().width(6),
+            text("Append to current selection").size(12).color(TEXT),
+        ]
+        .align_y(iced::Alignment::Center),
+        Space::new().height(14),
+        row![
+            Space::new().width(Fill),
+            btn("Cancel", Message::QSelectClose, BTN_BG, BTN_HOV),
+            Space::new().width(8),
+            btn("Apply", Message::QSelectApply, BTN_OK, BTN_OK_HOV),
+        ]
+        .align_y(iced::Alignment::Center),
+    ]
+    .spacing(0);
+
+    let panel = container(panel_body)
+        .padding(16)
+        .width(iced::Length::Fixed(360.0))
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(BG)),
+            border: Border {
+                color: BORDER,
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        });
+
+    // Outside-click catcher — fills the whole screen, sits below the
+    // panel. The panel itself is rendered above and absorbs its own
+    // clicks via standard widget event handling.
+    let catcher = mouse_area(
+        container(iced::widget::Space::new().width(Fill).height(Fill))
+            .width(Fill)
+            .height(Fill),
+    )
+    .on_press(Message::QSelectClose)
+    .on_right_press(Message::QSelectClose);
+
+    let centered = container(iced::widget::opaque(panel))
+        .center(Fill);
+
+    stack![catcher, centered].into()
 }
 
 /// Content for the floating "Unsaved Changes" OS window.

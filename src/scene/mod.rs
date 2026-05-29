@@ -3713,6 +3713,118 @@ impl Scene {
             .collect()
     }
 
+    /// Iterates every entity owned by the current layout's block-record.
+    /// Returns an empty vec when the block-record is missing or holds no
+    /// entity handles (legacy DXF without group-code 330 — we err on the
+    /// side of "no candidates" instead of scanning the whole document, so
+    /// model-block entities don't leak into a paper-layout selection).
+    fn current_layout_entity_handles(&self) -> Vec<Handle> {
+        let block = self.current_layout_block_handle();
+        self.document
+            .block_records
+            .iter()
+            .find(|br| br.handle == block)
+            .map(|br| br.entity_handles.clone())
+            .unwrap_or_default()
+    }
+
+    /// Extends the current selection with every entity in the active
+    /// layout that matches one of the selected entities by `(variant,
+    /// layer)`. The seed selection stays selected. No-op when nothing is
+    /// selected. Returns the number of newly-added entities.
+    pub fn select_similar(&mut self) -> usize {
+        use crate::entities::traits::entity_type_name;
+        if self.selected.is_empty() {
+            return 0;
+        }
+        let pairs: std::collections::HashSet<(&'static str, String)> = self
+            .selected
+            .iter()
+            .filter_map(|h| self.document.get_entity(*h))
+            .map(|e| (entity_type_name(e), e.as_entity().layer().to_string()))
+            .collect();
+        let handles = self.current_layout_entity_handles();
+        let mut added = 0;
+        for h in handles {
+            if self.selected.contains(&h) {
+                continue;
+            }
+            if let Some(e) = self.document.get_entity(h) {
+                let key = (entity_type_name(e), e.as_entity().layer().to_string());
+                if pairs.contains(&key) {
+                    self.selected.insert(h);
+                    added += 1;
+                }
+            }
+        }
+        if added > 0 {
+            self.bump_geometry();
+        }
+        added
+    }
+
+    /// Replaces (or extends, when `append` is true) the current selection
+    /// with every entity in the active layout that matches the optional
+    /// `type_name` and `layer` filters. A `None` filter means "any".
+    /// Returns the number of matching entities (i.e. the post-call
+    /// selection size if `append` was false, or the new total if it was
+    /// true and previously-selected matches are not double-counted).
+    pub fn qselect(
+        &mut self,
+        type_name: Option<&str>,
+        layer: Option<&str>,
+        append: bool,
+    ) -> usize {
+        use crate::entities::traits::entity_type_name;
+        if !append {
+            self.selected.clear();
+        }
+        let handles = self.current_layout_entity_handles();
+        let mut matched = 0;
+        for h in handles {
+            let Some(e) = self.document.get_entity(h) else {
+                continue;
+            };
+            let type_ok = type_name.is_none_or(|t| entity_type_name(e) == t);
+            let layer_ok = layer.is_none_or(|l| e.as_entity().layer() == l);
+            if type_ok && layer_ok {
+                self.selected.insert(h);
+                matched += 1;
+            }
+        }
+        self.bump_geometry();
+        matched
+    }
+
+    /// Returns the sorted set of entity-type names present in the active
+    /// layout. Used to populate the Quick Select "Object type" dropdown
+    /// with only the types that actually exist in the drawing.
+    pub fn entity_type_names_in_layout(&self) -> Vec<&'static str> {
+        use crate::entities::traits::entity_type_name;
+        let mut names: std::collections::BTreeSet<&'static str> =
+            std::collections::BTreeSet::new();
+        for h in self.current_layout_entity_handles() {
+            if let Some(e) = self.document.get_entity(h) {
+                names.insert(entity_type_name(e));
+            }
+        }
+        names.into_iter().collect()
+    }
+
+    /// Returns the sorted set of layer names referenced by entities in
+    /// the active layout. Used to populate the Quick Select "Layer"
+    /// dropdown.
+    pub fn entity_layers_in_layout(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        for h in self.current_layout_entity_handles() {
+            if let Some(e) = self.document.get_entity(h) {
+                names.insert(e.as_entity().layer().to_string());
+            }
+        }
+        names.into_iter().collect()
+    }
+
     // ── Erase ─────────────────────────────────────────────────────────────
 
     pub fn erase_entities(&mut self, handles: &[Handle]) {
