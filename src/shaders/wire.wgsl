@@ -38,12 +38,18 @@ struct InstanceIn {
 }
 
 struct VertexOut {
-    @builtin(position) clip_pos:       vec4<f32>,
-    @location(0)       color:          vec4<f32>,
-    @location(1)       distance:       f32,
-    @location(2)       pattern_length: f32,
-    @location(3)       pat0:           vec4<f32>,
-    @location(4)       pat1:           vec4<f32>,
+    @builtin(position)              clip_pos:       vec4<f32>,
+    @location(0)                    color:          vec4<f32>,
+    @location(1)                    distance:       f32,
+    @location(2)                    pattern_length: f32,
+    @location(3)                    pat0:           vec4<f32>,
+    @location(4)                    pat1:           vec4<f32>,
+    // World length of the smallest non-zero dash / gap element of this
+    // instance. Flat-interpolated (constant per instance) so the
+    // fragment stage can short-circuit the dash test when every gap
+    // projects below one pixel on screen. See the LOD branch in
+    // `fs_main`.
+    @location(5) @interpolate(flat) min_elem:       f32,
 }
 
 @vertex fn vs_main(@builtin(vertex_index) vid: u32, in: InstanceIn) -> VertexOut {
@@ -90,6 +96,19 @@ struct VertexOut {
     let ndc_offset = perp_ndc * hw * side;
     let final_clip = clip_pos + vec4<f32>(ndc_offset * clip_pos.w, 0.0, 0.0);
 
+    // Smallest non-zero dash / gap element, in world units. Used by
+    // the fragment stage to decide when the pattern's finest feature
+    // would render below one pixel and should collapse to a solid line.
+    var min_elem: f32 = in.pattern_length;
+    let elems = array<f32, 8>(
+        in.pat0.x, in.pat0.y, in.pat0.z, in.pat0.w,
+        in.pat1.x, in.pat1.y, in.pat1.z, in.pat1.w,
+    );
+    for (var i = 0u; i < 8u; i++) {
+        let e = abs(elems[i]);
+        if e > 0.0 && e < min_elem { min_elem = e; }
+    }
+
     var out: VertexOut;
     out.clip_pos       = final_clip;
     out.color          = in.color;
@@ -97,6 +116,7 @@ struct VertexOut {
     out.pattern_length = in.pattern_length;
     out.pat0           = in.pat0;
     out.pat1           = in.pat1;
+    out.min_elem       = min_elem;
     return out;
 }
 
@@ -117,8 +137,15 @@ fn in_dash(dist: f32, pat_len: f32, p0: vec4<f32>, p1: vec4<f32>) -> bool {
 
 @fragment fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if in.pattern_length > 0.0 {
-        if !in_dash(in.distance, in.pattern_length, in.pat0, in.pat1) {
-            discard;
+        // LOD: once the pattern's smallest feature drops below ~1 px
+        // on screen, dash gaps alias / shimmer (or vanish completely)
+        // and the user reads the line as solid anyway. Skip the dash
+        // test and return solid colour — also saves the per-fragment
+        // arc-length math + `discard`.
+        if in.min_elem >= u.world_per_pixel {
+            if !in_dash(in.distance, in.pattern_length, in.pat0, in.pat1) {
+                discard;
+            }
         }
     }
     return in.color;
