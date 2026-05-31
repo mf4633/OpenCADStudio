@@ -3591,18 +3591,6 @@ impl OpenCADStudio {
                 }
                 Task::none()
             }
-            Message::MTextType(s) => {
-                self.mtext_type(&s);
-                Task::none()
-            }
-            Message::MTextBackspace => {
-                self.mtext_backspace();
-                Task::none()
-            }
-            Message::MTextDelete => {
-                self.mtext_delete();
-                Task::none()
-            }
             Message::MTextCaretMove(d) => {
                 self.mtext_caret_move(d);
                 Task::none()
