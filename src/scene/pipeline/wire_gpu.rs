@@ -228,7 +228,7 @@ fn emit_wire_instances(wire: &WireModel, color: [f32; 4], draw_depth: f32) -> Ve
                 .find(|&v| v > 0.0)
                 .unwrap_or_else(|| wire.pattern[0].abs());
             // Phase that puts the wire midpoint at the dash center.
-            let offset = first_dash * 0.5 - total * 0.5;
+            let offset = first_dash * 0.5 + total * 0.5;
             for d in dists.iter_mut() {
                 *d += offset;
             }
