@@ -1,10 +1,13 @@
-// DDEDIT — edit text content of a Text or MText entity in-place.
+// DDEDIT — edit the text content of a text-bearing entity in-place.
 //
 // Workflow:
-//   1. Pick a Text or MText entity (or fire from double-click with handle pre-set).
-//   2. Enter new text. Press Enter to commit, Escape to cancel.
+//   1. Pick a text entity (or fire from double-click / a current selection).
+//   2. The picked entity opens its in-place editor: a plain text box for
+//      single-line text (Text, attributes, dimension override, tolerance) or
+//      the rich MText editor for MText / MultiLeader. A Leader resolves to the
+//      entity it annotates.
 
-use acadrust::{EntityType, Handle};
+use acadrust::Handle;
 use glam::Vec3;
 
 use crate::command::{CadCommand, CmdResult};
@@ -21,27 +24,11 @@ pub fn tool() -> ToolDef {
     }
 }
 
-enum DdeditStep {
-    PickEntity,
-    EnterText { handle: Handle, current: String },
-}
-
-pub struct DdeditCommand {
-    step: DdeditStep,
-}
+pub struct DdeditCommand;
 
 impl DdeditCommand {
     pub fn new() -> Self {
-        Self {
-            step: DdeditStep::PickEntity,
-        }
-    }
-
-    /// Start with a pre-picked entity (for double-click use).
-    pub fn with_handle(handle: Handle, current: String) -> Self {
-        Self {
-            step: DdeditStep::EnterText { handle, current },
-        }
+        Self
     }
 }
 
@@ -51,51 +38,20 @@ impl CadCommand for DdeditCommand {
     }
 
     fn prompt(&self) -> String {
-        match &self.step {
-            DdeditStep::PickEntity => "DDEDIT  Select text entity:".into(),
-            DdeditStep::EnterText { current, .. } => {
-                format!("DDEDIT  Enter new text <{current}>:")
-            }
-        }
+        "DDEDIT  Select text entity:".into()
     }
 
     fn needs_entity_pick(&self) -> bool {
-        matches!(self.step, DdeditStep::PickEntity)
+        true
     }
 
     fn on_entity_pick(&mut self, handle: Handle, _pt: Vec3) -> CmdResult {
         if handle.is_null() {
             return CmdResult::NeedPoint;
         }
-        // The current value will be filled in by the caller (commands.rs dispatch)
-        // via on_text_input once the entity is known. Store handle here.
-        self.step = DdeditStep::EnterText {
-            handle,
-            current: String::new(),
-        };
-        CmdResult::NeedPoint
-    }
-
-    fn wants_text_input(&self) -> bool {
-        matches!(self.step, DdeditStep::EnterText { .. })
-    }
-
-    fn wants_text_with_spaces(&self) -> bool {
-        matches!(self.step, DdeditStep::EnterText { .. })
-    }
-
-    fn on_text_input(&mut self, text: &str) -> Option<CmdResult> {
-        let (handle, current) = match &self.step {
-            DdeditStep::EnterText { handle, current } => (*handle, current.clone()),
-            _ => return None,
-        };
-        // Empty input → keep existing text
-        let new_text = if text.trim().is_empty() {
-            current
-        } else {
-            text.to_string()
-        };
-        Some(CmdResult::DdeditEntity { handle, new_text })
+        // Hand the picked entity to the in-place editor (plain box or rich
+        // MText editor, chosen by the entity's type).
+        CmdResult::EditTextEntity { handle }
     }
 
     fn on_point(&mut self, _pt: Vec3) -> CmdResult {
@@ -106,16 +62,5 @@ impl CadCommand for DdeditCommand {
     }
     fn on_escape(&mut self) -> CmdResult {
         CmdResult::Cancel
-    }
-}
-
-/// Extract the text content from a Text or MText entity.
-pub fn entity_text(entity: &EntityType) -> Option<String> {
-    match entity {
-        EntityType::Text(t) => Some(t.value.clone()),
-        EntityType::MText(t) => Some(t.value.clone()),
-        EntityType::AttributeDefinition(a) => Some(a.default_value.clone()),
-        EntityType::AttributeEntity(a) => Some(a.get_value().to_string()),
-        _ => None,
     }
 }

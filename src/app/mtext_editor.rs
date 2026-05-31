@@ -330,6 +330,8 @@ use std::sync::Arc;
 
 impl super::OpenCADStudio {
     /// Open the in-place editor for a new (`handle = None`) or existing MText.
+    /// Open the rich MText editor for a new or existing MText / MultiLeader.
+    /// The committed slot is chosen by the edited entity's type.
     pub(super) fn open_mtext_editor(
         &mut self,
         pos: Vec3,
@@ -341,17 +343,26 @@ impl super::OpenCADStudio {
         if let Some(p) = self.tabs[self.active_tab].scene.selection.borrow().last_move_pos {
             state.screen_anchor = p;
         }
-        // Seed attachment / line-spacing from the entity being edited.
+        // Seed attachment / line-spacing / box width from the entity being edited.
         if let Some(h) = handle {
-            if let Some(EntityType::MText(m)) = self.tabs[self.active_tab].scene.document.get_entity(h) {
-                state.attachment = m.attachment_point;
-                state.line_spacing = m.line_spacing_factor as f32;
-                if !m.style.trim().is_empty() {
-                    state.style = m.style.clone();
+            match self.tabs[self.active_tab].scene.document.get_entity(h) {
+                Some(EntityType::MText(m)) => {
+                    state.attachment = m.attachment_point;
+                    state.line_spacing = m.line_spacing_factor as f32;
+                    if !m.style.trim().is_empty() {
+                        state.style = m.style.clone();
+                    }
+                    if m.rectangle_width > 0.0 {
+                        state.rect_width = m.rectangle_width;
+                    }
                 }
-                if m.rectangle_width > 0.0 {
-                    state.rect_width = m.rectangle_width;
+                Some(EntityType::MultiLeader(ml)) => {
+                    state.line_spacing = ml.context.line_spacing_factor as f32;
+                    if ml.context.text_width > 0.0 {
+                        state.rect_width = ml.context.text_width;
+                    }
                 }
+                _ => {}
             }
         }
         self.mtext_editor = Some(state);
@@ -616,14 +627,23 @@ impl super::OpenCADStudio {
         }
         if let Some(h) = ed.editing {
             self.push_undo_snapshot(i, "MTEXT");
-            if let Some(EntityType::MText(t)) =
-                self.tabs[i].scene.document.get_entity_mut(h)
-            {
-                t.value = mt.value;
-                t.height = mt.height;
-                t.attachment_point = mt.attachment_point;
-                t.line_spacing_factor = mt.line_spacing_factor;
-                t.rectangle_width = mt.rectangle_width;
+            match self.tabs[i].scene.document.get_entity_mut(h) {
+                Some(EntityType::MText(t)) => {
+                    t.value = mt.value;
+                    t.height = mt.height;
+                    t.attachment_point = mt.attachment_point;
+                    t.line_spacing_factor = mt.line_spacing_factor;
+                    t.rectangle_width = mt.rectangle_width;
+                }
+                Some(EntityType::MultiLeader(ml)) => {
+                    ml.context.text_string = mt.value;
+                    ml.context.text_height = mt.height;
+                    ml.context.line_spacing_factor = mt.line_spacing_factor;
+                    if mt.rectangle_width > 0.0 {
+                        ml.context.text_width = mt.rectangle_width;
+                    }
+                }
+                _ => {}
             }
             self.tabs[i].scene.bump_geometry();
             self.tabs[i].dirty = true;

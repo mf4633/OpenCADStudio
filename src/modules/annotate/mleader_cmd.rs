@@ -25,20 +25,13 @@ pub fn tool() -> ToolDef {
     }
 }
 
-enum Step {
-    CollectPoints { verts: Vec<Vec3> },
-    AskText { verts: Vec<Vec3> },
-}
-
 pub struct MLeaderCommand {
-    step: Step,
+    verts: Vec<Vec3>,
 }
 
 impl MLeaderCommand {
     pub fn new() -> Self {
-        Self {
-            step: Step::CollectPoints { verts: Vec::new() },
-        }
+        Self { verts: Vec::new() }
     }
 }
 
@@ -48,53 +41,29 @@ impl CadCommand for MLeaderCommand {
     }
 
     fn prompt(&self) -> String {
-        match &self.step {
-            Step::CollectPoints { verts } if verts.is_empty() => {
-                "MLEADER  Specify arrowhead point:".into()
-            }
-            Step::CollectPoints { verts } => format!(
-                "MLEADER  Specify next point [{} pts — Enter to finish]:",
-                verts.len()
-            ),
-            Step::AskText { verts } => format!(
-                "MLEADER  Enter annotation text [{} pts — blank = no text]:",
-                verts.len()
-            ),
+        if self.verts.is_empty() {
+            "MLEADER  Specify arrowhead point:".into()
+        } else {
+            format!(
+                "MLEADER  Specify next point [{} pts — Enter to place text]:",
+                self.verts.len()
+            )
         }
-    }
-
-    fn wants_text_input(&self) -> bool {
-        matches!(self.step, Step::AskText { .. })
     }
 
     fn on_point(&mut self, pt: Vec3) -> CmdResult {
-        if let Step::CollectPoints { verts } = &mut self.step {
-            verts.push(pt);
-        }
+        self.verts.push(pt);
         CmdResult::NeedPoint
     }
 
     fn on_enter(&mut self) -> CmdResult {
-        if let Step::CollectPoints { verts } = &self.step {
-            if verts.len() < 2 {
-                return CmdResult::Cancel;
-            }
-            let verts = verts.clone();
-            self.step = Step::AskText { verts };
-            CmdResult::NeedPoint
-        } else {
-            CmdResult::Cancel
+        if self.verts.len() < 2 {
+            return CmdResult::Cancel;
         }
-    }
-
-    fn on_text_input(&mut self, raw: &str) -> Option<CmdResult> {
-        if let Step::AskText { verts } = &self.step {
-            let text = raw.trim();
-            let ml = build_mleader(text, verts);
-            Some(CmdResult::CommitAndExit(EntityType::MultiLeader(ml)))
-        } else {
-            None
-        }
+        // Place the leader with empty text, then open the in-place MText editor
+        // so the user types the annotation into the rich editor.
+        let ml = build_mleader("", &self.verts);
+        CmdResult::CommitAndEditText(EntityType::MultiLeader(ml))
     }
 
     fn on_escape(&mut self) -> CmdResult {
@@ -102,16 +71,12 @@ impl CadCommand for MLeaderCommand {
     }
 
     fn on_mouse_move(&mut self, pt: Vec3) -> Option<WireModel> {
-        if let Step::CollectPoints { verts } = &self.step {
-            if verts.is_empty() {
-                return None;
-            }
-            let mut pts = verts.clone();
-            pts.push(pt);
-            Some(preview_wire(&pts))
-        } else {
-            None
+        if self.verts.is_empty() {
+            return None;
         }
+        let mut pts = self.verts.clone();
+        pts.push(pt);
+        Some(preview_wire(&pts))
     }
 }
 

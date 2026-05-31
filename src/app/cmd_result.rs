@@ -125,6 +125,57 @@ impl OpenCADStudio {
                 self.tabs[i].snap_result = None;
                 self.restore_pre_cmd_tangent();
             }
+            CmdResult::CommitAndEditText(entity) => {
+                let label = self.history_label_from_active_cmd(i, "ENTITY");
+                self.push_undo_snapshot(i, label);
+                let handle = self.commit_entity_handle(entity);
+                self.tabs[i].dirty = true;
+                self.tabs[i].scene.clear_preview_wire();
+                self.tabs[i].active_cmd = None;
+                self.tabs[i].snap_result = None;
+                self.restore_pre_cmd_tangent();
+                self.ribbon.deactivate_tool();
+                if let Some(h) = handle {
+                    return self.begin_text_edit(h);
+                }
+            }
+            CmdResult::CommitManyAndEditText {
+                entities,
+                edit_index,
+            } => {
+                let label = self.history_label_from_active_cmd(i, "ENTITY");
+                self.push_undo_snapshot(i, label);
+                let mut edit_handle = None;
+                let mut leader_handle = None;
+                for (idx, entity) in entities.into_iter().enumerate() {
+                    let is_leader = matches!(entity, acadrust::EntityType::Leader(_));
+                    let h = self.commit_entity_handle(entity);
+                    if idx == edit_index {
+                        edit_handle = h;
+                    }
+                    if is_leader {
+                        leader_handle = h;
+                    }
+                }
+                // Link the leader to its annotation so the pair edits as a unit
+                // (double-click on the leader resolves to the text entity).
+                if let (Some(lh), Some(ah)) = (leader_handle, edit_handle) {
+                    if let Some(acadrust::EntityType::Leader(l)) =
+                        self.tabs[i].scene.document.get_entity_mut(lh)
+                    {
+                        l.annotation_handle = ah;
+                    }
+                }
+                self.tabs[i].dirty = true;
+                self.tabs[i].scene.clear_preview_wire();
+                self.tabs[i].active_cmd = None;
+                self.tabs[i].snap_result = None;
+                self.restore_pre_cmd_tangent();
+                self.ribbon.deactivate_tool();
+                if let Some(h) = edit_handle {
+                    return self.begin_text_edit(h);
+                }
+            }
             CmdResult::CreateBlock {
                 handles,
                 name,
@@ -1506,6 +1557,30 @@ impl OpenCADStudio {
                 self.tabs[i].snap_result = None;
                 self.open_mtext_editor(pos, handle, &initial, height);
             }
+            CmdResult::OpenTextEditor {
+                pos,
+                handle,
+                initial,
+                height,
+            } => {
+                self.tabs[i].active_cmd = None;
+                self.tabs[i].snap_result = None;
+                self.open_text_inline(
+                    pos,
+                    handle,
+                    &initial,
+                    height,
+                    super::text_inline::TextEntityField::Text,
+                );
+            }
+            CmdResult::EditTextEntity { handle } => {
+                self.tabs[i].active_cmd = None;
+                self.tabs[i].snap_result = None;
+                self.tabs[i].scene.clear_preview_wire();
+                self.restore_pre_cmd_tangent();
+                self.ribbon.deactivate_tool();
+                return self.begin_text_edit(handle);
+            }
             CmdResult::DdeditEntity { handle, new_text } => {
                 let mut updated = false;
                 if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(handle) {
@@ -1555,6 +1630,12 @@ impl OpenCADStudio {
         // running the ribbon tool button still has to visually deactivate.
         if self.tabs[i].active_cmd.is_none() {
             self.ribbon.deactivate_tool();
+        }
+        // The in-place TEXT editor needs keyboard focus on its own field.
+        if self.text_inline.is_some() {
+            return iced::widget::operation::focus(iced::widget::Id::new(
+                super::view::TEXT_INLINE_ID,
+            ));
         }
         self.focus_cmd_input()
     }

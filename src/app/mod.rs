@@ -6,6 +6,7 @@ mod history;
 mod layers;
 mod mtext_editor;
 mod properties;
+mod text_inline;
 mod update;
 mod view;
 
@@ -253,6 +254,8 @@ pub(super) struct OpenCADStudio {
     shift_down: bool,
     /// Open in-place MText editor (toolbar + text area + live preview), if any.
     mtext_editor: Option<mtext_editor::MTextEditorState>,
+    /// Open in-place single-line TEXT editor (plain text-entry box), if any.
+    text_inline: Option<text_inline::TextInlineState>,
     /// Which layout tab has its context menu open (None = closed).
     layout_context_menu: Option<String>,
     /// Inline rename state: (original_name, current_edit_value).
@@ -755,6 +758,11 @@ pub enum Message {
     MTextOk,
     /// Discard the editor without creating / changing the entity.
     MTextCancel,
+    // ── In-place single-line TEXT editor ────────────────────────────────
+    /// Text-field input changed.
+    TextInlineInput(String),
+    /// Commit the editor: create or update the TEXT entity.
+    TextInlineOk,
     // ── Draw Order context menu ─────────────────────────────────────────
     /// Toggle the Draw Order sub-items in the viewport context menu.
     DrawOrderSubmenuToggle,
@@ -996,6 +1004,7 @@ impl OpenCADStudio {
             clipboard_centroid: glam::Vec3::ZERO,
             shift_down: false,
             mtext_editor: None,
+            text_inline: None,
             layout_context_menu: None,
             layout_rename_state: None,
             last_vp_click_time: None,

@@ -1196,22 +1196,22 @@ impl OpenCADStudio {
             }
 
             "DDEDIT" | "ED" => {
-                use crate::modules::annotate::ddedit::{entity_text, DdeditCommand};
-                // If a single text/mtext entity is already selected, skip the pick step.
+                use crate::modules::annotate::ddedit::DdeditCommand;
+                // A single text entity already selected opens its in-place
+                // editor directly; otherwise prompt for a pick.
                 let sel = self.tabs[i].scene.selected_entities();
+                let editable = (sel.len() == 1).then(|| sel[0].0).filter(|h| {
+                    self.tabs[i].scene.document.get_entity(*h).is_some_and(|e| {
+                        super::text_inline::read_text_field(e).is_some()
+                            || matches!(e, acadrust::EntityType::Leader(_))
+                    })
+                });
+                if let Some(h) = editable {
+                    return self.begin_text_edit(h);
+                }
                 if sel.len() == 1 {
-                    let (h, _) = sel[0];
-                    if let Some(e) = self.tabs[i].scene.document.get_entity(h) {
-                        if let Some(cur) = entity_text(e) {
-                            let cmd = DdeditCommand::with_handle(h, cur.clone());
-                            self.command_line
-                                .push_info(&format!("DDEDIT  Enter new text <{cur}>:"));
-                            self.tabs[i].active_cmd = Some(Box::new(cmd));
-                        } else {
-                            self.command_line
-                                .push_error("DDEDIT: selected entity is not text.");
-                        }
-                    }
+                    self.command_line
+                        .push_error("DDEDIT: selected entity is not text.");
                 } else {
                     let cmd = DdeditCommand::new();
                     self.command_line.push_info(&cmd.prompt());

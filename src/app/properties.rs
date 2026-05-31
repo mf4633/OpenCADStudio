@@ -434,7 +434,17 @@ impl OpenCADStudio {
     }
 
     /// Add an entity to the correct space (model or paper space layout).
-    pub(super) fn commit_entity(&mut self, mut entity: acadrust::EntityType) {
+    pub(super) fn commit_entity(&mut self, entity: acadrust::EntityType) {
+        let _ = self.commit_entity_handle(entity);
+    }
+
+    /// Like [`commit_entity`] but returns the handle the new entity was given
+    /// (or `None` if it could not be added). Lets callers follow up — e.g.
+    /// open the in-place text editor on a freshly created MultiLeader.
+    pub(super) fn commit_entity_handle(
+        &mut self,
+        mut entity: acadrust::EntityType,
+    ) -> Option<Handle> {
         let i = self.active_tab;
         let layer = &self.tabs[i].active_layer;
         if layer != "0" || entity.as_entity().layer().is_empty() {
@@ -531,13 +541,16 @@ impl OpenCADStudio {
             {
                 Ok(new_handle) => {
                     self.tabs[i].scene.auto_fit_viewport(new_handle);
+                    Some(new_handle)
                 }
-                Err(e) => self
-                    .command_line
-                    .push_error(&format!("Viewport could not be added: {e}")),
+                Err(e) => {
+                    self.command_line
+                        .push_error(&format!("Viewport could not be added: {e}"));
+                    None
+                }
             }
         } else {
-            self.tabs[i].scene.add_entity(entity);
+            Some(self.tabs[i].scene.add_entity(entity))
         }
     }
 }

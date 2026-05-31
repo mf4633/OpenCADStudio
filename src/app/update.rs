@@ -1260,6 +1260,11 @@ impl OpenCADStudio {
                     self.mtext_cancel();
                     return Task::none();
                 }
+                // The in-place TEXT editor likewise cancels on Escape.
+                if self.text_inline.is_some() {
+                    self.text_inline_cancel();
+                    return Task::none();
+                }
                 // Grip popup intercepts Escape — dismisses the menu
                 // without doing anything else.
                 if self.grip_popup.take().is_some() {
@@ -2959,31 +2964,20 @@ impl OpenCADStudio {
                         let hit = scene::hit_test::click_hit(p, &all_wires[..], vp_mat, bounds)
                             .and_then(|s| Scene::handle_from_wire_name(s));
                         if let Some(handle) = hit {
-                            // MText opens the in-place editor; other text types
-                            // keep the command-line DDEDIT path.
-                            if let Some(AcadEntityType::MText(m)) =
-                                self.tabs[i].scene.document.get_entity(handle)
-                            {
-                                let pos = glam::Vec3::new(
-                                    m.insertion_point.x as f32,
-                                    m.insertion_point.y as f32,
-                                    m.insertion_point.z as f32,
-                                );
-                                let (val, h) = (m.value.clone(), m.height);
-                                self.open_mtext_editor(pos, Some(handle), &val, h);
-                                return Task::none();
-                            }
-                            if let Some(entity) = self.tabs[i].scene.document.get_entity(handle) {
-                                use crate::modules::annotate::ddedit::{
-                                    entity_text, DdeditCommand,
-                                };
-                                if let Some(cur) = entity_text(entity) {
-                                    let cmd = DdeditCommand::with_handle(handle, cur.clone());
-                                    self.command_line
-                                        .push_info(&format!("DDEDIT  Enter new text <{cur}>:"));
-                                    self.tabs[i].active_cmd = Some(Box::new(cmd));
-                                    return self.focus_cmd_input();
-                                }
+                            // Any text-bearing entity opens its in-place editor
+                            // (plain box or rich MText editor, per type). A
+                            // Leader resolves to the entity it annotates.
+                            let is_editable_text = self
+                                .tabs[i]
+                                .scene
+                                .document
+                                .get_entity(handle)
+                                .is_some_and(|e| {
+                                    super::text_inline::read_text_field(e).is_some()
+                                        || matches!(e, AcadEntityType::Leader(_))
+                                });
+                            if is_editable_text {
+                                return self.begin_text_edit(handle);
                             }
                         }
                     }
@@ -3618,6 +3612,17 @@ impl OpenCADStudio {
             }
             Message::MTextCancel => {
                 self.mtext_cancel();
+                Task::none()
+            }
+
+            Message::TextInlineInput(s) => {
+                if let Some(ed) = self.text_inline.as_mut() {
+                    ed.value = s;
+                }
+                Task::none()
+            }
+            Message::TextInlineOk => {
+                self.text_inline_commit();
                 Task::none()
             }
 

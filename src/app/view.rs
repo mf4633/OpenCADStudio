@@ -807,6 +807,9 @@ impl OpenCADStudio {
                     .collect();
                 viewport_stack = viewport_stack.push(mtext_editor_overlay(ed, styles));
             }
+            if let Some(ed) = &self.text_inline {
+                viewport_stack = viewport_stack.push(text_inline_overlay(ed));
+            }
         }
 
         // Properties / layers panels carry no useful state on the Start tab.
@@ -833,7 +836,8 @@ impl OpenCADStudio {
         let dyn_capturing = (self.dyn_input
             && tab.active_cmd.is_some()
             && !tab.dyn_fields.is_empty())
-            || self.mtext_editor.as_ref().is_some_and(|e| e.show_preview);
+            || self.mtext_editor.as_ref().is_some_and(|e| e.show_preview)
+            || self.text_inline.is_some();
         let command_line_overlay =
             iced::widget::container(self.command_line.view(allow_autocomplete, dyn_capturing))
             .width(Fill)
@@ -1360,6 +1364,38 @@ fn position_canvas_overlay<'a>(
 
 /// Widget id for the MText editor's text area (focused when Edit mode opens).
 pub(super) const MTEXT_TEXT_ID: &str = "mtext_editor_text";
+
+/// Widget id for the in-place TEXT editor's input (focused when it opens).
+pub(super) const TEXT_INLINE_ID: &str = "text_inline_input";
+
+/// In-place single-line TEXT editor: a plain text-entry box (no formatting
+/// toolbar), anchored at the insertion-point click. Enter commits; Esc cancels.
+fn text_inline_overlay(ed: &super::text_inline::TextInlineState) -> Element<'_, Message> {
+    const PANEL_BG: Color = Color { r: 0.16, g: 0.16, b: 0.16, a: 0.98 };
+    const BORDER: Color = Color { r: 0.40, g: 0.40, b: 0.40, a: 1.0 };
+
+    let field = text_input("Text", &ed.value)
+        .id(iced::widget::Id::new(TEXT_INLINE_ID))
+        .on_input(Message::TextInlineInput)
+        .on_submit(Message::TextInlineOk)
+        .padding(6)
+        .size(13)
+        .width(iced::Length::Fixed(240.0));
+
+    let panel = container(field)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(PANEL_BG)),
+            border: Border { color: BORDER, width: 1.0, radius: 5.0.into() },
+            ..Default::default()
+        })
+        .padding(4);
+
+    let anchor = iced::Point::new(
+        (ed.screen_anchor.x - 6.0).max(0.0),
+        (ed.screen_anchor.y - 18.0).max(0.0),
+    );
+    position_canvas_overlay(anchor, panel.into())
+}
 
 // Stroke-font families the renderer ships (LibreCAD LFF; see scene/lff.rs).
 const MTEXT_FONTS: [&str; 10] = [

@@ -51,6 +51,16 @@ pub enum CmdResult {
     CommitEntity(EntityType),
     /// Commit an acadrust entity to the document and end the command.
     CommitAndExit(EntityType),
+    /// Commit an acadrust entity, end the command, and open the in-place text
+    /// editor on it (used by MLEADER to type the annotation after placement).
+    CommitAndEditText(EntityType),
+    /// Commit several entities, end the command, and open the in-place text
+    /// editor on the one at `edit_index` (used by LEADER to place the leader
+    /// line plus an empty MText annotation, then type into the MText).
+    CommitManyAndEditText {
+        entities: Vec<EntityType>,
+        edit_index: usize,
+    },
     /// Create a block definition from existing entities and insert one reference.
     CreateBlock {
         handles: Vec<Handle>,
@@ -126,10 +136,22 @@ pub enum CmdResult {
     SetPlotWindow { p1: Vec3, p2: Vec3 },
     /// Replace the text content of a Text/MText entity in-place.
     DdeditEntity { handle: Handle, new_text: String },
+    /// Open the in-place editor (plain box or rich MText editor, per type) for
+    /// a text-bearing entity picked by a command such as DDEDIT.
+    EditTextEntity { handle: Handle },
     /// Open the in-place MText editor (formatting toolbar + multi-line text
     /// area with live viewport preview). `handle` is `Some` when editing an
     /// existing MText, `None` when creating a new one at `pos`.
     OpenMTextEditor {
+        pos: Vec3,
+        handle: Option<Handle>,
+        initial: String,
+        height: f64,
+    },
+    /// Open the in-place single-line TEXT editor (a plain text-entry box, no
+    /// formatting toolbar). `handle` is `Some` when editing an existing Text,
+    /// `None` when creating a new one at `pos`.
+    OpenTextEditor {
         pos: Vec3,
         handle: Option<Handle>,
         initial: String,

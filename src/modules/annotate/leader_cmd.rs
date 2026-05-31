@@ -1,12 +1,16 @@
 // LEADER command
 //
-// Flow:
-//   1. CollectPoints  — click arrowhead, then bend points; Enter (≥2) to finish
-//   2. AskCreationType— wants_text_input; N/T/B/TL → default Text on blank Enter
-//   3. AskAnnotation  — text string (Text) or block name (Block); blank = skip
-//   → commit Leader  [+ MText | + Insert]
+// Flow (matching the classic AutoCAD LEADER):
+//   1. Click the arrowhead point, then one or more bend points.
+//   2. Enter (≥2 points) places the leader line plus a linked, empty MText
+//      annotation at the landing, and opens the in-place MText editor so the
+//      user types the annotation. Escape leaves the leader without text.
+//
+// The MText is a separate entity referenced by the leader's annotation_handle
+// (DXF group 340); editing/erasing them stays in sync via that link.
 
-use acadrust::entities::{Insert, Leader, LeaderCreationType, MText};
+use acadrust::entities::mtext::AttachmentPoint;
+use acadrust::entities::{Leader, LeaderCreationType, MText};
 use acadrust::types::Vector3;
 use acadrust::EntityType;
 use glam::Vec3;
@@ -26,22 +30,13 @@ pub fn tool() -> ToolDef {
     }
 }
 
-enum Step {
-    CollectPoints { verts: Vec<Vec3> },
-    AskCreationType { verts: Vec<Vec3> },
-    AskText { verts: Vec<Vec3> },
-    AskBlock { verts: Vec<Vec3> },
-}
-
 pub struct LeaderCommand {
-    step: Step,
+    verts: Vec<Vec3>,
 }
 
 impl LeaderCommand {
     pub fn new() -> Self {
-        Self {
-            step: Step::CollectPoints { verts: Vec::new() },
-        }
+        Self { verts: Vec::new() }
     }
 }
 
@@ -51,102 +46,33 @@ impl CadCommand for LeaderCommand {
     }
 
     fn prompt(&self) -> String {
-        match &self.step {
-            Step::CollectPoints { verts } if verts.is_empty() => {
-                "LEADER  Specify arrowhead point:".into()
-            }
-            Step::CollectPoints { verts } => format!(
-                "LEADER  Specify next point [{} pts — Enter to finish]:",
-                verts.len()
-            ),
-            Step::AskCreationType { .. } => {
-                "LEADER  Annotation type [None/Text/Block/Tolerance] <Text>:".into()
-            }
-            Step::AskText { verts } => format!(
-                "LEADER  Annotation text [{} pts — blank = skip]:",
-                verts.len()
-            ),
-            Step::AskBlock { verts } => {
-                format!("LEADER  Block name [{} pts — blank = skip]:", verts.len())
-            }
+        if self.verts.is_empty() {
+            "LEADER  Specify arrowhead point:".into()
+        } else {
+            format!(
+                "LEADER  Specify next point [{} pts — Enter to place text]:",
+                self.verts.len()
+            )
         }
-    }
-
-    fn wants_text_input(&self) -> bool {
-        !matches!(self.step, Step::CollectPoints { .. })
     }
 
     fn on_point(&mut self, pt: Vec3) -> CmdResult {
-        if let Step::CollectPoints { verts } = &mut self.step {
-            verts.push(pt);
-        }
+        self.verts.push(pt);
         CmdResult::NeedPoint
     }
 
     fn on_enter(&mut self) -> CmdResult {
-        if let Step::CollectPoints { verts } = &self.step {
-            if verts.len() < 2 {
-                return CmdResult::Cancel;
-            }
-            let verts = verts.clone();
-            self.step = Step::AskCreationType { verts };
-            CmdResult::NeedPoint
-        } else {
-            CmdResult::Cancel
+        if self.verts.len() < 2 {
+            return CmdResult::Cancel;
         }
-    }
-
-    fn on_text_input(&mut self, raw: &str) -> Option<CmdResult> {
-        let text = raw.trim();
-        match &self.step {
-            Step::AskCreationType { verts } => {
-                let verts = verts.clone();
-                match parse_ct(text) {
-                    LeaderCreationType::NoAnnotation | LeaderCreationType::WithTolerance => {
-                        let ct = parse_ct(text);
-                        Some(CmdResult::CommitAndExit(EntityType::Leader(build_leader(
-                            &verts, ct,
-                        ))))
-                    }
-                    LeaderCreationType::WithBlock => {
-                        self.step = Step::AskBlock { verts };
-                        Some(CmdResult::NeedPoint)
-                    }
-                    LeaderCreationType::WithText => {
-                        self.step = Step::AskText { verts };
-                        Some(CmdResult::NeedPoint)
-                    }
-                }
-            }
-            Step::AskText { verts } => {
-                let verts = verts.clone();
-                let leader = build_leader(&verts, LeaderCreationType::WithText);
-                if text.is_empty() {
-                    return Some(CmdResult::CommitAndExit(EntityType::Leader(leader)));
-                }
-                let mtext = build_mtext(
-                    text,
-                    landing_pt(&verts, leader.text_height),
-                    leader.text_height,
-                );
-                Some(CmdResult::ReplaceMany(
-                    vec![],
-                    vec![EntityType::Leader(leader), EntityType::MText(mtext)],
-                ))
-            }
-            Step::AskBlock { verts } => {
-                let verts = verts.clone();
-                let leader = build_leader(&verts, LeaderCreationType::WithBlock);
-                if text.is_empty() {
-                    return Some(CmdResult::CommitAndExit(EntityType::Leader(leader)));
-                }
-                let ins = Insert::new(text, v3(landing_pt(&verts, leader.text_height)));
-                Some(CmdResult::ReplaceMany(
-                    vec![],
-                    vec![EntityType::Leader(leader), EntityType::Insert(ins)],
-                ))
-            }
-            Step::CollectPoints { .. } => None,
+        // Place the leader plus an empty MText annotation, link them, then open
+        // the in-place MText editor so the user types the annotation text.
+        let leader = build_leader(&self.verts);
+        let (anchor, attach) = annotation_anchor(&self.verts, leader.text_height);
+        let mtext = build_mtext("", anchor, leader.text_height, attach);
+        CmdResult::CommitManyAndEditText {
+            entities: vec![EntityType::Leader(leader), EntityType::MText(mtext)],
+            edit_index: 1,
         }
     }
 
@@ -155,53 +81,51 @@ impl CadCommand for LeaderCommand {
     }
 
     fn on_mouse_move(&mut self, pt: Vec3) -> Option<WireModel> {
-        if let Step::CollectPoints { verts } = &self.step {
-            if verts.is_empty() {
-                return None;
-            }
-            let mut pts = verts.clone();
-            pts.push(pt);
-            Some(preview_wire(&pts))
-        } else {
-            None
+        if self.verts.is_empty() {
+            return None;
         }
+        let mut pts = self.verts.clone();
+        pts.push(pt);
+        Some(preview_wire(&pts))
     }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn parse_ct(s: &str) -> LeaderCreationType {
-    match s.to_ascii_uppercase().as_str() {
-        "N" | "NONE" => LeaderCreationType::NoAnnotation,
-        "B" | "BLOCK" => LeaderCreationType::WithBlock,
-        "TL" | "TOLERANCE" => LeaderCreationType::WithTolerance,
-        _ => LeaderCreationType::WithText,
-    }
-}
-
 fn v3(p: Vec3) -> Vector3 {
     Vector3::new(p.x as f64, p.y as f64, p.z as f64)
 }
 
-fn build_leader(verts: &[Vec3], ct: LeaderCreationType) -> Leader {
+fn build_leader(verts: &[Vec3]) -> Leader {
     let mut l = Leader::from_vertices(verts.iter().map(|p| v3(*p)).collect());
-    l.creation_type = ct;
-    l.hookline_enabled = !matches!(ct, LeaderCreationType::NoAnnotation);
+    l.creation_type = LeaderCreationType::WithText;
+    l.hookline_enabled = true;
     l
 }
 
-fn landing_pt(verts: &[Vec3], text_height: f64) -> Vec3 {
+/// Text anchor at the end of the landing line, and the attachment point that
+/// keeps the text reading away from the leader (text to the right of a
+/// left-pointing landing, to the left of a right-pointing one).
+fn annotation_anchor(verts: &[Vec3], text_height: f64) -> (Vec3, AttachmentPoint) {
     let last = *verts.last().unwrap();
     let prev = verts[verts.len() - 2];
-    let sign = if last.x >= prev.x { 1.0_f32 } else { -1.0_f32 };
-    Vec3::new(last.x + sign * text_height as f32 * 1.5, last.y, last.z)
+    let to_right = last.x >= prev.x;
+    let sign = if to_right { 1.0_f32 } else { -1.0_f32 };
+    let anchor = Vec3::new(last.x + sign * text_height as f32 * 1.5, last.y, last.z);
+    let attach = if to_right {
+        AttachmentPoint::MiddleLeft
+    } else {
+        AttachmentPoint::MiddleRight
+    };
+    (anchor, attach)
 }
 
-fn build_mtext(text: &str, pos: Vec3, height: f64) -> MText {
+fn build_mtext(text: &str, pos: Vec3, height: f64, attach: AttachmentPoint) -> MText {
     let mut m = MText::new();
     m.value = text.to_string();
     m.insertion_point = v3(pos);
     m.height = height;
+    m.attachment_point = attach;
     m
 }
 
