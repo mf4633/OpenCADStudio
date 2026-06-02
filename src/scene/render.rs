@@ -535,18 +535,15 @@ impl Scene {
         let canvas = (bounds.width.max(1.0), bounds.height.max(1.0));
         let instances = self.active_viewports(canvas.0, canvas.1, model_render_mode);
         // Transparent clear — outside drawn geometry the resolve texture
-        // stays at alpha=0, so the alpha-blended blit reveals whatever the
-        // underlying widget painted (model layout: container bg; paper
-        // layout: PaperCanvas sheet — including inside content viewport
-        // rectangles).
+        // stays at alpha=0, so the alpha-blended blit reveals the container
+        // background (model bg, or the desk colour in a paper layout).
         let bg_color = [0.0, 0.0, 0.0, 0.0];
         let viewports: Vec<ViewportData> = instances
             .iter()
             .filter_map(|inst| self.viewport_data_for(inst, canvas, hover_region))
             .collect();
-        // Empty viewports → blit nothing. The widget container's
-        // background (model bg or the PaperCanvas widget below) stays
-        // visible. This happens in paper layouts without content viewports.
+        // Empty viewports → blit nothing; the container background (model bg
+        // or the paper desk colour) stays visible.
         Primitive { viewports, bg_color }
     }
 

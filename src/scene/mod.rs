@@ -600,11 +600,11 @@ pub struct Scene {
     /// Maps vp_handle → (geometry_epoch, Arc<Vec<WireModel>>).
     viewport_wire_cache: RefCell<HashMap<Handle, ((u64, u32), Arc<Vec<WireModel>>)>>,
     /// Cached tessellation of paper-space layout block entities (title block, annotations, etc.).
-    /// Separate from `wire_cache` so paper_canvas_wires() doesn't re-tessellate on every frame.
+    /// Separate from `wire_cache` so the GPU sheet viewport doesn't re-tessellate every frame.
     /// Keyed by `(geometry_epoch, camera_generation)` — paper view changes
     /// on zoom too, so culled wire output depends on camera.
     paper_sheet_cache: RefCell<Option<((u64, u64), Arc<Vec<WireModel>>)>>,
-    /// Per-viewport projected wire cache for the paper canvas (2-D Iced widget).
+    /// Per-viewport projected wire cache for paper-space content viewports.
     /// Stores projected + clipped wires in paper-space coordinates.
     /// Maps vp_handle → (geometry_epoch, Vec<WireModel>).
     paper_projected_cache: RefCell<HashMap<Handle, (u64, Vec<WireModel>)>>,
@@ -732,7 +732,7 @@ impl Scene {
     pub(super) fn view_world_aabb(&self) -> Option<[f32; 4]> {
         if self.current_layout != "Model" {
             // Paper-space viewport composition handles its own culling; the
-            // top-level paper canvas is small enough not to need it.
+            // top-level paper view is small enough not to need it.
             return None;
         }
         // Until the first explicit camera move (typically `fit_all()` after
@@ -771,12 +771,10 @@ impl Scene {
     /// World units per screen pixel at the current viewport size. Returns
     /// `None` until the first render captures real bounds.
     ///
-    /// Also returns `None` in paper space: `set_render_pixel_scale` is only
-    /// fed by the shader pipeline (`build_primitive`), and the paper layout
-    /// renders through `PaperCanvas` (an Iced 2-D canvas) which never touches
-    /// it. Whatever value is cached would be a stale model-world wpp and,
-    /// applied to mm-sheet entity AABBs, would cull every paper-space
-    /// annotation. Matches the same skip already in `view_world_aabb`.
+    /// Also returns `None` in paper space: `last_world_per_pixel` tracks the
+    /// model camera, so a cached value applied to mm-sheet entity AABBs would
+    /// be a stale model-world wpp and cull every paper-space annotation.
+    /// Matches the same skip already in `view_world_aabb`.
     pub(super) fn world_per_pixel(&self) -> Option<f32> {
         if self.current_layout != "Model" {
             return None;
@@ -1438,9 +1436,8 @@ impl Scene {
         arc
     }
 
-    /// Cached tessellation of the current layout block's paper-space entities.
-    /// Shared by both `entity_wires_arc()` and `paper_canvas_wires()` so a single
-    /// cache miss triggers only one tessellation pass, not two.
+    /// Cached tessellation of the current layout block's paper-space entities,
+    /// shared by `entity_wires_arc()` and the GPU sheet viewport.
     fn paper_sheet_wires_arc(&self) -> Arc<Vec<WireModel>> {
         let key = (self.geometry_epoch, self.camera_generation);
         {
@@ -1452,7 +1449,15 @@ impl Scene {
             }
         }
         let layout_block = self.current_layout_block_handle();
-        let arc = Arc::new(self.wires_for_block(layout_block));
+        let mut wires = self.wires_for_block(layout_block);
+        // The overall "sheet" viewport now IS the paper view itself, so its own
+        // border rectangle must not be drawn as an entity on the sheet.
+        let sheet = self.current_layout_sheet_viewport_handle();
+        if sheet.is_valid() {
+            let sheet_name = sheet.value().to_string();
+            wires.retain(|w| w.name != sheet_name);
+        }
+        let arc = Arc::new(wires);
         *self.paper_sheet_cache.borrow_mut() = Some((key, Arc::clone(&arc)));
         arc
     }
@@ -5784,11 +5789,11 @@ impl Scene {
     }
 
     /// Convert a paper-space Viewport entity's position/size into a pixel
-    /// `Rectangle` relative to the top-left of the paper canvas.
+    /// `Rectangle` relative to the top-left of the canvas.
     ///
-    /// Uses the same camera-based ortho transform as `PaperCanvas::draw()` so
-    /// that the overlay lands exactly over the drawn viewport border regardless
-    /// of zoom or pan level.
+    /// Uses the same top-down ortho transform as the GPU sheet viewport so the
+    /// overlay lands exactly over the drawn viewport border regardless of zoom
+    /// or pan level.
     pub fn viewport_screen_rect(
         &self,
         vp_handle: Handle,
@@ -5812,7 +5817,7 @@ impl Scene {
         let ty = cam.target.y;
         drop(cam);
 
-        // Mirror the to_px closure in PaperCanvas::draw().
+        // Top-down ortho mapping matching the GPU sheet viewport's camera.
         let to_px = |wx: f32, wy: f32| -> (f32, f32) {
             let x = (wx - tx + half_w) / (2.0 * half_w) * canvas_w;
             let y = (ty + half_h - wy) / (2.0 * half_h) * canvas_h;
@@ -5840,7 +5845,8 @@ impl Scene {
 
     // ── Paper-space helpers ───────────────────────────────────────────────
 
-    /// Hatch fills for the paper-space 2-D canvas. The GPU-rendered
+    /// Paper-layout hatch fills, restricted to the active layout block (used by
+    /// paper-space hatch hit-testing / export). The GPU-rendered
     /// content viewports already draw model-block hatches inside their
     /// own scissor; including those here would also draw them on the
     /// paper sheet through the paper camera (huge / off-position), so
@@ -5886,7 +5892,7 @@ impl Scene {
         Arc::new(models)
     }
 
-    /// Wipeout fills for the paper-space 2-D canvas. Same rationale as
+    /// Paper-layout wipeout fills (paper hit-testing / export). Same rationale as
     /// `paper_canvas_hatches` — only include wipeouts owned by the
     /// active paper layout block, so model wipeouts (drawn through their
     /// content viewport's GPU pipeline) don't get a second mis-projected
@@ -5940,8 +5946,8 @@ impl Scene {
     }
 
     /// Build a Camera oriented and scaled to match a paper-space Viewport entity.
-    /// Used by `ViewportPane::Paper` to render model-space content through the
-    /// viewport's own view direction and scale.
+    /// Used by `active_viewports` to render model-space content through each
+    /// content viewport's own view direction and scale.
     fn camera_for_viewport(&self, vp_handle: Handle) -> Option<camera::Camera> {
         let vp = match self.document.get_entity(vp_handle) {
             Some(EntityType::Viewport(vp)) => vp,

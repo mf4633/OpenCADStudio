@@ -248,15 +248,14 @@ impl OpenCADStudio {
         let i = self.active_tab;
         let tab = &self.tabs[i];
         let is_paper = tab.scene.current_layout != "Model";
-        // Start tab: render welcome page in place of the model/paper canvas.
+        // Start tab: render welcome page in place of the viewport.
         // Surrounding chrome (tab bar, status bar) stays; the welcome widget
         // returned here also flags the rest of `view` to skip drawing-only
         // overlays via `tab.is_start`.
-        // Unified GPU widget for both layouts. In a paper layout the
-        // PaperCanvas (2-D sheet + paper entities + viewport borders) is
-        // layered underneath this shader so the area outside floating
-        // viewports shows the sheet; the shader only blits inside each
-        // content viewport's scissor rect.
+        // Unified GPU widget for both layouts. A paper layout renders through
+        // the same shader as model space: a full-canvas top-locked "sheet"
+        // viewport draws the layout's own geometry (white sheet + entities +
+        // borders) and the floating content viewports blit on top.
         let viewport_3d: Element<'_, Message> = if tab.is_start {
             start_page_view()
         } else {
@@ -576,7 +575,7 @@ impl OpenCADStudio {
         // Active paper-space viewport overlays: a render-mode picker in
         // its top-left corner and a ViewCube hit area in its top-right,
         // both layered ABOVE the viewport mouse_area so they receive
-        // clicks (the paper canvas itself sits below it). Positioned with
+        // clicks (the shader viewport sits below it). Positioned with
         // leading Spaces sized to the viewport's screen rectangle.
         let active_vp_rect: Option<iced::Rectangle> = if is_paper && !tab.is_start {
             tab.scene.active_viewport.and_then(|h| {
