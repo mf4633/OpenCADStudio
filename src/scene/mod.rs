@@ -12,7 +12,6 @@ pub mod image_model;
 pub mod mesh_model;
 pub mod model_solid;
 pub mod object;
-pub mod paper_canvas;
 pub mod pipeline;
 pub mod properties;
 pub mod quadtree;
@@ -609,10 +608,6 @@ pub struct Scene {
     /// Stores projected + clipped wires in paper-space coordinates.
     /// Maps vp_handle → (geometry_epoch, Vec<WireModel>).
     paper_projected_cache: RefCell<HashMap<Handle, (u64, Vec<WireModel>)>>,
-    /// Full paper-canvas wire list (sheet + inactive-viewport projections + interim/preview).
-    /// Keyed by geometry_epoch — valid for all navigation frames (pan/zoom do not bump epoch).
-    /// Returns Arc so paper_canvas_wires() is O(1) on cache hits.
-    paper_canvas_cache: RefCell<Option<(u64, Arc<Vec<WireModel>>)>>,
     /// Active layout name — "Model" or a paper space layout name.
     pub current_layout: String,
     /// GPU render data for hatch fills, keyed by the DXF entity Handle.
@@ -709,7 +704,6 @@ impl Scene {
             viewport_wire_cache: RefCell::new(HashMap::new()),
             paper_sheet_cache: RefCell::new(None),
             paper_projected_cache: RefCell::new(HashMap::new()),
-            paper_canvas_cache: RefCell::new(None),
             current_layout: "Model".to_string(),
             hatches: HashMap::new(),
             meshes: HashMap::new(),
@@ -1137,6 +1131,30 @@ impl Scene {
 
     /// Returns `(min, max)` paper-space limits for the current layout, or `None`
     /// when in Model space.  Falls back to A4 landscape if nothing reliable is found.
+    /// A solid white fill covering the paper sheet's printable area, rendered
+    /// by the GPU hatch pipeline behind the paper entities. Replaces the 2-D
+    /// white-rectangle the old PaperCanvas drew. `None` in model space or when
+    /// the layout has no limits.
+    pub(super) fn paper_sheet_fill(&self) -> Option<HatchModel> {
+        let ((x0, y0), (x1, y1)) = self.paper_limits()?;
+        let (x0, y0, x1, y1) = (x0 as f32, y0 as f32, x1 as f32, y1 as f32);
+        Some(HatchModel {
+            world_origin: [0.0, 0.0],
+            boundary: Arc::new(vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]),
+            pattern: crate::scene::hatch_model::HatchPattern::Solid,
+            name: "SOLID".to_string(),
+            color: self.paper_bg_color,
+            angle_offset: 0.0,
+            scale: 1.0,
+            vp_scissor: None,
+            // Draw-order bias is signed: entity fills/wires land in (-1, 1)
+            // (0 = neutral). A value below -1 forces the sheet strictly behind
+            // EVERY object, in every case, with a tiny z offset (BIAS = 0.001,
+            // so no far-plane clipping). The sheet is the canvas, never on top.
+            draw_depth: -2.0,
+        })
+    }
+
     pub fn paper_limits(&self) -> Option<((f64, f64), (f64, f64))> {
         if self.current_layout == "Model" {
             return None;
@@ -5820,38 +5838,7 @@ impl Scene {
         })
     }
 
-    // ── ViewportPane helpers ──────────────────────────────────────────────
-
-    /// Paper-space entity wires only (title blocks, frames, borders).
-    /// Does NOT include viewport content projection — that is handled by
-    /// individual ViewportPane::Paper widgets layered on top.
-    /// All wires needed to render the paper-space canvas (2D widget path).
-    /// Includes paper entities, paper boundary, inactive viewport projections
-    /// (excluding the active MSPACE viewport), plus interim/preview wires.
-    #[allow(dead_code)] // superseded by the GPU sheet viewport; removed in Stage 2.
-    pub fn paper_canvas_wires(&self) -> Arc<Vec<WireModel>> {
-        {
-            let cache = self.paper_canvas_cache.borrow();
-            if let Some((cached_epoch, ref arc)) = *cache {
-                if cached_epoch == self.geometry_epoch {
-                    return Arc::clone(arc);
-                }
-            }
-        }
-        // The unified GPU shader draws every content viewport (active and
-        // inactive) directly through its own camera + scissor, so the
-        // paper canvas no longer needs to CPU-project model content onto
-        // the sheet. `paper_sheet_wires()` keeps the title-block /
-        // annotation / viewport-border 2-D pass that GPU does not handle.
-        let mut wires = self.paper_sheet_wires();
-        if let Some(iw) = &self.interim_wire {
-            wires.push(iw.clone());
-        }
-        wires.extend(self.preview_wires.iter().cloned());
-        let arc = Arc::new(wires);
-        *self.paper_canvas_cache.borrow_mut() = Some((self.geometry_epoch, Arc::clone(&arc)));
-        arc
-    }
+    // ── Paper-space helpers ───────────────────────────────────────────────
 
     /// Hatch fills for the paper-space 2-D canvas. The GPU-rendered
     /// content viewports already draw model-block hatches inside their
@@ -5950,11 +5937,6 @@ impl Scene {
             });
         }
         Arc::new(models)
-    }
-
-    #[allow(dead_code)] // superseded by the GPU sheet viewport; removed in Stage 2.
-    pub(super) fn paper_sheet_wires(&self) -> Vec<WireModel> {
-        (*self.paper_sheet_wires_arc()).clone()
     }
 
     /// Build a Camera oriented and scaled to match a paper-space Viewport entity.

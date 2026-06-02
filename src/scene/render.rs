@@ -653,14 +653,22 @@ impl Scene {
             height: visible_h / canvas.1,
         };
 
-        // Stage 1: the paper sheet instance contributes only entity wires; its
-        // hatch / wipeout / image fills are still drawn by PaperCanvas beneath
-        // the shader. (Stage 2 moves those into the shader and drops PaperCanvas.)
-        let (hatches, wipeout_hatches, images) = if inst.paper_sheet {
-            (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
+        // The paper sheet instance renders the same hatch / wipeout / image
+        // fills as everything else (wrong-camera fills fall outside its
+        // frustum and are culled), plus a synthetic white fill for the sheet's
+        // printable area — the GPU equivalent of the old PaperCanvas chrome.
+        let hatches = if inst.paper_sheet {
+            let mut v: Vec<HatchModel> = Vec::new();
+            if let Some(sheet) = self.paper_sheet_fill() {
+                v.push(sheet);
+            }
+            v.extend(self.hatch_models_arc().iter().cloned());
+            Arc::new(v)
         } else {
-            (self.hatch_models_arc(), self.wipeout_models_arc(), self.images_arc())
+            self.hatch_models_arc()
         };
+        let wipeout_hatches = self.wipeout_models_arc();
+        let images = self.images_arc();
 
         Some(ViewportData {
             wires: all_wires,

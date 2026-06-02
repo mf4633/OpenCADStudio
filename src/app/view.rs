@@ -4,12 +4,11 @@ use super::history::history_dropdown_labels;
 use super::document::{DynComponent, DynFieldEntry};
 use super::{Message, OpenCADStudio};
 use crate::scene::grip::{grips_to_screen, grips_to_screen_paper};
-use crate::scene::paper_canvas::PaperCanvas;
 use crate::scene::viewport_pane::ViewportPane;
 use crate::scene::{VIEWCUBE_DRAW_PX, VIEWCUBE_PAD};
 use crate::ui::overlay;
 use iced::widget::{
-    button, canvas, column, container, mouse_area, pick_list, row, shader, stack, text, text_input,
+    button, column, container, mouse_area, pick_list, row, shader, stack, text, text_input,
     Row, Space,
 };
 use iced::window;
@@ -470,15 +469,19 @@ impl OpenCADStudio {
             .width(Fill)
             .height(Fill)
         } else if is_paper {
-            // Paper layout: 2-D sheet + paper entities + viewport borders
-            // underneath, unified GPU shader on top (only paints inside
-            // each content viewport's scissor rect so the sheet shows
-            // through outside them).
-            let paper_sheet: Element<'_, Message> =
-                canvas(PaperCanvas::new(&tab.scene)).width(Fill).height(Fill).into();
+            // Paper layout: the GPU shader renders everything — the desk is the
+            // container background, the white sheet + paper entities + borders
+            // come from the full-canvas top-locked "sheet" viewport, and the
+            // floating content viewports overlay it (same path as model space).
+            const DESK: Color = Color { r: 0.22, g: 0.24, b: 0.28, a: 1.0 };
             stack![
-                paper_sheet,
-                container(viewport_3d).width(Fill).height(Fill),
+                container(viewport_3d)
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(Background::Color(DESK)),
+                        ..Default::default()
+                    })
+                    .width(Fill)
+                    .height(Fill),
                 selection_overlay,
                 viewport_mouse,
             ]
