@@ -6734,6 +6734,20 @@ fn tessellate_entity(
                 }
             }
         }
+        // No baked block (e.g. a table created in-app) — synthesise coloured
+        // geometry from the rows + TableStyle so fills/colours/borders/margins
+        // are honoured instead of the monochrome fallback.
+        let mut wires = crate::entities::table::tessellate_table(
+            tab, document, sel, entity_color, line_weight_px, world_offset,
+        );
+        if !wires.is_empty() {
+            let aabb = entity_aabb(e, world_offset);
+            for w in &mut wires {
+                w.aci = aci;
+                w.aabb = aabb;
+            }
+            return wires;
+        }
     }
 
     if let EntityType::Insert(ins) = e {
