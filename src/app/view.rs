@@ -155,6 +155,52 @@ impl OpenCADStudio {
                 tab.scene.document.header.multiline_style.clone(),
             );
         }
+        if Some(window_id) == self.mleaderstyle_window {
+            use acadrust::objects::ObjectType;
+            let tab = &self.tabs[self.active_tab];
+            let styles: Vec<String> = tab
+                .scene
+                .document
+                .objects
+                .values()
+                .filter_map(|o| {
+                    if let ObjectType::MultiLeaderStyle(s) = o {
+                        Some(s.name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let selected_style = tab.scene.document.objects.values().find_map(|o| {
+                if let ObjectType::MultiLeaderStyle(s) = o {
+                    if s.name == self.mleaderstyle_selected {
+                        Some(s)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+            return crate::ui::mleaderstyle::view_window(crate::ui::mleaderstyle::MLeaderStyleView {
+                styles,
+                selected: &self.mleaderstyle_selected,
+                style: selected_style,
+                current: tab.active_mleader_style.clone(),
+                landing_distance: &self.mls_landing_distance,
+                landing_gap: &self.mls_landing_gap,
+                arrowhead_size: &self.mls_arrowhead_size,
+                text_height: &self.mls_text_height,
+                scale_factor: &self.mls_scale_factor,
+                break_gap: &self.mls_break_gap,
+                first_seg_angle: &self.mls_first_seg_angle,
+                second_seg_angle: &self.mls_second_seg_angle,
+                max_points: &self.mls_max_points,
+                default_text: &self.mls_default_text,
+                line_color: &self.mls_line_color,
+                text_color: &self.mls_text_color,
+            });
+        }
         if Some(window_id) == self.layout_manager_window {
             let i = self.active_tab;
             let layouts = self.tabs[i].scene.layout_names();

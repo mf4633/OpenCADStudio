@@ -234,6 +234,7 @@ pub(super) struct OpenCADStudio {
     textstyle_window: Option<window::Id>,
     tablestyle_window: Option<window::Id>,
     mlstyle_window: Option<window::Id>,
+    mleaderstyle_window: Option<window::Id>,
     layout_manager_window: Option<window::Id>,
     plotstyle_window: Option<window::Id>,
     dimstyle_window: Option<window::Id>,
@@ -293,6 +294,21 @@ pub(super) struct OpenCADStudio {
 
     // ── MLineStyle Dialog ─────────────────────────────────────────────────
     mlstyle_selected: String,
+
+    // ── MLeaderStyle Dialog ───────────────────────────────────────────────
+    mleaderstyle_selected: String,
+    mls_landing_distance: String,
+    mls_landing_gap: String,
+    mls_arrowhead_size: String,
+    mls_text_height: String,
+    mls_scale_factor: String,
+    mls_break_gap: String,
+    mls_first_seg_angle: String,
+    mls_second_seg_angle: String,
+    mls_max_points: String,
+    mls_default_text: String,
+    mls_line_color: String,
+    mls_text_color: String,
 
     // ── TableStyle Dialog ─────────────────────────────────────────────────
     tablestyle_selected: String,
@@ -1005,6 +1021,21 @@ pub enum Message {
     MlStyleDialogSetCurrent,
     MlStyleDialogNew,
     MlStyleDialogDelete,
+    // ── MLeaderStyle Dialog ───────────────────────────────────────────────
+    MLeaderStyleDialogOpen,
+    #[allow(dead_code)]
+    MLeaderStyleDialogClose,
+    MLeaderStyleDialogSelect(String),
+    MLeaderStyleDialogSetCurrent,
+    MLeaderStyleDialogNew,
+    MLeaderStyleDialogDelete,
+    MLeaderStyleEdit {
+        field: &'static str,
+        value: String,
+    },
+    MLeaderStyleToggle(&'static str),
+    MLeaderStyleCycle(&'static str),
+    MLeaderStyleApply,
     // ── DimStyle Dialog ───────────────────────────────────────────────────
     DimStyleDialogOpen,
     DimStyleDialogClose,
@@ -1108,6 +1139,7 @@ impl OpenCADStudio {
             textstyle_window: None,
             tablestyle_window: None,
             mlstyle_window: None,
+            mleaderstyle_window: None,
             layout_manager_window: None,
             plotstyle_window: None,
             dimstyle_window: None,
@@ -1172,6 +1204,20 @@ impl OpenCADStudio {
             ts_vmargin: "1.5".to_string(),
             // MLineStyle dialog
             mlstyle_selected: "Standard".to_string(),
+            // MLeaderStyle dialog
+            mleaderstyle_selected: "Standard".to_string(),
+            mls_landing_distance: String::new(),
+            mls_landing_gap: String::new(),
+            mls_arrowhead_size: String::new(),
+            mls_text_height: String::new(),
+            mls_scale_factor: String::new(),
+            mls_break_gap: String::new(),
+            mls_first_seg_angle: String::new(),
+            mls_second_seg_angle: String::new(),
+            mls_max_points: String::new(),
+            mls_default_text: String::new(),
+            mls_line_color: String::new(),
+            mls_text_color: String::new(),
             // DimStyle dialog
             dimstyle_selected: "Standard".to_string(),
             dimstyle_tab: 0,
@@ -1307,6 +1353,9 @@ pub fn run() -> iced::Result {
             }
             if Some(window_id) == state.mlstyle_window {
                 return "Multiline Style".into();
+            }
+            if Some(window_id) == state.mleaderstyle_window {
+                return "Multileader Style".into();
             }
             if Some(window_id) == state.layout_manager_window {
                 return "Layout Manager".into();

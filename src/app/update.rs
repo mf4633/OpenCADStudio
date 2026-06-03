@@ -1428,6 +1428,10 @@ impl OpenCADStudio {
                     self.mlstyle_window = None;
                     self.ribbon.deactivate_tool_if("MLSTYLE");
                 }
+                if self.mleaderstyle_window == Some(id) {
+                    self.mleaderstyle_window = None;
+                    self.ribbon.deactivate_tool_if("MLEADERSTYLE");
+                }
                 if self.layout_manager_window == Some(id) {
                     self.layout_manager_window = None;
                     self.ribbon.deactivate_tool_if("LAYOUTMANAGER");
@@ -6045,6 +6049,302 @@ impl OpenCADStudio {
                 Task::none()
             }
 
+            // ── MLeaderStyle Dialog ───────────────────────────────────────────
+            Message::MLeaderStyleDialogOpen => {
+                use acadrust::objects::ObjectType;
+                let i = self.active_tab;
+                let cur = self.tabs[i].active_mleader_style.clone();
+                let exists = self.tabs[i]
+                    .scene
+                    .document
+                    .objects
+                    .values()
+                    .any(|o| matches!(o, ObjectType::MultiLeaderStyle(s) if s.name == cur));
+                self.mleaderstyle_selected = if exists {
+                    cur
+                } else {
+                    self.tabs[i]
+                        .scene
+                        .document
+                        .objects
+                        .values()
+                        .find_map(|o| {
+                            if let ObjectType::MultiLeaderStyle(s) = o {
+                                Some(s.name.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| "Standard".to_string())
+                };
+                self.load_mleaderstyle_bufs(i);
+                if let Some(id) = self.mleaderstyle_window {
+                    return window::gain_focus(id);
+                }
+                let (id, task) = window::open(window::Settings {
+                    size: iced::Size::new(560.0, 560.0),
+                    resizable: true,
+                    level: window::Level::AlwaysOnTop,
+                    ..Default::default()
+                });
+                self.mleaderstyle_window = Some(id);
+                task.map(|_| Message::Noop)
+            }
+            Message::MLeaderStyleDialogClose => {
+                if let Some(id) = self.mleaderstyle_window.take() {
+                    window::close(id)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::MLeaderStyleDialogSelect(name) => {
+                self.mleaderstyle_selected = name;
+                let i = self.active_tab;
+                self.load_mleaderstyle_bufs(i);
+                Task::none()
+            }
+            Message::MLeaderStyleDialogSetCurrent => {
+                use acadrust::objects::ObjectType;
+                let i = self.active_tab;
+                let name = self.mleaderstyle_selected.clone();
+                let exists = self.tabs[i]
+                    .scene
+                    .document
+                    .objects
+                    .values()
+                    .any(|o| matches!(o, ObjectType::MultiLeaderStyle(s) if s.name == name));
+                if exists {
+                    self.tabs[i].active_mleader_style = name.clone();
+                    self.ribbon.active_mleader_style = name.clone();
+                    self.command_line
+                        .push_output(&format!("Current multileader style: {}", name));
+                }
+                Task::none()
+            }
+            Message::MLeaderStyleDialogNew => {
+                use acadrust::objects::ObjectType;
+                let i = self.active_tab;
+                let doc = &self.tabs[i].scene.document;
+                let mut n = 1u32;
+                let new_name = loop {
+                    let candidate = format!("MLeader{}", n);
+                    let taken = doc.objects.values().any(|o| {
+                        matches!(o, ObjectType::MultiLeaderStyle(s) if s.name.eq_ignore_ascii_case(&candidate))
+                    });
+                    if !taken {
+                        break candidate;
+                    }
+                    n += 1;
+                };
+                self.push_undo_snapshot(i, "MLEADERSTYLE NEW");
+                let mut style = acadrust::objects::MultiLeaderStyle::new(&new_name);
+                let nh = acadrust::Handle::new(self.tabs[i].scene.document.next_handle());
+                style.handle = nh;
+                self.tabs[i]
+                    .scene
+                    .document
+                    .objects
+                    .insert(nh, ObjectType::MultiLeaderStyle(style));
+                self.mleaderstyle_selected = new_name;
+                self.load_mleaderstyle_bufs(i);
+                self.tabs[i].dirty = true;
+                Task::none()
+            }
+            Message::MLeaderStyleDialogDelete => {
+                use acadrust::objects::ObjectType;
+                let i = self.active_tab;
+                let name = self.mleaderstyle_selected.clone();
+                if name.eq_ignore_ascii_case("Standard") {
+                    self.command_line
+                        .push_error("Cannot delete the Standard style.");
+                    return Task::none();
+                }
+                let handle = self.tabs[i]
+                    .scene
+                    .document
+                    .objects
+                    .iter()
+                    .find_map(|(&h, o)| match o {
+                        ObjectType::MultiLeaderStyle(s) if s.name == name => Some(h),
+                        _ => None,
+                    });
+                if let Some(h) = handle {
+                    self.push_undo_snapshot(i, "MLEADERSTYLE DEL");
+                    self.tabs[i].scene.document.objects.remove(&h);
+                    self.mleaderstyle_selected = self.tabs[i]
+                        .scene
+                        .document
+                        .objects
+                        .values()
+                        .find_map(|o| {
+                            if let ObjectType::MultiLeaderStyle(s) = o {
+                                Some(s.name.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| "Standard".to_string());
+                    self.load_mleaderstyle_bufs(i);
+                    self.tabs[i].dirty = true;
+                }
+                Task::none()
+            }
+            Message::MLeaderStyleEdit { field, value } => {
+                match field {
+                    "landing_distance" => self.mls_landing_distance = value,
+                    "landing_gap" => self.mls_landing_gap = value,
+                    "arrowhead_size" => self.mls_arrowhead_size = value,
+                    "text_height" => self.mls_text_height = value,
+                    "scale_factor" => self.mls_scale_factor = value,
+                    "break_gap" => self.mls_break_gap = value,
+                    "first_seg_angle" => self.mls_first_seg_angle = value,
+                    "second_seg_angle" => self.mls_second_seg_angle = value,
+                    "max_points" => self.mls_max_points = value,
+                    "default_text" => self.mls_default_text = value,
+                    "line_color" => self.mls_line_color = value,
+                    "text_color" => self.mls_text_color = value,
+                    _ => {}
+                }
+                Task::none()
+            }
+            Message::MLeaderStyleToggle(field) => {
+                let i = self.active_tab;
+                if let Some(s) = self.mleaderstyle_mut(i) {
+                    match field {
+                        "enable_landing" => s.enable_landing = !s.enable_landing,
+                        "enable_dogleg" => s.enable_dogleg = !s.enable_dogleg,
+                        "text_frame" => s.text_frame = !s.text_frame,
+                        "text_always_left" => s.text_always_left = !s.text_always_left,
+                        "annotative" => s.is_annotative = !s.is_annotative,
+                        _ => {}
+                    }
+                    self.push_undo_snapshot(i, "MLEADERSTYLE EDIT");
+                    self.tabs[i].dirty = true;
+                    self.tabs[i].scene.bump_geometry();
+                }
+                Task::none()
+            }
+            Message::MLeaderStyleCycle(field) => {
+                use acadrust::objects::{
+                    LeaderContentType, MultiLeaderPathType, TextAlignmentType, TextAngleType,
+                };
+                let i = self.active_tab;
+                if let Some(s) = self.mleaderstyle_mut(i) {
+                    match field {
+                        "path_type" => {
+                            s.path_type = match s.path_type {
+                                MultiLeaderPathType::Invisible => {
+                                    MultiLeaderPathType::StraightLineSegments
+                                }
+                                MultiLeaderPathType::StraightLineSegments => {
+                                    MultiLeaderPathType::Spline
+                                }
+                                MultiLeaderPathType::Spline => MultiLeaderPathType::Invisible,
+                            };
+                        }
+                        "content_type" => {
+                            s.content_type = match s.content_type {
+                                LeaderContentType::None => LeaderContentType::Block,
+                                LeaderContentType::Block => LeaderContentType::MText,
+                                LeaderContentType::MText => LeaderContentType::Tolerance,
+                                LeaderContentType::Tolerance => LeaderContentType::None,
+                            };
+                        }
+                        "text_angle_type" => {
+                            s.text_angle_type = match s.text_angle_type {
+                                TextAngleType::ParallelToLastLeaderLine => TextAngleType::Horizontal,
+                                TextAngleType::Horizontal => TextAngleType::Optimized,
+                                TextAngleType::Optimized => {
+                                    TextAngleType::ParallelToLastLeaderLine
+                                }
+                            };
+                        }
+                        "text_alignment" => {
+                            s.text_alignment = match s.text_alignment {
+                                TextAlignmentType::Left => TextAlignmentType::Center,
+                                TextAlignmentType::Center => TextAlignmentType::Right,
+                                TextAlignmentType::Right => TextAlignmentType::Left,
+                            };
+                        }
+                        _ => {}
+                    }
+                    self.push_undo_snapshot(i, "MLEADERSTYLE EDIT");
+                    self.tabs[i].dirty = true;
+                    self.tabs[i].scene.bump_geometry();
+                }
+                Task::none()
+            }
+            Message::MLeaderStyleApply => {
+                let i = self.active_tab;
+                let (
+                    ld,
+                    lg,
+                    asz,
+                    th,
+                    sf,
+                    bg,
+                    fsa,
+                    ssa,
+                    mp,
+                    dt,
+                    lc,
+                    tc,
+                ) = (
+                    self.mls_landing_distance.parse::<f64>().ok(),
+                    self.mls_landing_gap.parse::<f64>().ok(),
+                    self.mls_arrowhead_size.parse::<f64>().ok(),
+                    self.mls_text_height.parse::<f64>().ok(),
+                    self.mls_scale_factor.parse::<f64>().ok(),
+                    self.mls_break_gap.parse::<f64>().ok(),
+                    self.mls_first_seg_angle.parse::<f64>().ok(),
+                    self.mls_second_seg_angle.parse::<f64>().ok(),
+                    self.mls_max_points.parse::<i32>().ok(),
+                    self.mls_default_text.clone(),
+                    self.mls_line_color.parse::<i16>().ok(),
+                    self.mls_text_color.parse::<i16>().ok(),
+                );
+                if let Some(s) = self.mleaderstyle_mut(i) {
+                    if let Some(v) = ld {
+                        s.landing_distance = v;
+                    }
+                    if let Some(v) = lg {
+                        s.landing_gap = v;
+                    }
+                    if let Some(v) = asz {
+                        s.arrowhead_size = v;
+                    }
+                    if let Some(v) = th {
+                        s.text_height = v;
+                    }
+                    if let Some(v) = sf {
+                        s.scale_factor = v;
+                    }
+                    if let Some(v) = bg {
+                        s.break_gap_size = v;
+                    }
+                    if let Some(v) = fsa {
+                        s.first_segment_angle = v;
+                    }
+                    if let Some(v) = ssa {
+                        s.second_segment_angle = v;
+                    }
+                    if let Some(v) = mp {
+                        s.max_leader_points = v;
+                    }
+                    s.default_text = dt;
+                    if let Some(v) = lc {
+                        s.line_color = acadrust::types::Color::from_index(v);
+                    }
+                    if let Some(v) = tc {
+                        s.text_color = acadrust::types::Color::from_index(v);
+                    }
+                    self.push_undo_snapshot(i, "MLEADERSTYLE EDIT");
+                    self.tabs[i].dirty = true;
+                    self.tabs[i].scene.bump_geometry();
+                }
+                Task::none()
+            }
+
             // ── DimStyle Dialog ───────────────────────────────────────────────
             Message::DimStyleDialogOpen => {
                 let i = self.active_tab;
@@ -6542,6 +6842,62 @@ impl OpenCADStudio {
         // coordinate. See #32.
         self.refresh_active_cmd_preview(i);
         Some(task)
+    }
+
+    /// Mutable access to the currently selected multileader style.
+    fn mleaderstyle_mut(
+        &mut self,
+        tab: usize,
+    ) -> Option<&mut acadrust::objects::MultiLeaderStyle> {
+        use acadrust::objects::ObjectType;
+        let name = self.mleaderstyle_selected.clone();
+        self.tabs[tab]
+            .scene
+            .document
+            .objects
+            .values_mut()
+            .find_map(|o| match o {
+                ObjectType::MultiLeaderStyle(s) if s.name == name => Some(s),
+                _ => None,
+            })
+    }
+
+    /// Populate all edit buffers from the currently selected multileader style.
+    fn load_mleaderstyle_bufs(&mut self, tab: usize) {
+        use acadrust::objects::ObjectType;
+        let name = self.mleaderstyle_selected.clone();
+        let Some(s) = self.tabs[tab]
+            .scene
+            .document
+            .objects
+            .values()
+            .find_map(|o| match o {
+                ObjectType::MultiLeaderStyle(s) if s.name == name => Some(s),
+                _ => None,
+            })
+        else {
+            return;
+        };
+        self.mls_landing_distance = format!("{:.4}", s.landing_distance);
+        self.mls_landing_gap = format!("{:.4}", s.landing_gap);
+        self.mls_arrowhead_size = format!("{:.4}", s.arrowhead_size);
+        self.mls_text_height = format!("{:.4}", s.text_height);
+        self.mls_scale_factor = format!("{:.4}", s.scale_factor);
+        self.mls_break_gap = format!("{:.4}", s.break_gap_size);
+        self.mls_first_seg_angle = format!("{:.4}", s.first_segment_angle);
+        self.mls_second_seg_angle = format!("{:.4}", s.second_segment_angle);
+        self.mls_max_points = s.max_leader_points.to_string();
+        self.mls_default_text = s.default_text.clone();
+        self.mls_line_color = s
+            .line_color
+            .index()
+            .map(|c| c.to_string())
+            .unwrap_or_default();
+        self.mls_text_color = s
+            .text_color
+            .index()
+            .map(|c| c.to_string())
+            .unwrap_or_default();
     }
 
     /// Populate all edit buffers from the currently selected dim style.

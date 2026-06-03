@@ -9,6 +9,7 @@ pub mod command_line;
 pub mod dimstyle;
 pub mod layers;
 pub mod layout_manager;
+pub mod mleaderstyle;
 pub mod mlstyle;
 pub mod open_progress;
 pub mod overlay;
