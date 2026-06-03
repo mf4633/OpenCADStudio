@@ -130,6 +130,14 @@ pub struct DimStyleValues<'a> {
     pub dimalttz: &'a str,
     pub dimtolj: &'a str,
     pub dimtzin: &'a str,
+    // Resolved display names for the block/linetype Handle fields.
+    pub dimblk_name: String,
+    pub dimblk1_name: String,
+    pub dimblk2_name: String,
+    pub dimldrblk_name: String,
+    pub dimltex_name: String,
+    pub dimltex1_name: String,
+    pub dimltex2_name: String,
 }
 
 fn btn_s(accent: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
@@ -376,6 +384,22 @@ pub fn view_window<'a>(
             .into()
     };
 
+    // Block / linetype Handle cycler: shows the resolved name and a button that
+    // advances to the next available block-record (arrowheads) or linetype.
+    let hrow = move |label: &'static str, name: String, field: &'static str| -> Element<'a, Message> {
+        row![
+            lbl(label),
+            text(name).size(11).width(110),
+            button(text("Cycle").size(10))
+                .on_press(Message::DsCycleHandle(field))
+                .style(btn_s(false))
+                .padding([2, 8]),
+        ]
+        .spacing(8)
+        .align_y(iced::Center)
+        .into()
+    };
+
     let tab_content: Element<'_, Message> = match tab {
         0 => column![
             text("Dimension Line").size(11).color(ACCENT),
@@ -420,11 +444,18 @@ pub fn view_window<'a>(
             row![lbl("Ext line weight (DIMLWE)"), mk_field(DsField::Dimlwe, vals.dimlwe)].spacing(8).align_y(iced::Center),
             chk("Fixed-length ext lines (DIMFXLON)", vals.dimfxlon, DsField::Dimfxlon),
             row![lbl("Fixed length (DIMFXL)"), mk_field(DsField::Dimfxl, vals.dimfxl)].spacing(8).align_y(iced::Center),
+            hrow("Dim line linetype (DIMLTYPE)", vals.dimltex_name.clone(), "dimltex_handle"),
+            hrow("Ext line 1 linetype (DIMLTEX1)", vals.dimltex1_name.clone(), "dimltex1_handle"),
+            hrow("Ext line 2 linetype (DIMLTEX2)", vals.dimltex2_name.clone(), "dimltex2_handle"),
         ]
         .spacing(7)
         .into(),
         1 => column![
             text("Arrows").size(11).color(ACCENT),
+            hrow("Arrowhead (DIMBLK)", vals.dimblk_name.clone(), "dimblk"),
+            hrow("1st arrowhead (DIMBLK1)", vals.dimblk1_name.clone(), "dimblk1"),
+            hrow("2nd arrowhead (DIMBLK2)", vals.dimblk2_name.clone(), "dimblk2"),
+            hrow("Leader arrowhead (DIMLDRBLK)", vals.dimldrblk_name.clone(), "dimldrblk"),
             row![
                 lbl("Arrow size (DIMASZ)"),
                 mk_field(DsField::Dimasz, vals.dimasz)

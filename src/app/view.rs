@@ -234,6 +234,50 @@ impl OpenCADStudio {
                 .iter()
                 .map(|s| s.name.clone())
                 .collect();
+            let doc = &tab.scene.document;
+            let blk_name = |h: acadrust::types::Handle| -> String {
+                if h.is_null() {
+                    "Default".to_string()
+                } else {
+                    doc.block_records
+                        .iter()
+                        .find(|b| b.handle == h)
+                        .map(|b| b.name.trim_start_matches('_').to_string())
+                        .unwrap_or_else(|| "?".to_string())
+                }
+            };
+            let lt_name = |h: acadrust::types::Handle| -> String {
+                if h.is_null() {
+                    "ByBlock".to_string()
+                } else {
+                    doc.line_types
+                        .iter()
+                        .find(|lt| lt.handle == h)
+                        .map(|lt| lt.name.clone())
+                        .unwrap_or_else(|| "?".to_string())
+                }
+            };
+            let ds_sel = doc.dim_styles.get(&self.dimstyle_selected);
+            let (
+                dimblk_name,
+                dimblk1_name,
+                dimblk2_name,
+                dimldrblk_name,
+                dimltex_name,
+                dimltex1_name,
+                dimltex2_name,
+            ) = match ds_sel {
+                Some(d) => (
+                    blk_name(d.dimblk),
+                    blk_name(d.dimblk1),
+                    blk_name(d.dimblk2),
+                    blk_name(d.dimldrblk),
+                    lt_name(d.dimltex_handle),
+                    lt_name(d.dimltex1_handle),
+                    lt_name(d.dimltex2_handle),
+                ),
+                None => Default::default(),
+            };
             return crate::ui::dimstyle::view_window(
                 styles,
                 &self.dimstyle_selected,
@@ -308,6 +352,13 @@ impl OpenCADStudio {
                     dimalttz: &self.ds_dimalttz,
                     dimtolj: &self.ds_dimtolj,
                     dimtzin: &self.ds_dimtzin,
+                    dimblk_name,
+                    dimblk1_name,
+                    dimblk2_name,
+                    dimldrblk_name,
+                    dimltex_name,
+                    dimltex1_name,
+                    dimltex2_name,
                 },
             );
         }

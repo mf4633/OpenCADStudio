@@ -1071,6 +1071,9 @@ pub enum Message {
     // Field edit messages:
     DsEdit(DsField, String),
     DsToggle(DsField),
+    /// Cycle a block/linetype Handle field on the selected dim style to the
+    /// next available block-record / linetype.
+    DsCycleHandle(&'static str),
     // ── Raster Image ──────────────────────────────────────────────────────
     /// Open file-picker dialog for IMAGE command (async).
     ImagePick,

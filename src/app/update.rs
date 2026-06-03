@@ -6534,6 +6534,53 @@ impl OpenCADStudio {
                 self.apply_ds_toggle(field);
                 Task::none()
             }
+            Message::DsCycleHandle(field) => {
+                let i = self.active_tab;
+                let name = self.dimstyle_selected.clone();
+                let is_lt = matches!(
+                    field,
+                    "dimltex_handle" | "dimltex1_handle" | "dimltex2_handle"
+                );
+                let doc = &self.tabs[i].scene.document;
+                let mut candidates: Vec<acadrust::types::Handle> =
+                    vec![acadrust::types::Handle::NULL];
+                if is_lt {
+                    candidates.extend(doc.line_types.iter().map(|lt| lt.handle));
+                } else {
+                    candidates.extend(doc.block_records.iter().map(|b| b.handle));
+                }
+                let Some(ds) = doc.dim_styles.get(&name) else {
+                    return Task::none();
+                };
+                let cur = match field {
+                    "dimblk" => ds.dimblk,
+                    "dimblk1" => ds.dimblk1,
+                    "dimblk2" => ds.dimblk2,
+                    "dimldrblk" => ds.dimldrblk,
+                    "dimltex_handle" => ds.dimltex_handle,
+                    "dimltex1_handle" => ds.dimltex1_handle,
+                    "dimltex2_handle" => ds.dimltex2_handle,
+                    _ => return Task::none(),
+                };
+                let idx = candidates.iter().position(|h| *h == cur).unwrap_or(0);
+                let next = candidates[(idx + 1) % candidates.len()];
+                self.push_undo_snapshot(i, "DIMSTYLE EDIT");
+                if let Some(ds) = self.tabs[i].scene.document.dim_styles.get_mut(&name) {
+                    match field {
+                        "dimblk" => ds.dimblk = next,
+                        "dimblk1" => ds.dimblk1 = next,
+                        "dimblk2" => ds.dimblk2 = next,
+                        "dimldrblk" => ds.dimldrblk = next,
+                        "dimltex_handle" => ds.dimltex_handle = next,
+                        "dimltex1_handle" => ds.dimltex1_handle = next,
+                        "dimltex2_handle" => ds.dimltex2_handle = next,
+                        _ => {}
+                    }
+                }
+                self.tabs[i].dirty = true;
+                self.tabs[i].scene.bump_geometry();
+                Task::none()
+            }
         }
     }
 }
