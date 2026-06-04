@@ -60,11 +60,22 @@ pub async fn open_path_with_phase(
     let path2 = path.clone();
     let phase2 = phase.clone();
     let (doc, caches) = std::thread::spawn(move || -> Result<_, String> {
+        use std::time::Instant;
         phase2.store(PHASE_PARSING, Ordering::Relaxed);
+        let t_parse = Instant::now();
         let mut doc = load_file(&path2)?;
+        let parse_ms = t_parse.elapsed().as_millis() as u32;
+        let t_purge = Instant::now();
         let dropped = purge_corrupt_entities(&mut doc);
+        let purge_ms = t_purge.elapsed().as_millis() as u32;
         phase2.store(PHASE_CACHING, Ordering::Relaxed);
+        let t_caches = Instant::now();
         let mut caches = crate::scene::build_derived_caches(&doc);
+        caches.timings = crate::scene::OpenTimings {
+            parse_ms,
+            purge_ms,
+            caches_ms: t_caches.elapsed().as_millis() as u32,
+        };
         caches.corrupt_dropped = dropped;
         phase2.store(PHASE_FINALIZING, Ordering::Relaxed);
         Ok((doc, caches))

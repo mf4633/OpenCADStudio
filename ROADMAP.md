@@ -241,7 +241,7 @@ Don't start any of the above **without measuring first**.
 
 Gate behind `debug_assertions` or a `--features profile` flag.
 
-### 5.2 Open-time breakdown log
+### 5.2 Open-time breakdown log ✅ DONE
 
 When open completes, push to the command line:
 

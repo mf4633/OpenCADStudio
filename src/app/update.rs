@@ -131,7 +131,8 @@ impl OpenCADStudio {
                 if self.opening.is_none() {
                     return Task::none();
                 }
-                self.opening = None;
+                let open_started = self.opening.take().map(|p| p.started);
+                let timings = caches.timings;
                 let entity_count = doc.entities().count();
                 self.command_line
                     .push_output(&format!("Opened \"{name}\" — {entity_count} entities"));
@@ -171,14 +172,17 @@ impl OpenCADStudio {
                     if cannoscale_value > 1e-9 { (1.0 / cannoscale_value) as f32 } else { 1.0 };
 
                 // Auto-resolve XREFs relative to the opened file's directory.
+                let mut xref_ms = 0u32;
                 if let Some(base_dir) = path.parent() {
                     // xref content arrives un-purged: parser-garbage entities
                     // inside the referenced file can trigger infinite loops in
                     // tessellation. `resolve_xrefs` runs the corrupt-entity
                     // guard inline as it merges each xref, so no second
                     // full-document walk is needed here.
+                    let t_xref = Instant::now();
                     let (xrefs, extra_dropped) =
                         crate::io::xref::resolve_xrefs(&mut self.tabs[i].scene.document, base_dir);
+                    xref_ms = t_xref.elapsed().as_millis() as u32;
                     if extra_dropped > 0 {
                         self.command_line.push_error(&format!(
                             "Warning: {extra_dropped} corrupt xref entities dropped"
@@ -205,6 +209,18 @@ impl OpenCADStudio {
                         }
                     }
                 }
+
+                // Open-time breakdown so regressions are visible immediately.
+                // `total` is wall time from the Open click to here (post-xref,
+                // pre-first-frame); the phase figures are the background-thread
+                // parse/purge/cache spans plus the UI-thread xref resolve.
+                let total_ms = open_started
+                    .map(|s| s.elapsed().as_millis() as u32)
+                    .unwrap_or(0);
+                self.command_line.push_info(&format!(
+                    "  parse {}ms · purge {}ms · caches {}ms · xref {}ms · total {}ms",
+                    timings.parse_ms, timings.purge_ms, timings.caches_ms, xref_ms, total_ms
+                ));
 
                 // Caches were built on the background thread inside open_path().
                 self.tabs[i].scene.world_offset = caches.world_offset;

@@ -104,6 +104,18 @@ pub struct DerivedCaches {
     /// Reported back to the UI so the user knows when a file had parser-junk
     /// entities silently dropped.
     pub corrupt_dropped: usize,
+    /// Background-thread open-phase timings in milliseconds (parse, purge,
+    /// derived-cache build). Filled in by `open_path_with_phase`; surfaced in
+    /// the open-complete breakdown log so open-time regressions are visible.
+    pub timings: OpenTimings,
+}
+
+/// Wall-clock breakdown of the file-open phases, in milliseconds.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OpenTimings {
+    pub parse_ms: u32,
+    pub purge_ms: u32,
+    pub caches_ms: u32,
 }
 
 /// Build hatch / image / mesh caches from a document without needing `&mut Scene`.
@@ -237,6 +249,7 @@ pub fn build_derived_caches(doc: &CadDocument) -> DerivedCaches {
         images,
         meshes,
         corrupt_dropped: 0,
+        timings: OpenTimings::default(),
     }
 }
 
