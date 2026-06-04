@@ -175,6 +175,8 @@ pub(super) struct OpenCADStudio {
     statusbar_menu_open: bool,
     /// True while the drawing-units picker is open.
     units_popup_open: bool,
+    /// True while the Isolate pill's action menu is open.
+    isolate_popup_open: bool,
     /// Clean-screen mode: hide ribbon and side panels for a full canvas.
     clean_screen: bool,
     /// Which status-bar pills the user has chosen to show (persisted).
@@ -754,6 +756,10 @@ pub enum Message {
     CloseUnitsPopup,
     /// Set the drawing units (INSUNITS) for the active drawing.
     SetDrawingUnits(i16),
+    /// Toggle the Isolate pill's action menu open/closed.
+    ToggleIsolatePopup,
+    /// Close the Isolate action menu.
+    CloseIsolatePopup,
     /// Toggle dynamic input overlay (F12).
     ToggleDynInput,
     /// Toggle object snap tracking (F11).
@@ -1212,6 +1218,7 @@ impl OpenCADStudio {
             scale_popup_open: false,
             statusbar_menu_open: false,
             units_popup_open: false,
+            isolate_popup_open: false,
             statusbar_config: crate::ui::statusbar_config::StatusBarConfig::load(),
             clean_screen: false,
             pre_cmd_tangent: None,

@@ -1016,6 +1016,7 @@ impl OpenCADStudio {
             if let Some(p) = ctx_pos {
                 let has_cmd = tab.active_cmd.is_some();
                 let has_selection = !tab.scene.selected.is_empty();
+                let isolation_active = tab.scene.is_isolation_active();
                 let last_cmds: Vec<String> = self
                     .command_line
                     .cmd_recall
@@ -1028,6 +1029,7 @@ impl OpenCADStudio {
                     p,
                     has_cmd,
                     has_selection,
+                    isolation_active,
                     last_cmds,
                     draworder_open,
                 ));
@@ -1210,6 +1212,15 @@ impl OpenCADStudio {
             iced::widget::Space::new().width(0).height(0).into()
         };
 
+        let isolate_layer: Element<'_, Message> = if self.isolate_popup_open {
+            crate::ui::isolate_popup::isolate_popup_overlay(
+                !tab.scene.selected.is_empty(),
+                tab.scene.is_isolation_active(),
+            )
+        } else {
+            iced::widget::Space::new().width(0).height(0).into()
+        };
+
         let dropdown_layer: Element<'_, Message> = self
             .ribbon
             .dropdown_overlay(
@@ -1247,6 +1258,7 @@ impl OpenCADStudio {
             scale_layer,
             statusbar_menu_layer,
             units_layer,
+            isolate_layer,
             dropdown_layer,
             layout_ctx_layer,
             qselect_layer,
@@ -2201,6 +2213,7 @@ fn viewport_context_menu_overlay(
     pos: iced::Point,
     has_cmd: bool,
     has_selection: bool,
+    isolation_active: bool,
     last_cmds: Vec<String>,
     draworder_open: bool,
 ) -> Element<'static, Message> {
@@ -2341,7 +2354,22 @@ fn viewport_context_menu_overlay(
                 ));
             }
             items.push(sep());
+            items.push(item(
+                "Isolate Objects".to_string(),
+                Message::Command("ISOLATEOBJECTS".to_string()),
+            ));
+            items.push(item(
+                "Hide Objects".to_string(),
+                Message::Command("HIDEOBJECTS".to_string()),
+            ));
+            items.push(sep());
             items.push(item("Select Similar".to_string(), Message::SelectSimilar));
+        }
+        if isolation_active {
+            items.push(item(
+                "End Object Isolation".to_string(),
+                Message::Command("UNISOLATEOBJECTS".to_string()),
+            ));
         }
         items.push(item(
             "Select All".to_string(),

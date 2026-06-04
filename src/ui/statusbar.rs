@@ -177,12 +177,8 @@ impl StatusBar {
         }
         if vis(StatusPill::Isolate) {
             right_status = right_status.push(tip(
-                toggle_pill(
-                    "ISO",
-                    isolation_active,
-                    Message::Command("UNISOLATEOBJECTS".into()),
-                ),
-                "Isolate Objects\nISOLATEOBJECTS / HIDEOBJECTS to hide; click to restore",
+                toggle_pill("ISO", isolation_active, Message::ToggleIsolatePopup),
+                "Isolate Objects\nClick for Isolate / Hide / End",
             ));
         }
         if vis(StatusPill::Vp) && !vp_label.is_empty() {

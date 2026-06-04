@@ -1353,6 +1353,8 @@ impl OpenCADStudio {
                 // Close viewport context menu if open.
                 let i = self.active_tab;
                 self.tabs[i].scene.selection.borrow_mut().context_menu = None;
+                // Any command also dismisses the Isolate action menu.
+                self.isolate_popup_open = false;
                 self.dispatch_command(&cmd)
             }
 
@@ -3593,6 +3595,14 @@ impl OpenCADStudio {
                 let i = self.active_tab;
                 self.tabs[i].scene.document.header.insertion_units = code;
                 self.tabs[i].dirty = true;
+                Task::none()
+            }
+            Message::ToggleIsolatePopup => {
+                self.isolate_popup_open ^= true;
+                Task::none()
+            }
+            Message::CloseIsolatePopup => {
+                self.isolate_popup_open = false;
                 Task::none()
             }
             Message::ToggleSnap(t) => {
