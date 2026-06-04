@@ -186,6 +186,9 @@ pub(super) struct OpenCADStudio {
     /// Selection cycling: clicking where objects overlap opens a list box
     /// to pick which one; the pick is added to the current selection.
     selection_cycling: bool,
+    /// Frame-budget HUD (Phase 5.3): overlays the last wire re-tessellation
+    /// cost on the active viewport. Toggled by the `PERF` command.
+    perf_hud: bool,
     /// When set, the cycling list box is open: (canvas point, candidates).
     cycle_candidates: Option<(iced::Point, Vec<acadrust::Handle>)>,
     /// Which status-bar pills the user has chosen to show (persisted).
@@ -1254,6 +1257,7 @@ impl OpenCADStudio {
             clean_screen: false,
             quick_properties: false,
             selection_cycling: false,
+            perf_hud: false,
             cycle_candidates: None,
             pre_cmd_tangent: None,
             ortho_mode: false,

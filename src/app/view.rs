@@ -1014,6 +1014,48 @@ impl OpenCADStudio {
             }
         }
 
+        // Frame-budget HUD (Phase 5.3): toggle with the PERF command. Shows
+        // the cost of the most recent wire re-tessellation — the work avoided
+        // by a warm wire cache — so render-path changes can be compared
+        // PR-to-PR. Reads ~0 ms while panning/zooming on a hit cache.
+        if self.perf_hud && !tab.is_start {
+            let s = &tab.scene;
+            let label = format!(
+                "tess {:.1} ms · {} wires · epoch {}",
+                s.last_tess_ms.get(),
+                s.last_tess_wires.get(),
+                s.geometry_epoch,
+            );
+            let panel = container(text(label).size(12).color(Color {
+                r: 0.6,
+                g: 1.0,
+                b: 0.6,
+                a: 1.0,
+            }))
+            .padding(6)
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color {
+                    r: 0.08,
+                    g: 0.08,
+                    b: 0.08,
+                    a: 0.85,
+                })),
+                border: Border {
+                    color: Color {
+                        r: 0.35,
+                        g: 0.35,
+                        b: 0.35,
+                        a: 1.0,
+                    },
+                    width: 1.0,
+                    radius: 3.0.into(),
+                },
+                ..Default::default()
+            });
+            viewport_stack = viewport_stack
+                .push(position_canvas_overlay(iced::Point::new(12.0, 40.0), panel.into()));
+        }
+
         // Selection-cycling list box: pick among overlapping objects.
         if let Some((pt, cands)) = &self.cycle_candidates {
             if !tab.is_start {

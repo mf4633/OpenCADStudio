@@ -48,6 +48,18 @@ impl OpenCADStudio {
                 return iced::exit();
             }
 
+            // ── Frame-budget HUD (Phase 5.3) ───────────────────────────────
+            // Toggle the per-rebuild wire-tessellation readout overlay.
+            "PERF" => {
+                self.perf_hud = !self.perf_hud;
+                self.command_line.push_info(if self.perf_hud {
+                    "PERF HUD on — shows last wire re-tessellation cost"
+                } else {
+                    "PERF HUD off"
+                });
+                return Task::none();
+            }
+
             // ── Background color ───────────────────────────────────────────
             // Usage:  BACKGROUND <r> <g> <b>   (0–255 each)
             //         BACKGROUND RESET          (restore default)

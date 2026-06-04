@@ -261,10 +261,17 @@ Opened "x.dwg" — 84321 entities — parse 1.2s, purge 80ms, caches 340ms, xref
 
 Regressions are visible immediately.
 
-### 5.3 Frame-budget HUD
+### 5.3 Frame-budget HUD ✅ DONE (CPU tess slice)
 
-Add a CLI `PERF` toggle (or F12) that shows per-frame breakdown: tess ms,
-upload ms, draw ms, GPU wait ms. Makes PR-to-PR comparison trivial.
+A CLI `PERF` toggle overlays the cost of the most recent wire
+re-tessellation (ms + wire count + geometry epoch) on the active viewport,
+anchored top-left. Reads ~0 ms while the wire cache is warm (idle
+pan/zoom), so it isolates exactly the work a cache miss costs — the slice
+every render-path change (2.2 / 3.1 / 3.3) moves. Timed at the miss paths
+in `model_tile_wires_arc` / `paper_sheet_wires_arc` and stored on `Scene`.
+
+Still open: GPU-side `upload` / `draw` / `GPU-wait` spans need wgpu
+timestamp queries; the CPU tessellation slice covers the current hot path.
 
 ---
 

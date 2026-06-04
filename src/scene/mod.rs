@@ -712,6 +712,13 @@ pub struct Scene {
     /// without depending on the shader widget's internal `Program::State`
     /// (which can miss events under overlapping overlays).
     pub viewcube_hover: std::cell::Cell<Option<usize>>,
+    /// Wall time (ms) of the most recent wire re-tessellation — the work done
+    /// on a wire-cache miss in `model_tile_wires_arc` / `paper_sheet_wires_arc`.
+    /// Stays at the last value while the cache is hit (idle pan/zoom on a warm
+    /// cache reads ~0). Surfaced by the frame-budget HUD (Phase 5.3).
+    pub(crate) last_tess_ms: std::cell::Cell<f32>,
+    /// Wire count produced by that most recent re-tessellation.
+    pub(crate) last_tess_wires: std::cell::Cell<usize>,
 }
 
 impl Scene {
@@ -769,6 +776,8 @@ impl Scene {
             last_render_aspect: std::cell::Cell::new(16.0 / 9.0),
             last_world_per_pixel: std::cell::Cell::new(0.0),
             viewcube_hover: std::cell::Cell::new(None),
+            last_tess_ms: std::cell::Cell::new(0.0),
+            last_tess_wires: std::cell::Cell::new(0),
         }
     }
 
@@ -1570,7 +1579,10 @@ impl Scene {
             None
         };
         let block = self.model_space_block_handle();
+        let t_tess = std::time::Instant::now();
         let arc = Arc::new(self.wires_for_block_culled(block, view_aabb, wpp, None, None));
+        self.last_tess_ms.set(t_tess.elapsed().as_secs_f32() * 1000.0);
+        self.last_tess_wires.set(arc.len());
         self.model_tile_wire_cache
             .borrow_mut()
             .insert(tile_idx, (key, Arc::clone(&arc)));
@@ -1590,7 +1602,10 @@ impl Scene {
             }
         }
         let layout_block = self.current_layout_block_handle();
+        let t_tess = std::time::Instant::now();
         let mut wires = self.wires_for_block(layout_block);
+        self.last_tess_ms.set(t_tess.elapsed().as_secs_f32() * 1000.0);
+        self.last_tess_wires.set(wires.len());
         // The overall "sheet" viewport now IS the paper view itself, so its own
         // border rectangle must not be drawn as an entity on the sheet.
         let sheet = self.current_layout_sheet_viewport_handle();
