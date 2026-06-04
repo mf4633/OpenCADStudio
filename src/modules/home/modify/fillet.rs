@@ -525,7 +525,7 @@ fn lwpoly_shorten_seg(
     new_poly
 }
 
-/// Wire points for a LwPolyline (straight segments only, for preview).
+/// Wire points for a LwPolyline (honours bulge → arcs, for preview/highlight).
 fn lwpoly_pts(poly: &LwPolyline) -> Vec<[f32; 3]> {
     let elev = poly.elevation as f32;
     let n = poly.vertices.len();
@@ -538,10 +538,54 @@ fn lwpoly_pts(poly: &LwPolyline) -> Vec<[f32; 3]> {
     for i in 0..seg_count {
         let v0 = &poly.vertices[i];
         let v1 = &poly.vertices[(i + 1) % n];
-        pts.push([v0.location.x as f32, v0.location.y as f32, elev]);
-        pts.push([v1.location.x as f32, v1.location.y as f32, elev]);
+        lwpoly_seg_pts(
+            [v0.location.x, v0.location.y],
+            [v1.location.x, v1.location.y],
+            v0.bulge,
+            elev,
+            &mut pts,
+        );
     }
     pts
+}
+
+/// Wire points highlighting the polyline segment nearest to `click`.
+fn lwpoly_seg_hover_pts(poly: &LwPolyline, click: [f64; 2]) -> Vec<[f32; 3]> {
+    let n = poly.vertices.len();
+    if n < 2 {
+        return vec![];
+    }
+    let seg = lwpoly_nearest_seg(poly, click);
+    let v0 = &poly.vertices[seg];
+    let v1 = &poly.vertices[(seg + 1) % n];
+    let mut pts = Vec::new();
+    lwpoly_seg_pts(
+        [v0.location.x, v0.location.y],
+        [v1.location.x, v1.location.y],
+        v0.bulge,
+        poly.elevation as f32,
+        &mut pts,
+    );
+    pts
+}
+
+/// Append the wire points of one polyline segment (straight, or a bulge arc).
+fn lwpoly_seg_pts(p0: [f64; 2], p1: [f64; 2], bulge: f64, elev: f32, out: &mut Vec<[f32; 3]>) {
+    if let Some(arc) = (bulge.abs() >= 1e-9)
+        .then(|| crate::entities::common::BulgeArc::from_bulge(p0, p1, bulge))
+        .flatten()
+    {
+        const STEPS: usize = 16;
+        for j in 0..STEPS {
+            let a = arc.sample(j as f64 / STEPS as f64);
+            let b = arc.sample((j + 1) as f64 / STEPS as f64);
+            out.push([a[0] as f32, a[1] as f32, elev]);
+            out.push([b[0] as f32, b[1] as f32, elev]);
+        }
+    } else {
+        out.push([p0[0] as f32, p0[1] as f32, elev]);
+        out.push([p1[0] as f32, p1[1] as f32, elev]);
+    }
 }
 
 // ── Unified fillet entity type ─────────────────────────────────────────────
@@ -1333,8 +1377,9 @@ impl CadCommand for FilletCommand {
                     .all_entities
                     .iter()
                     .find(|e| e.common().handle == handle)
-                    .and_then(|e| {
-                        FilletEntity::from_entity(e).map(|fe| entity_pts(&fe.to_entity_type()))
+                    .and_then(|e| match e {
+                        EntityType::LwPolyline(p) => Some(lwpoly_seg_hover_pts(p, click)),
+                        _ => FilletEntity::from_entity(e).map(|fe| entity_pts(&fe.to_entity_type())),
                     });
                 if let Some(pts) = pts {
                     vec![WireModel::solid(
@@ -1412,6 +1457,51 @@ impl CadCommand for FilletCommand {
 // ChamferCommand
 // ══════════════════════════════════════════════════════════════════════════
 
+/// Chamfer a corner of a single LwPolyline: the two picks select two adjacent
+/// segments; the shared corner vertex is cut back by dist1/dist2 and replaced
+/// with a straight chamfer edge (bulge 0). Returns the rebuilt polyline.
+fn chamfer_lwpoly_corner(
+    poly: &LwPolyline,
+    click1: [f64; 2],
+    dist1: f64,
+    click2: [f64; 2],
+    dist2: f64,
+) -> Option<EntityType> {
+    let n = poly.vertices.len();
+    if n < 3 {
+        return None;
+    }
+    let s1 = lwpoly_nearest_seg(poly, click1);
+    let s2 = lwpoly_nearest_seg(poly, click2);
+    if s1 == s2 {
+        return None;
+    }
+    let (low, high) = if s1 < s2 { (s1, s2) } else { (s2, s1) };
+    let consecutive =
+        high == low + 1 || (poly.is_closed && low == 0 && high == n.saturating_sub(1));
+    if !consecutive {
+        return None;
+    }
+    let corner_idx = high % n;
+    let l1 = lwpoly_seg_as_line(poly, low);
+    let l2 = lwpoly_seg_as_line(poly, high % n.max(1));
+    // Map each click + distance to whichever segment it was picked on.
+    let (c1, d1, c2, d2) = if s1 == low {
+        (click1, dist1, click2, dist2)
+    } else {
+        (click2, dist2, click1, dist1)
+    };
+    match compute_chamfer(&l1, c1, d1, &l2, c2, d2)? {
+        (EntityType::Line(tl1), EntityType::Line(tl2), _) => {
+            let t1 = [tl1.end.x, tl1.end.y];
+            let t2 = [tl2.start.x, tl2.start.y];
+            let new_poly = lwpoly_replace_corner(poly, corner_idx, t1, t2, 0.0);
+            Some(EntityType::LwPolyline(new_poly))
+        }
+        _ => None,
+    }
+}
+
 enum ChamferStep {
     First,
     WaitingForDist1,
@@ -1419,6 +1509,13 @@ enum ChamferStep {
     Second {
         h1: Handle,
         l1: LineEnt,
+        click1: [f64; 2],
+    },
+    /// First pick was an LwPolyline segment; waiting for the second segment
+    /// of the same polyline to chamfer the shared corner.
+    SecondPoly {
+        h1: Handle,
+        poly: LwPolyline,
         click1: [f64; 2],
     },
 }
@@ -1461,6 +1558,10 @@ impl CadCommand for ChamferCommand {
             ),
             ChamferStep::Second { .. } => format!(
                 "CHAMFER  Select second line  [D1={:.4} D2={:.4}]:",
+                self.dist1, self.dist2
+            ),
+            ChamferStep::SecondPoly { .. } => format!(
+                "CHAMFER  Select the adjacent polyline segment  [D1={:.4} D2={:.4}]:",
                 self.dist1, self.dist2
             ),
         }
@@ -1507,7 +1608,9 @@ impl CadCommand for ChamferCommand {
                 // Invalid — stay and re-prompt
                 Some(CmdResult::NeedPoint)
             }
-            ChamferStep::First | ChamferStep::Second { .. } => {
+            ChamferStep::First
+            | ChamferStep::Second { .. }
+            | ChamferStep::SecondPoly { .. } => {
                 let t = text.trim();
                 let upper = t.to_uppercase();
                 // "D" alone → enter sub-step to collect distances
@@ -1563,26 +1666,40 @@ impl CadCommand for ChamferCommand {
                 return CmdResult::NeedPoint;
             }
             ChamferStep::First => {
-                let l1 = self
+                match self
                     .all_entities
                     .iter()
                     .find(|e| e.common().handle == handle)
-                    .and_then(|e| {
-                        if let EntityType::Line(l) = e {
-                            Some(l.clone())
-                        } else {
-                            None
-                        }
-                    });
-                if let Some(l) = l1 {
-                    self.step = ChamferStep::Second {
-                        h1: handle,
-                        l1: l,
-                        click1: click,
-                    };
-                    CmdResult::NeedPoint
-                } else {
-                    CmdResult::NeedPoint
+                {
+                    Some(EntityType::Line(l)) => {
+                        self.step = ChamferStep::Second {
+                            h1: handle,
+                            l1: l.clone(),
+                            click1: click,
+                        };
+                    }
+                    Some(EntityType::LwPolyline(p)) => {
+                        self.step = ChamferStep::SecondPoly {
+                            h1: handle,
+                            poly: p.clone(),
+                            click1: click,
+                        };
+                    }
+                    _ => {}
+                }
+                CmdResult::NeedPoint
+            }
+            ChamferStep::SecondPoly { h1, poly, click1 } => {
+                let h1 = *h1;
+                let poly = poly.clone();
+                let click1 = *click1;
+                if handle != h1 {
+                    // Chamfer corners only within the same polyline.
+                    return CmdResult::NeedPoint;
+                }
+                match chamfer_lwpoly_corner(&poly, click1, self.dist1, click, self.dist2) {
+                    Some(new_poly) => CmdResult::ReplaceMany(vec![(h1, vec![new_poly])], vec![]),
+                    None => CmdResult::NeedPoint,
                 }
             }
             ChamferStep::Second { h1, l1, click1 } => {
@@ -1633,12 +1750,10 @@ impl CadCommand for ChamferCommand {
                     .all_entities
                     .iter()
                     .find(|e| e.common().handle == handle)
-                    .and_then(|e| {
-                        if let EntityType::Line(l) = e {
-                            Some(line_pts(l))
-                        } else {
-                            None
-                        }
+                    .and_then(|e| match e {
+                        EntityType::Line(l) => Some(line_pts(l)),
+                        EntityType::LwPolyline(p) => Some(lwpoly_seg_hover_pts(p, click)),
+                        _ => None,
                     });
                 if let Some(pts) = pts {
                     vec![WireModel::solid(
@@ -1690,6 +1805,22 @@ impl CadCommand for ChamferCommand {
                             ),
                         ];
                     }
+                }
+                vec![]
+            }
+            ChamferStep::SecondPoly { h1, poly, click1 } => {
+                if handle != *h1 {
+                    return vec![];
+                }
+                if let Some(new_poly) =
+                    chamfer_lwpoly_corner(poly, *click1, self.dist1, click, self.dist2)
+                {
+                    return vec![WireModel::solid(
+                        "chamfer_poly".into(),
+                        entity_pts(&new_poly),
+                        WireModel::CYAN,
+                        false,
+                    )];
                 }
                 vec![]
             }
