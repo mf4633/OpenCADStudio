@@ -4299,11 +4299,12 @@ impl OpenCADStudio {
                 let handles = self.property_target_handles(i);
                 if !handles.is_empty() {
                     self.push_undo_snapshot(i, "CHPROP");
-                    for handle in handles {
+                    for &handle in &handles {
                         if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(handle) {
                             crate::scene::dispatch::apply_common_prop(entity, "layer", &layer);
                         }
                     }
+                    self.invalidate_property_targets(i, &handles);
                     self.tabs[i].dirty = true;
                     self.refresh_properties();
                 }
@@ -4315,11 +4316,12 @@ impl OpenCADStudio {
                 let handles = self.property_target_handles(i);
                 if !handles.is_empty() {
                     self.push_undo_snapshot(i, "CHPROP");
-                    for handle in handles {
+                    for &handle in &handles {
                         if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(handle) {
                             crate::scene::dispatch::apply_color(entity, color);
                         }
                     }
+                    self.invalidate_property_targets(i, &handles);
                     self.tabs[i].properties.color_picker_open = false;
                     self.tabs[i].properties.color_palette_open = false;
                     self.tabs[i].dirty = true;
@@ -4333,11 +4335,12 @@ impl OpenCADStudio {
                 let handles = self.property_target_handles(i);
                 if !handles.is_empty() {
                     self.push_undo_snapshot(i, "CHPROP");
-                    for handle in handles {
+                    for &handle in &handles {
                         if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(handle) {
                             crate::scene::dispatch::apply_line_weight(entity, lw);
                         }
                     }
+                    self.invalidate_property_targets(i, &handles);
                     self.tabs[i].dirty = true;
                     self.refresh_properties();
                 }
@@ -4349,11 +4352,12 @@ impl OpenCADStudio {
                 let handles = self.property_target_handles(i);
                 if !handles.is_empty() {
                     self.push_undo_snapshot(i, "CHPROP");
-                    for handle in handles {
+                    for &handle in &handles {
                         if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(handle) {
                             crate::scene::dispatch::apply_common_prop(entity, "linetype", &lt);
                         }
                     }
+                    self.invalidate_property_targets(i, &handles);
                     self.tabs[i].dirty = true;
                     self.refresh_properties();
                 }
@@ -4367,7 +4371,7 @@ impl OpenCADStudio {
                     use crate::scene::hatch_patterns;
                     if let Some(entry) = hatch_patterns::find(&name) {
                         self.push_undo_snapshot(i, "HATCHEDIT");
-                        for handle in handles {
+                        for &handle in &handles {
                             if let Some(acadrust::EntityType::Hatch(dxf)) =
                                 self.tabs[i].scene.document.get_entity_mut(handle)
                             {
@@ -4382,6 +4386,7 @@ impl OpenCADStudio {
                                 model.name = name.clone();
                             }
                         }
+                        self.invalidate_property_targets(i, &handles);
                         self.tabs[i].dirty = true;
                         self.refresh_properties();
                     }
@@ -4394,7 +4399,7 @@ impl OpenCADStudio {
                 let handles = self.property_target_handles(i);
                 if !handles.is_empty() {
                     self.push_undo_snapshot(i, "CHPROP");
-                    for handle in handles {
+                    for &handle in &handles {
                         if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(handle) {
                             match field {
                                 "invisible" => crate::scene::dispatch::toggle_invisible(entity),
@@ -4404,6 +4409,7 @@ impl OpenCADStudio {
                             }
                         }
                     }
+                    self.invalidate_property_targets(i, &handles);
                     self.tabs[i].dirty = true;
                     self.refresh_properties();
                 }
@@ -4460,13 +4466,14 @@ impl OpenCADStudio {
                             self.tabs[i].scene.camera_generation += 1;
                         }
                     } else {
-                        for handle in handles {
+                        for &handle in &handles {
                             if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(handle)
                             {
                                 crate::scene::dispatch::apply_geom_prop(entity, field, &value);
                             }
                         }
                     }
+                    self.invalidate_property_targets(i, &handles);
                     self.tabs[i].dirty = true;
                     self.refresh_properties();
                 }
@@ -4504,7 +4511,7 @@ impl OpenCADStudio {
                                         .map(|l| l.handle)
                                 })
                                 .collect();
-                            for handle in handles {
+                            for &handle in &handles {
                                 if let Some(acadrust::EntityType::Viewport(vp)) =
                                     self.tabs[i].scene.document.get_entity_mut(handle)
                                 {
@@ -4512,7 +4519,7 @@ impl OpenCADStudio {
                                 }
                             }
                         } else {
-                            for handle in handles {
+                            for &handle in &handles {
                                 if let Some(entity) =
                                     self.tabs[i].scene.document.get_entity_mut(handle)
                                 {
@@ -4531,6 +4538,7 @@ impl OpenCADStudio {
                                 }
                             }
                         }
+                        self.invalidate_property_targets(i, &handles);
                         self.tabs[i].dirty = true;
                         self.refresh_properties();
                     }

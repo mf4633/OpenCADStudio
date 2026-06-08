@@ -461,6 +461,13 @@ impl OpenCADStudio {
         }
     }
 
+    pub(super) fn invalidate_property_targets(&mut self, i: usize, handles: &[Handle]) {
+        for &handle in handles {
+            self.tabs[i].scene.mark_entity_dirty(handle);
+        }
+        self.tabs[i].scene.bump_geometry_no_blocks();
+    }
+
     /// Add an entity to the correct space (model or paper space layout).
     pub(super) fn commit_entity(&mut self, entity: acadrust::EntityType) {
         let _ = self.commit_entity_handle(entity);
