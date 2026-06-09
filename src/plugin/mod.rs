@@ -8,6 +8,9 @@ pub mod host;
 pub mod manifest;
 pub mod registry;
 
+#[cfg(test)]
+mod smoke;
+
 pub use registry::all_ribbon_modules;
 pub(crate) use host::BuiltinPlugin;
 pub(crate) use registry::try_dispatch;

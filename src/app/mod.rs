@@ -1475,6 +1475,16 @@ impl OpenCADStudio {
         app
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_for_test() -> Self {
+        Self::new()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_command_name(&self, tab: usize) -> Option<&'static str> {
+        self.tabs[tab].active_cmd.as_ref().map(|c| c.name())
+    }
+
     /// Boot function for `iced::daemon`: returns initial state plus a task that
     /// opens the primary application window.
     fn boot() -> (Self, Task<Message>) {
