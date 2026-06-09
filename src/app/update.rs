@@ -1637,11 +1637,14 @@ impl OpenCADStudio {
                 };
                 self.push_undo_snapshot(i, "LAYER NEW");
                 use acadrust::tables::layer::Layer as DocLayer;
-                let _ = self.tabs[i]
-                    .scene
-                    .document
-                    .layers
-                    .add(DocLayer::new(&new_name));
+                // A layer needs a real handle or it is dropped on a DWG save
+                // (the format is handle-based; issue #67).
+                let mut dl = DocLayer::new(&new_name);
+                // `allocate_handle` advances the seed so the layer gets a
+                // unique handle; the non-advancing `next_handle` getter hands
+                // out the same value twice and the later object overwrites it.
+                dl.handle = self.tabs[i].scene.document.allocate_handle();
+                let _ = self.tabs[i].scene.document.layers.add(dl);
                 self.tabs[i].dirty = true;
                 let doc_layers = self.tabs[i].scene.document.layers.clone();
                 let vp_info = self.tabs[i].scene.viewport_list();
@@ -1742,11 +1745,17 @@ impl OpenCADStudio {
                         && !self.tabs[i].scene.document.layers.contains(&new_name)
                     {
                         self.push_undo_snapshot(i, "LAYER RENAME");
-                        if let Some(old_layer) = self.tabs[i].scene.document.layers.get(&old_name) {
-                            use acadrust::tables::layer::Layer as DocLayer;
-                            let mut nl = DocLayer::new(&new_name);
-                            nl.color = old_layer.color.clone();
-                            nl.flags = old_layer.flags.clone();
+                        // Keep the whole record (handle, color, linetype,
+                        // lineweight, flags) and only change the name, so the
+                        // renamed layer still has a valid handle and survives a
+                        // DWG save (issue #67).
+                        if let Some(mut nl) =
+                            self.tabs[i].scene.document.layers.get(&old_name).cloned()
+                        {
+                            nl.name = new_name.clone();
+                            if !nl.handle.is_valid() {
+                                nl.handle = self.tabs[i].scene.document.allocate_handle();
+                            }
                             let _ = self.tabs[i].scene.document.layers.add(nl);
                         }
                         self.tabs[i].scene.document.layers.remove(&old_name);

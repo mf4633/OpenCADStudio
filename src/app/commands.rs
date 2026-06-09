@@ -3288,7 +3288,10 @@ impl OpenCADStudio {
                             self.command_line
                                 .push_error(&format!("LAYER: '{}' already exists.", name));
                         } else {
-                            let layer = Layer::new(&name);
+                            let mut layer = Layer::new(&name);
+                            // Allocate a unique handle so the layer survives a
+                            // DWG save (handle-based format; issue #67).
+                            layer.handle = self.tabs[i].scene.document.allocate_handle();
                             let _ = self.tabs[i].scene.document.layers.add(layer);
                             self.push_undo_snapshot(i, "LAYER NEW");
                             self.tabs[i].dirty = true;

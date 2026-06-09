@@ -403,3 +403,44 @@ fn fix_dxf_dimension_rotations(doc: &mut CadDocument) {
         }
     }
 }
+
+#[cfg(test)]
+mod layer_roundtrip_tests {
+    use super::*;
+    use acadrust::tables::layer::Layer as DocLayer;
+
+    // Add `count` new layers the way the UI does (allocate_handle, then add),
+    // round-trip through `ext`, and return whether every one survived.
+    fn roundtrip_layers(ext: &str, count: usize) -> bool {
+        let mut doc = CadDocument::new();
+        crate::linetypes::populate_document(&mut doc);
+        let names: Vec<String> = (0..count).map(|n| format!("Layer{}", n + 1)).collect();
+        for name in &names {
+            let mut dl = DocLayer::new(name);
+            dl.handle = doc.allocate_handle();
+            doc.layers.add(dl).unwrap();
+        }
+        let path = std::env::temp_dir().join(format!("ocs_layer_rt_{count}.{ext}"));
+        save_as_version(&doc, &path, acadrust::DxfVersion::AC1032).expect("save");
+        let loaded = load_file(&path).expect("load");
+        let _ = std::fs::remove_file(&path);
+        names.iter().all(|n| loaded.layers.contains(n))
+    }
+
+    #[test]
+    fn dwg_preserves_new_layer() {
+        assert!(roundtrip_layers("dwg", 1), "DWG dropped the new layer (issue #67)");
+    }
+
+    #[test]
+    fn dxf_preserves_new_layer() {
+        assert!(roundtrip_layers("dxf", 1), "DXF dropped the new layer");
+    }
+
+    // Each new layer must get a distinct handle, or they collide and all but
+    // the last are dropped on a handle-based DWG save (issue #67).
+    #[test]
+    fn dwg_preserves_multiple_new_layers() {
+        assert!(roundtrip_layers("dwg", 3), "DWG dropped colliding new layers (issue #67)");
+    }
+}
