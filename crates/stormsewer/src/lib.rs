@@ -10,8 +10,9 @@
 //! * **Rational method** peak-flow accumulation down a pipe network,
 //! * **Manning** open-channel / partial-flow hydraulics for circular conduits,
 //! * normal-depth, critical-depth and full-flow capacity,
-//! * *(forthcoming)* **HEC-22** hydraulic-grade-line backwater with junction
-//!   and structure losses.
+//! * **HGL backwater** with junction losses and **standard-pipe sizing**
+//!   against velocity / capacity criteria (Hydraflow-style design checks).
+//! * *(forthcoming)* full **HEC-22** inlet capacity and multi-return-period IDF sets.
 //!
 //! This is an **engine only**: no GUI and no CAD dependencies, so it compiles
 //! to a native library, to WASM (for hydrocomplete.com), and is consumable as
@@ -31,15 +32,25 @@
 //! assert!((results[0].design_q - 5.6).abs() < 1e-6); // 4 * (0.7*2.0)
 //! ```
 
+pub mod catchment;
+pub mod design;
 pub mod drawing;
 pub mod hydraulics;
+pub mod hydrology;
 pub mod idf;
+pub mod io;
 pub mod network;
+pub mod params;
 pub mod parse;
 pub mod report;
 
+pub use catchment::*;
+pub use design::*;
 pub use drawing::*;
 pub use hydraulics::*;
+pub use hydrology::*;
 pub use idf::*;
+pub use io::*;
 pub use network::*;
+pub use params::*;
 pub use parse::*;

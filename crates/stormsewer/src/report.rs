@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Plain-text report tables for an [`Analysis`], in the spirit of Hydraflow
-//! Storm Sewers' pipe and HGL summaries.
+//! Plain-text report tables for an [`Analysis`] and pipe-sizing output, in the
+//! spirit of Hydraflow Storm Sewers' pipe and HGL summaries.
 
-use crate::network::Analysis;
+use crate::design::PipeSizeRecommendation;
+use crate::hydrology::IdfSet;
+use crate::network::{Analysis, AnalysisOptions, Network};
 
 fn f(x: f64, w: usize, p: usize) -> String {
     format!("{:>w$.p$}", x, w = w, p = p)
@@ -64,6 +66,92 @@ pub fn node_table(a: &Analysis) -> String {
             f(fb, 9, 2),
             status,
         ));
+    }
+    s
+}
+
+fn dia_in(d_ft: f64) -> String {
+    format!("{}\"", (d_ft * 12.0).round() as i32)
+}
+
+/// Pipe-sizing recommendations table.
+pub fn sizing_table(recs: &[PipeSizeRecommendation]) -> String {
+    let mut s = String::new();
+    s.push_str("Pipe   Q(cfs)  Slope    Current  Rec'd    %Full  V(ft/s)  Status\n");
+    s.push_str(&"-".repeat(72));
+    s.push('\n');
+    for r in recs {
+        let status = match r.outcome {
+            crate::design::SizeOutcome::Adequate => "ok",
+            crate::design::SizeOutcome::Sized => "UPSIZE",
+            crate::design::SizeOutcome::NoSolution => "NO SIZE",
+        };
+        s.push_str(&format!(
+            "{:<6} {} {} {} {} {} {}  {}\n",
+            r.pipe_id,
+            f(r.design_q, 6, 2),
+            f(r.slope, 7, 4),
+            format!("{:>6}", dia_in(r.current_diameter_ft)),
+            format!("{:>6}", dia_in(r.recommended_diameter_ft)),
+            f(r.pct_full * 100.0, 6, 1),
+            f(r.velocity, 6, 2),
+            status,
+        ));
+    }
+    s
+}
+
+/// Full sizing report with per-pipe notes.
+pub fn format_sizing(recs: &[PipeSizeRecommendation]) -> String {
+    let mut s = String::new();
+    s.push_str("=== STORM SEWER PIPE SIZING ===\n\n");
+    s.push_str(&sizing_table(recs));
+    s.push('\n');
+    for r in recs {
+        s.push_str(&r.note);
+        s.push('\n');
+    }
+    let upsized: Vec<&str> = recs
+        .iter()
+        .filter(|r| r.outcome == crate::design::SizeOutcome::Sized)
+        .map(|r| r.pipe_id.as_str())
+        .collect();
+    let failed: Vec<&str> = recs
+        .iter()
+        .filter(|r| r.outcome == crate::design::SizeOutcome::NoSolution)
+        .map(|r| r.pipe_id.as_str())
+        .collect();
+    if upsized.is_empty() && failed.is_empty() {
+        s.push_str("\nAll pipes meet design criteria.\n");
+    } else {
+        if !upsized.is_empty() {
+            s.push_str(&format!("\nPipes to upsize: {}\n", upsized.join(", ")));
+        }
+        if !failed.is_empty() {
+            s.push_str(&format!("Pipes with no catalog solution: {}\n", failed.join(", ")));
+        }
+    }
+    s
+}
+
+/// Summary of peak design flows at each configured return period.
+pub fn format_multi_rp(net: &Network, idf_set: &IdfSet, opts: &AnalysisOptions) -> String {
+    let mut s = String::new();
+    s.push_str("=== MULTI RETURN-PERIOD PEAK FLOWS ===\n\n");
+    s.push_str("RP(yr)  Pipe   Q(cfs)   Surcharged\n");
+    s.push_str(&"-".repeat(40));
+    s.push('\n');
+    match net.analyze_all_rps(idf_set, opts) {
+        Ok(runs) => {
+            for (rp, a) in runs {
+                for p in &a.pipes {
+                    let flag = if p.surcharged { "yes" } else { "no" };
+                    s.push_str(&format!("{rp:<7} {:<6} {}  {flag}\n", p.id, f(p.design_q, 6, 2)));
+                }
+                s.push('\n');
+            }
+        }
+        Err(e) => s.push_str(&format!("error: {e}\n")),
     }
     s
 }

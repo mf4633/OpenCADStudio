@@ -8,8 +8,11 @@
 //! standard for gravity storm sewers. Looped networks are rejected by the
 //! topological sort.
 
+use crate::design::{size_network, DesignCriteria, PipeSizeRecommendation};
 use crate::hydraulics::*;
+use crate::hydrology::IdfSet;
 use crate::idf::IdfCurve;
+use crate::params::StormAnalysisParams;
 use std::collections::HashMap;
 
 /// Kind of network node.
@@ -151,7 +154,7 @@ pub struct Analysis {
 }
 
 /// Options for [`Network::analyze`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AnalysisOptions {
     /// Minimum time of concentration (minutes) — floors the IDF duration.
     pub min_tc: f64,
@@ -252,6 +255,40 @@ impl Network {
         let opts = AnalysisOptions { intensity_override: Some(intensity), ..Default::default() };
         // A flat IDF is unused when intensity_override is set.
         Ok(self.analyze(&IdfCurve::new(0.0, 1.0, 1.0), &opts)?.pipes)
+    }
+
+    /// Analyze then recommend standard pipe diameters for each link.
+    pub fn analyze_and_size(
+        &self,
+        idf: &IdfCurve,
+        opts: &AnalysisOptions,
+        criteria: &DesignCriteria,
+    ) -> Result<(Analysis, Vec<PipeSizeRecommendation>), NetworkError> {
+        let a = self.analyze(idf, opts)?;
+        let recs = size_network(self, &a, criteria);
+        Ok((a, recs))
+    }
+
+    /// Full analyze + size using [`StormAnalysisParams`].
+    pub fn analyze_and_size_params(
+        &self,
+        params: &StormAnalysisParams,
+    ) -> Result<(Analysis, Vec<PipeSizeRecommendation>), NetworkError> {
+        self.analyze_and_size(params.idf.design_curve(), &params.hydraulics, &params.sizing)
+    }
+
+    /// Run analysis at every configured return period.
+    pub fn analyze_all_rps(
+        &self,
+        idf_set: &IdfSet,
+        opts: &AnalysisOptions,
+    ) -> Result<Vec<(u32, Analysis)>, NetworkError> {
+        let mut out = Vec::new();
+        for rp in idf_set.return_periods() {
+            let curve = idf_set.curve(rp).expect("return_periods keys exist");
+            out.push((rp, self.analyze(curve, opts)?));
+        }
+        Ok(out)
     }
 
     /// Full analysis: Tc accumulation, per-pipe IDF intensity, Rational design
@@ -511,6 +548,18 @@ mod tests {
         assert!(p2.tc >= p1.tc, "p2.tc {} p1.tc {}", p2.tc, p1.tc);
         // Intensity falls as Tc grows downstream.
         assert!(p2.intensity <= p1.intensity, "i2 {} i1 {}", p2.intensity, p1.intensity);
+    }
+
+    #[test]
+    fn analyze_all_return_periods() {
+        use crate::hydrology::IdfSet;
+        let mut idf_set = IdfSet::default();
+        idf_set.set_curve(25, IdfCurve::new(90.0, 12.0, 0.8));
+        let results = sample().analyze_all_rps(&idf_set, &AnalysisOptions::default()).unwrap();
+        assert_eq!(results.len(), 2);
+        let q10 = results.iter().find(|(rp, _)| *rp == 10).unwrap().1.pipes[1].design_q;
+        let q25 = results.iter().find(|(rp, _)| *rp == 25).unwrap().1.pipes[1].design_q;
+        assert!(q25 > q10);
     }
 
     #[test]

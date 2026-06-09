@@ -1,5 +1,6 @@
 mod cmd_result;
 mod commands;
+pub mod plugin_host;
 mod document;
 mod helpers;
 mod history;

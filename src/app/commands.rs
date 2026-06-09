@@ -28,66 +28,11 @@ impl OpenCADStudio {
             return Task::done(Message::OpenPathPicked(Some((path, size))));
         }
 
+        if crate::plugin::try_dispatch(self, i, cmd) {
+            return Task::none();
+        }
+
         match cmd {
-            // ── Storm Sewer module ──────────────────────────────────────────
-            "SS_ANALYZE" => {
-                use crate::modules::storm_sewer::analysis as ss;
-                let result = ss::analyze_doc(self.tabs[i].scene.document.entities());
-                match result {
-                    Ok((ents, report)) => {
-                        for e in ents {
-                            let _ = self.tabs[i].scene.add_entity(e);
-                        }
-                        self.tabs[i].scene.bump_geometry();
-                        self.command_line
-                            .push_info("Storm sewer: analyzed drawn network (default IDF 60/(t+10)^0.8).");
-                        for line in report.lines() {
-                            self.command_line.push_output(line);
-                        }
-                    }
-                    Err(e) => self.command_line.push_error(&e),
-                }
-            }
-            "SS_REPORT" => {
-                use crate::modules::storm_sewer::analysis as ss;
-                match ss::report_doc(self.tabs[i].scene.document.entities()) {
-                    Ok(report) => {
-                        for line in report.lines() {
-                            self.command_line.push_output(line);
-                        }
-                    }
-                    Err(e) => self.command_line.push_error(&e),
-                }
-            }
-            "SS_INLET" | "SS_JUNCTION" | "SS_OUTFALL" => {
-                use crate::modules::storm_sewer::structures::PlaceStructure;
-                let cmd = match cmd {
-                    "SS_INLET" => PlaceStructure::inlet(),
-                    "SS_JUNCTION" => PlaceStructure::junction(),
-                    _ => PlaceStructure::outfall(),
-                };
-                self.command_line.push_info(&cmd.prompt());
-                self.tabs[i].active_cmd = Some(Box::new(cmd));
-            }
-            "SS_PIPE" => {
-                let cmd = crate::modules::storm_sewer::structures::PlacePipe::new();
-                self.command_line.push_info(&cmd.prompt());
-                self.tabs[i].active_cmd = Some(Box::new(cmd));
-            }
-            "SS_PROFILE" => {
-                use crate::modules::storm_sewer::analysis as ss;
-                let result = ss::profile_doc(self.tabs[i].scene.document.entities());
-                match result {
-                    Ok(ents) => {
-                        for e in ents {
-                            let _ = self.tabs[i].scene.add_entity(e);
-                        }
-                        self.tabs[i].scene.bump_geometry();
-                        self.command_line.push_info("Storm sewer HGL profile drawn.");
-                    }
-                    Err(e) => self.command_line.push_error(&e),
-                }
-            }
             "NEW" => return Task::done(Message::TabNew),
             "OPEN" => return Task::done(Message::OpenFile),
             "SAVE" | "QSAVE" => return Task::done(Message::SaveFile),

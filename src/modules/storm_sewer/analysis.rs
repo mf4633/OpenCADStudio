@@ -8,18 +8,19 @@
 use acadrust::types::Vector3;
 use acadrust::{Circle, EntityType, Line, MText};
 
+use stormsewer::design::check_inlet;
 use stormsewer::drawing::{draw_network, DrawConfig};
 use stormsewer::idf::IdfCurve;
-use stormsewer::network::{Analysis, AnalysisOptions, Network, Node, Pipe};
+use stormsewer::network::{Analysis, AnalysisOptions, Network, Node, NodeKind, Pipe};
+use stormsewer::params::StormAnalysisParams;
 use stormsewer::parse::parse_ssn;
-use stormsewer::report::format_analysis;
+use stormsewer::report::{format_analysis, format_multi_rp};
 
 use super::data;
 
-/// Default network-level analysis parameters used when analyzing a drawn
-/// network (per-entity data carries geometry/area; rainfall is global).
-fn default_params() -> (IdfCurve, AnalysisOptions) {
-    (IdfCurve::new(60.0, 10.0, 0.8), AnalysisOptions::default())
+/// Default network-level analysis parameters (tests / fallbacks).
+pub fn default_params() -> StormAnalysisParams {
+    StormAnalysisParams::municipal()
 }
 
 /// Annotation labels only (flow + HGL), for overlaying on an already-drawn
@@ -36,27 +37,85 @@ fn build_annotations(net: &Network, a: &Analysis) -> Vec<EntityType> {
 
 /// Reconstruct the network from drawn entities, analyze it, and return
 /// annotation entities (flow/HGL labels) + the report.
-pub fn analyze_doc<'a>(entities: impl Iterator<Item = &'a EntityType>) -> Result<(Vec<EntityType>, String), String> {
+pub fn analyze_doc<'a>(
+    entities: impl Iterator<Item = &'a EntityType>,
+    params: &StormAnalysisParams,
+) -> Result<(Vec<EntityType>, String, Analysis), String> {
     let net = data::network_from_entities(entities)?;
-    let (idf, opts) = default_params();
-    let a = run_analysis(&net, &idf, &opts)?;
-    Ok((build_annotations(&net, &a), format_analysis(&a)))
+    let a = run_analysis(&net, params.idf.design_curve(), &params.hydraulics)?;
+    let report = full_report(&net, &a, params);
+    Ok((build_annotations(&net, &a), report, a))
 }
 
 /// Reconstruct from drawn entities and return the HGL long-section entities.
-pub fn profile_doc<'a>(entities: impl Iterator<Item = &'a EntityType>) -> Result<Vec<EntityType>, String> {
+pub fn profile_doc<'a>(
+    entities: impl Iterator<Item = &'a EntityType>,
+    params: &StormAnalysisParams,
+) -> Result<Vec<EntityType>, String> {
     let net = data::network_from_entities(entities)?;
-    let (idf, opts) = default_params();
-    let a = run_analysis(&net, &idf, &opts)?;
+    let a = run_analysis(&net, params.idf.design_curve(), &params.hydraulics)?;
     Ok(build_profile(&net, &a))
 }
 
 /// Reconstruct from drawn entities and return the formatted report.
-pub fn report_doc<'a>(entities: impl Iterator<Item = &'a EntityType>) -> Result<String, String> {
+pub fn report_doc<'a>(
+    entities: impl Iterator<Item = &'a EntityType>,
+    params: &StormAnalysisParams,
+) -> Result<String, String> {
     let net = data::network_from_entities(entities)?;
-    let (idf, opts) = default_params();
-    let a = run_analysis(&net, &idf, &opts)?;
-    Ok(format_analysis(&a))
+    let a = run_analysis(&net, params.idf.design_curve(), &params.hydraulics)?;
+    Ok(full_report(&net, &a, params))
+}
+
+/// Multi-return-period peak-flow comparison table.
+pub fn multi_rp_report<'a>(
+    entities: impl Iterator<Item = &'a EntityType>,
+    params: &StormAnalysisParams,
+) -> Result<String, String> {
+    let net = data::network_from_entities(entities)?;
+    Ok(format_multi_rp(&net, &params.idf, &params.hydraulics))
+}
+
+fn full_report(net: &Network, a: &Analysis, params: &StormAnalysisParams) -> String {
+    let mut s = format_analysis(a);
+    s.push_str(&inlet_section(net, a, params));
+    s
+}
+
+fn inlet_section(net: &Network, a: &Analysis, params: &StormAnalysisParams) -> String {
+    let mut s = String::new();
+    let mut any = false;
+    for nd in &net.nodes {
+        if nd.kind != NodeKind::Inlet {
+            continue;
+        }
+        let q = a
+            .pipes
+            .iter()
+            .filter(|p| p.from == nd.id)
+            .map(|p| p.design_q)
+            .fold(0.0f64, f64::max);
+        if q <= 0.0 {
+            continue;
+        }
+        if !any {
+            s.push_str("\n=== INLET CAPACITY (HEC-22 grate, simplified) ===\n");
+            s.push_str("Node   Q(cfs)  Cap(cfs)  Status\n");
+            any = true;
+        }
+        let chk = check_inlet(
+            q,
+            params.inlet_grate_length_ft,
+            params.inlet_flow_depth_ft,
+            params.inlet_gutter_slope,
+        );
+        let status = if chk.ok { "ok" } else { "BYPASS" };
+        s.push_str(&format!(
+            "{:<6} {:>6.2} {:>8.2}  {status}\n",
+            nd.id, chk.design_q_cfs, chk.capacity_cfs
+        ));
+    }
+    s
 }
 
 /// The built-in demonstration network (properly sized, with plan coordinates).

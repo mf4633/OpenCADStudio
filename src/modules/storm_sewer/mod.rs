@@ -1,14 +1,24 @@
-// Storm Sewer module — gravity storm-drain network design & analysis.
+// Storm Sewer add-on (`opencad.storm_sewer`) — gravity storm-drain design & analysis.
 //
-// Implements the standard public-domain methods (Rational method, Manning,
-// HGL backwater) via the external `stormsewer` engine crate. The ribbon tab
-// here is the UI surface; the actual command handlers (place structure, draw
-// pipe, run analysis) are dispatched by the host command system — see
-// INTEGRATION.md for where each `SS_*` command plugs in.
+// Package layout follows `docs/plugin-architecture.md` (QGIS-style add-on).
+// Ribbon: `CadModule` here; commands: `dispatch.rs` via `BuiltinPlugin`; engine: `stormsewer` crate.
 
 pub mod analysis;
+pub mod catchment;
 pub mod data;
+pub mod dispatch;
+#[cfg(test)]
+mod headless;
+pub mod landxml_import;
+pub mod manifest;
+pub mod params_cmd;
+pub mod preview;
+pub mod plugin;
+pub mod register;
+pub mod sizing;
+pub mod state;
 pub mod structures;
+pub mod style;
 
 use crate::modules::{CadModule, IconKind, ModuleEvent, RibbonGroup, RibbonItem, ToolDef};
 
@@ -21,7 +31,14 @@ inventory::submit!(crate::command::CommandRegistration {
         "SS_JUNCTION",
         "SS_OUTFALL",
         "SS_PIPE",
+        "SS_CATCHMENT",
+        "SS_APPLYTC",
+        "SS_LANDXML",
+        "SS_IMPORTXML",
         "SS_ANALYZE",
+        "SS_SIZE",
+        "SS_PARAMS",
+        "SS_MULTIRP",
         "SS_REPORT",
         "SS_PROFILE",
     ]
@@ -32,6 +49,7 @@ const IC_JUNCTION: &[u8] = include_bytes!("icons/junction.svg");
 const IC_OUTFALL: &[u8] = include_bytes!("icons/outfall.svg");
 const IC_PIPE: &[u8] = include_bytes!("icons/pipe.svg");
 const IC_ANALYZE: &[u8] = include_bytes!("icons/analyze.svg");
+const IC_SIZE: &[u8] = include_bytes!("icons/pipe.svg");
 const IC_REPORT: &[u8] = include_bytes!("icons/report.svg");
 const IC_PROFILE: &[u8] = include_bytes!("icons/profile.svg");
 
@@ -63,6 +81,8 @@ impl CadModule for StormSewerModule {
                     RibbonItem::LargeTool(tool("SS_JUNCTION", "Junction", IC_JUNCTION)),
                     RibbonItem::LargeTool(tool("SS_OUTFALL", "Outfall", IC_OUTFALL)),
                     RibbonItem::LargeTool(tool("SS_PIPE", "Pipe\nRun", IC_PIPE)),
+                    RibbonItem::Tool(tool("SS_CATCHMENT", "Catchment", IC_INLET)),
+                    RibbonItem::Tool(tool("SS_LANDXML", "Import\nLandXML", IC_PIPE)),
                 ],
             },
             // ── Analysis: run the engine and review results ─────────────────
@@ -70,6 +90,10 @@ impl CadModule for StormSewerModule {
                 title: "Analysis",
                 tools: vec![
                     RibbonItem::LargeTool(tool("SS_ANALYZE", "Analyze", IC_ANALYZE)),
+                    RibbonItem::LargeTool(tool("SS_SIZE", "Size\nPipes", IC_SIZE)),
+                    RibbonItem::Tool(tool("SS_PARAMS", "Params", IC_ANALYZE)),
+                    RibbonItem::Tool(tool("SS_APPLYTC", "Apply Tc", IC_ANALYZE)),
+                    RibbonItem::Tool(tool("SS_MULTIRP", "Multi-RP", IC_REPORT)),
                     RibbonItem::Tool(tool("SS_REPORT", "Report", IC_REPORT)),
                     RibbonItem::Tool(tool("SS_PROFILE", "Profile", IC_PROFILE)),
                 ],
@@ -81,11 +105,11 @@ impl CadModule for StormSewerModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::registry;
+    use crate::plugin::all_ribbon_modules;
 
     #[test]
     fn module_is_registered_in_ribbon() {
-        let titles: Vec<&str> = registry::all_modules().iter().map(|m| m.title()).collect();
+        let titles: Vec<&str> = all_ribbon_modules().iter().map(|m| m.title()).collect();
         assert!(titles.contains(&"Storm Sewer"), "ribbon tabs: {titles:?}");
     }
 
@@ -99,7 +123,9 @@ mod tests {
                 }
             }
         }
-        for needed in ["SS_INLET", "SS_PIPE", "SS_ANALYZE", "SS_REPORT", "SS_PROFILE"] {
+        for needed in [
+            "SS_INLET", "SS_PIPE", "SS_ANALYZE", "SS_SIZE", "SS_PARAMS", "SS_MULTIRP", "SS_REPORT", "SS_PROFILE",
+        ] {
             assert!(ids.contains(&needed), "missing {needed}; have {ids:?}");
         }
     }
@@ -187,7 +213,8 @@ PIPE P2 N2 OUT 300 1.5 0.013
             pipe,
         ];
 
-        let (annotations, report) = super::analysis::analyze_doc(ents.iter()).expect("analyze drawn net");
+        let p = super::analysis::default_params();
+        let (annotations, report, _) = super::analysis::analyze_doc(ents.iter(), &p).expect("analyze drawn net");
         assert!(!annotations.is_empty(), "expected flow/HGL labels");
         assert!(report.contains("STORM SEWER ANALYSIS"), "report:\n{report}");
     }

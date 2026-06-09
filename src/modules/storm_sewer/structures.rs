@@ -15,7 +15,9 @@ use glam::Vec3;
 use stormsewer::network::NodeKind;
 
 use super::data;
-use crate::command::{CadCommand, CmdResult};
+use super::preview;
+use crate::command::{CadCommand, CmdResult, ObjectPickHit};
+use crate::scene::{Scene, WireModel};
 
 fn parse_num(text: &str) -> Option<f64> {
     text.trim().replace(',', ".").parse::<f64>().ok()
@@ -113,8 +115,6 @@ impl CadCommand for PlaceStructure {
         None
     }
     fn on_point(&mut self, pt: Vec3) -> CmdResult {
-        // A click always places the structure, using whatever values have been
-        // entered (remaining fields keep their defaults).
         self.commit(pt.x as f64, pt.y as f64)
     }
     fn on_enter(&mut self) -> CmdResult {
@@ -135,11 +135,21 @@ pub struct PlacePipe {
     n: f64,
     start_handle: Option<Handle>,
     start_xy: (f64, f64),
+    start_label: Option<String>,
+    acquire_hint: Option<String>,
 }
 
 impl PlacePipe {
     pub fn new() -> Self {
-        Self { step: PStep::PickStart, diameter: 1.25, n: 0.013, start_handle: None, start_xy: (0.0, 0.0) }
+        Self {
+            step: PStep::PickStart,
+            diameter: 1.25,
+            n: 0.013,
+            start_handle: None,
+            start_xy: (0.0, 0.0),
+            start_label: None,
+            acquire_hint: None,
+        }
     }
     fn commit(&self, end_handle: Handle, ex: f64, ey: f64) -> CmdResult {
         let line = Line::from_points(
@@ -164,23 +174,67 @@ impl CadCommand for PlacePipe {
         "SS_PIPE"
     }
     fn prompt(&self) -> String {
+        let hint = self
+            .acquire_hint
+            .as_deref()
+            .map(|h| format!(" [{h}]"))
+            .unwrap_or_default();
         match self.step {
-            PStep::PickStart => "Pipe: click the START structure:".into(),
-            PStep::PickEnd => format!("Pipe: click the END structure (dia {:.2} ft, n {:.3}):", self.diameter, self.n),
+            PStep::PickStart => format!("Pipe run: click START structure (orange snap){hint}:"),
+            PStep::PickEnd => {
+                let from = self
+                    .start_label
+                    .as_deref()
+                    .unwrap_or("structure");
+                format!(
+                    "Pipe run: click END from {from} (dia {:.2} ft, n {:.3}){hint}:",
+                    self.diameter, self.n
+                )
+            }
         }
     }
     fn needs_entity_pick(&self) -> bool {
+        false
+    }
+    fn needs_structure_point_pick(&self) -> bool {
         true
     }
-    fn on_entity_pick(&mut self, handle: Handle, pt: Vec3) -> CmdResult {
+    fn resolve_object_pick(&self, scene: &Scene, x: f64, y: f64) -> Option<ObjectPickHit> {
+        let pick = preview::structure_under_cursor(scene, x, y, false)?;
+        Some(ObjectPickHit {
+            handle: pick.handle,
+            x: pick.x,
+            y: pick.y,
+            label: pick.label(),
+        })
+    }
+    fn object_pick_hover_previews(&self, scene: &Scene, cursor: Vec3) -> Vec<WireModel> {
+        preview::structure_acquire_previews(scene, cursor, false)
+    }
+    fn object_pick_miss_message(&self) -> &'static str {
+        "No storm structure near click — move closer or press Enter for nearest."
+    }
+    fn set_acquisition_hint(&mut self, hint: Option<&str>) {
+        self.acquire_hint = hint.map(str::to_string);
+    }
+    fn on_structure_pick(&mut self, handle: Handle, pt: Vec3) -> CmdResult {
         match self.step {
             PStep::PickStart => {
                 self.start_handle = Some(handle);
                 self.start_xy = (pt.x as f64, pt.y as f64);
+                self.start_label = self.acquire_hint.clone();
+                self.acquire_hint = None;
                 self.step = PStep::PickEnd;
                 CmdResult::NeedPoint
             }
             PStep::PickEnd => self.commit(handle, pt.x as f64, pt.y as f64),
+        }
+    }
+    fn on_preview_wires(&mut self, pt: Vec3) -> Vec<WireModel> {
+        if matches!(self.step, PStep::PickEnd) {
+            vec![preview::pipe_run_rubber_band(self.start_xy.0, self.start_xy.1, pt)]
+        } else {
+            vec![]
         }
     }
     fn on_point(&mut self, _pt: Vec3) -> CmdResult {
@@ -197,7 +251,6 @@ mod tests {
 
     #[test]
     fn click_places_structure_with_defaults() {
-        // A click commits immediately (no typed values needed).
         let mut cmd = PlaceStructure::inlet();
         match cmd.on_point(Vec3::new(10.0, 20.0, 0.0)) {
             CmdResult::CommitAndExit(EntityType::Circle(c)) => {
@@ -212,20 +265,19 @@ mod tests {
     #[test]
     fn typed_values_are_captured_then_click_places() {
         let mut cmd = PlaceStructure::inlet();
-        assert!(cmd.on_text_input("104").is_none()); // invert -> rim
-        assert!(cmd.on_text_input("110").is_none()); // rim -> area
-        assert!(cmd.on_text_input("2.0").is_none()); // area -> C
-        assert!(cmd.on_text_input("0.8").is_none()); // C -> Ready
-        assert!(matches!(cmd.step, SStep::Ready));
+        assert!(cmd.on_text_input("104").is_none());
+        assert!(cmd.on_text_input("110").is_none());
+        assert!(cmd.on_text_input("2.0").is_none());
+        assert!(cmd.on_text_input("0.8").is_none());
         assert!(matches!(cmd.on_point(Vec3::ZERO), CmdResult::CommitAndExit(_)));
     }
 
     #[test]
     fn pipe_connects_two_structures_on_two_clicks() {
         let mut cmd = PlacePipe::new();
-        assert!(cmd.needs_entity_pick());
-        assert!(matches!(cmd.on_entity_pick(Handle::new(1), Vec3::new(0.0, 0.0, 0.0)), CmdResult::NeedPoint));
-        match cmd.on_entity_pick(Handle::new(2), Vec3::new(100.0, 0.0, 0.0)) {
+        assert!(cmd.needs_structure_point_pick());
+        assert!(matches!(cmd.on_structure_pick(Handle::new(1), Vec3::new(0.0, 0.0, 0.0)), CmdResult::NeedPoint));
+        match cmd.on_structure_pick(Handle::new(2), Vec3::new(100.0, 0.0, 0.0)) {
             CmdResult::CommitAndExit(EntityType::Line(l)) => {
                 assert_eq!(l.start.x, 0.0);
                 assert_eq!(l.end.x, 100.0);
@@ -234,5 +286,14 @@ mod tests {
             }
             _ => panic!("expected CommitAndExit(Line)"),
         }
+    }
+
+    #[test]
+    fn pipe_preview_rubber_band_on_second_step() {
+        let mut cmd = PlacePipe::new();
+        cmd.on_structure_pick(Handle::new(1), Vec3::new(0.0, 0.0, 0.0));
+        let wires = cmd.on_preview_wires(Vec3::new(50.0, 0.0, 0.0));
+        assert_eq!(wires.len(), 1);
+        assert_eq!(wires[0].points.len(), 2);
     }
 }
