@@ -8,6 +8,7 @@ mod layers;
 mod mtext_editor;
 mod model_ops;
 mod properties;
+mod settings;
 mod text_inline;
 mod update;
 mod view;
@@ -194,6 +195,9 @@ pub(super) struct OpenCADStudio {
     cycle_candidates: Option<(iced::Point, Vec<acadrust::Handle>)>,
     /// Which status-bar pills the user has chosen to show (persisted).
     statusbar_config: crate::ui::statusbar_config::StatusBarConfig,
+    /// Last persisted user preferences (DYN/OSNAP/OTRACK/POLAR/…). Compared
+    /// after each message so a change is written to disk exactly once.
+    last_saved_settings: Option<settings::UserSettings>,
     /// Whether Tangent snap was enabled before a tangent-pick command started.
     pre_cmd_tangent: Option<bool>,
     /// Orthogonal drawing constraint (F8): constrains picks to 0°/90°/180°/270°.
@@ -1266,6 +1270,7 @@ impl OpenCADStudio {
             isolate_popup_open: false,
             selection_filter_popup_open: false,
             statusbar_config: crate::ui::statusbar_config::StatusBarConfig::load(),
+            last_saved_settings: None,
             clean_screen: false,
             quick_properties: false,
             selection_cycling: false,
@@ -1471,6 +1476,14 @@ impl OpenCADStudio {
             ds_dimtolj: "1".to_string(),
             ds_dimtzin: "0".to_string(),
         };
+        // Restore persisted UI preferences (DYN/OSNAP/OTRACK/POLAR/…) so they
+        // survive across sessions (issue #68). Seed `last_saved_settings` from
+        // the resulting state so the first change — not the boot — triggers a
+        // write.
+        if let Some(s) = settings::UserSettings::load() {
+            app.apply_settings(&s);
+        }
+        app.last_saved_settings = Some(app.current_settings());
         app.sync_ribbon_layers();
         app
     }

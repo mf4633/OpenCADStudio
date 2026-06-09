@@ -58,7 +58,45 @@ impl OpenCADStudio {
             .as_ref()
             .map(|c| c.prompt());
         self.command_line.set_step_prompt(prompt);
+        // Persist UI preferences whenever a toggle changes them (issue #68).
+        self.persist_settings_if_changed();
         task
+    }
+
+    /// Snapshot the persisted UI preferences from live state.
+    pub(super) fn current_settings(&self) -> super::settings::UserSettings {
+        super::settings::UserSettings {
+            dyn_input: self.dyn_input,
+            ortho: self.ortho_mode,
+            polar: self.polar_mode,
+            polar_increment_deg: self.polar_increment_deg,
+            show_grid: self.show_grid,
+            snap_enabled: self.snapper.snap_enabled,
+            otrack: self.snapper.otrack_enabled,
+            snap_modes: super::settings::UserSettings::modes_from(self.snapper.enabled.iter()),
+        }
+    }
+
+    /// Apply restored preferences to live state.
+    pub(super) fn apply_settings(&mut self, s: &super::settings::UserSettings) {
+        self.dyn_input = s.dyn_input;
+        self.ortho_mode = s.ortho;
+        self.polar_mode = s.polar;
+        self.polar_increment_deg = s.polar_increment_deg;
+        self.show_grid = s.show_grid;
+        self.snapper.snap_enabled = s.snap_enabled;
+        self.snapper.otrack_enabled = s.otrack;
+        self.snapper.enabled = s.snap_modes.iter().copied().collect();
+    }
+
+    /// Write preferences to disk only when they differ from the last write,
+    /// so a toggle persists immediately without thrashing the file.
+    fn persist_settings_if_changed(&mut self) {
+        let cur = self.current_settings();
+        if self.last_saved_settings.as_ref() != Some(&cur) {
+            cur.save();
+            self.last_saved_settings = Some(cur);
+        }
     }
 
     fn update_inner(&mut self, msg: Message) -> Task<Message> {
