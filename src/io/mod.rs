@@ -498,10 +498,28 @@ pub(crate) fn is_entity_corrupt(e: &EntityType) -> bool {
                 && (s.knots.iter().any(|k| !k.is_finite())
                     || s.knots.windows(2).any(|w| w[1] < w[0])
                     || s.knots.len() != n + deg + 1);
+            // Degenerate: every control point collapses onto (nearly) the same
+            // point, so the curve has zero length. truck's `circle_arc` /
+            // `parameter_division` never converges on it and the tessellation
+            // hangs — a periodic 9-point spline pinned at the origin is the seen
+            // case. Reject when the control-point extent is sub-precision.
+            let degenerate_extent = n >= 2 && {
+                let (mut mn, mut mx) = ([f64::MAX; 3], [f64::MIN; 3]);
+                for p in &s.control_points {
+                    mn[0] = mn[0].min(p.x);
+                    mx[0] = mx[0].max(p.x);
+                    mn[1] = mn[1].min(p.y);
+                    mx[1] = mx[1].max(p.y);
+                    mn[2] = mn[2].min(p.z);
+                    mx[2] = mx[2].max(p.z);
+                }
+                (mx[0] - mn[0]).max(mx[1] - mn[1]).max(mx[2] - mn[2]) < 1.0e-6
+            };
             n >= MAX_VERTS
                 || degree_bad
                 || s.control_points.iter().any(|p| !finite_vec3(p))
                 || knots_bad
+                || degenerate_extent
         }
         _ => false,
     }
@@ -647,6 +665,16 @@ mod corrupt_guard_tests {
     #[test]
     fn rejects_desync_spline() {
         let pts = vec![Vector3::new(0.0, 0.0, 0.0); 100_000];
+        let s = Spline::from_control_points(3, pts);
+        assert!(is_entity_corrupt(&EntityType::Spline(s)));
+    }
+
+    // A periodic spline whose control points all collapse onto (nearly) one
+    // point has zero length; truck's parameter_division never converges and the
+    // tessellation hangs. The control-point extent floor must reject it.
+    #[test]
+    fn rejects_degenerate_point_spline() {
+        let pts = vec![Vector3::new(1e-12, -1e-12, 0.0); 9];
         let s = Spline::from_control_points(3, pts);
         assert!(is_entity_corrupt(&EntityType::Spline(s)));
     }
