@@ -421,6 +421,9 @@ fn apply_transform(pline: &mut LwPolyline, t: &EntityTransform) {
     crate::scene::transform::apply_standard_entity_transform(pline, t, |entity, p1, p2| {
         for v in &mut entity.vertices {
             crate::scene::transform::reflect_xy_point(&mut v.location.x, &mut v.location.y, p1, p2);
+            // Bulge encodes which side the arc bows to; a reflection
+            // reverses it or every curved segment flips to the wrong side.
+            v.bulge = -v.bulge;
         }
     });
 }

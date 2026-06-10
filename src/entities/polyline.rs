@@ -475,6 +475,9 @@ impl Transformable for Polyline2D {
                     p1,
                     p2,
                 );
+                // Bulge encodes which side the arc bows to; a reflection
+                // reverses it or every curved segment flips to the wrong side.
+                v.bulge = -v.bulge;
             }
         });
     }
