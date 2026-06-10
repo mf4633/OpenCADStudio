@@ -99,6 +99,7 @@ pub fn load_file(path: &Path) -> Result<CadDocument, String> {
                 .read()
                 .map_err(|e| e.to_string())?;
             fix_viewport_status_flags(&mut doc);
+            fix_current_style_names(&mut doc);
             Ok(doc)
         }
         "dxf" => {
@@ -108,6 +109,7 @@ pub fn load_file(path: &Path) -> Result<CadDocument, String> {
                 .map_err(|e| e.to_string())?;
             fix_dxf_dimension_rotations(&mut doc);
             fix_viewport_status_flags(&mut doc);
+            fix_current_style_names(&mut doc);
             Ok(doc)
         }
         _ => Err(format!("Unsupported file format: .{ext}")),
@@ -234,6 +236,38 @@ pub fn save(doc: &CadDocument, path: &Path) -> Result<(), String> {
 }
 
 // ── Post-load fixups ──────────────────────────────────────────────────────
+
+// Resolve the current text / dimension / multiline style from the handle the
+// DWG header stores into the *name* the app reads. DXF stores these as names
+// directly ($TEXTSTYLE / $DIMSTYLE / $CMLSTYLE), but DWG only stores handles,
+// so without this the current-style markers (and any code keyed on the name)
+// fall back to "Standard". Only overrides when the handle resolves, leaving the
+// DXF-provided names intact.
+fn fix_current_style_names(doc: &mut CadDocument) {
+    use acadrust::objects::ObjectType;
+
+    let h = doc.header.current_text_style_handle;
+    if h.is_valid() {
+        if let Some(name) = doc.text_styles.iter().find(|s| s.handle == h).map(|s| s.name.clone()) {
+            doc.header.current_text_style_name = name;
+        }
+    }
+    let h = doc.header.current_dimstyle_handle;
+    if h.is_valid() {
+        if let Some(name) = doc.dim_styles.iter().find(|s| s.handle == h).map(|s| s.name.clone()) {
+            doc.header.current_dimstyle_name = name;
+        }
+    }
+    let h = doc.header.current_multiline_style_handle;
+    if h.is_valid() {
+        if let Some(name) = doc.objects.values().find_map(|o| match o {
+            ObjectType::MLineStyle(s) if s.handle == h => Some(s.name.clone()),
+            _ => None,
+        }) {
+            doc.header.multiline_style = name;
+        }
+    }
+}
 
 // ── Corrupt-entity guard ──────────────────────────────────────────────────
 //

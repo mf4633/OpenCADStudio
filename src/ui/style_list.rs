@@ -9,7 +9,7 @@
 //! carries both `on_press` (select) and `on_double_click` (rename) itself.
 
 use crate::app::{Message, StyleKind};
-use iced::widget::{container, mouse_area, text, text_input};
+use iced::widget::{container, mouse_area, row, text, text_input};
 use iced::{Background, Color, Element, Fill, Theme};
 
 /// Shared id for the inline rename field, so the rename-start handler can focus
@@ -30,13 +30,19 @@ const ACTIVE: Color = Color {
     b: 0.70,
     a: 1.0,
 };
+const CURRENT_CHECK: Color = Color {
+    r: 0.30,
+    g: 0.82,
+    b: 0.36,
+    a: 1.0,
+};
 
 /// One row of the style list. Renders an editable `text_input` when `name` is
 /// the style being renamed (`rename_active`), otherwise a selectable row whose
-/// double click starts the rename.
+/// double click starts the rename. The current style gets a green ✓.
 pub fn item<'a>(
     name: &str,
-    label: String,
+    is_current: bool,
     is_selected: bool,
     kind: StyleKind,
     on_select: Message,
@@ -53,7 +59,16 @@ pub fn item<'a>(
             .width(Fill)
             .into()
     } else {
-        let row = container(text(label).size(11).color(TEXT))
+        // Fixed-width ✓ column keeps every name left-aligned whether or not the
+        // row is current.
+        let check = if is_current {
+            text("✓").size(11).color(CURRENT_CHECK)
+        } else {
+            text("").size(11)
+        };
+        let label = row![check.width(14), text(name.to_string()).size(11).color(TEXT)]
+            .align_y(iced::Center);
+        let cell = container(label)
             .padding([4, 8])
             .width(Fill)
             .style(move |_: &Theme| container::Style {
@@ -61,7 +76,7 @@ pub fn item<'a>(
                 text_color: Some(TEXT),
                 ..Default::default()
             });
-        mouse_area(row)
+        mouse_area(cell)
             .on_press(on_select)
             .on_double_click(Message::StyleRenameStart(kind, name.to_string()))
             .into()
