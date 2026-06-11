@@ -46,4 +46,4 @@ windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_Window
 # boundary-handle cap, raster-image/wipeout clip-vertex fix, 3DFACE
 # Z-decode fix, and CANNOSCALE/CANNOSCALEVALUE header support on top of
 # upstream. Revert to upstream once those PRs land.
-acadrust = { git = "https://github.com/HakanSeven12/acadrust", branch = "main" }
+acadrust = { git = "https://github.com/HakanSeven12/acadrust", rev = "569bd4d75f189abe9c669e22f3de05c2b7b1963a" }  # Pinned per review Issue 3 (2026-06-11). Tracks HakanSeven12/acadrust main (hatch boundary-handle cap, raster-image/wipeout clip-vertex fix, 3DFACE Z-decode fix, CANNOSCALE/CANNOSCALEVALUE header support). Upstream: https://github.com/HakanSeven12/acadrust (main at time of pin 569bd4d7). Revert to crates.io upstream once those PRs land. See HEADER_AUDIT.md. Enables cargo check -p stormsewer. Stormsewer crate has no acadrust dep (top workspace only). Hygiene + repro.

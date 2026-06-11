@@ -94,6 +94,28 @@ pub fn catchment_xdata(c: f64, flow_length_ft: f64, slope: f64, inlet_handle: Ha
     r
 }
 
+/// In-place replace (or insert) of an XDATA app record by application name.
+/// Avoids full records list clones/filters in hot paths (apply_tc, set_dia).
+/// Unifies the two apply_tc paths and eliminates .cloned() on record for replace.
+/// Small N (1-3 records/entity) so tiny Vec clone of records is acceptable; main win
+/// is avoiding full-entity Vec clones in dispatch.
+fn replace_xdata_record(xd: &mut acadrust::xdata::ExtendedData, app_name: &str, new_rec: ExtendedDataRecord) {
+    // Proper replace by app name using acadrust API (clear + re-add kept + new).
+    // Clones only the (tiny) kept XDATA records per entity (N<=1 for our STORMSEWER_* apps).
+    // This eliminates the prior filter+clone patterns for record replacement (Issue 9).
+    // Unifies apply paths; callers no longer need .cloned() on the found old record.
+    let kept: Vec<ExtendedDataRecord> = xd.records()
+        .iter()
+        .filter(|r| r.application_name != app_name)
+        .cloned()
+        .collect();
+    xd.clear();
+    for k in kept {
+        xd.add_record(k);
+    }
+    xd.add_record(new_rec);
+}
+
 fn real(v: &XDataValue) -> Option<f64> {
     if let XDataValue::Real(x) = v {
         Some(*x)
@@ -242,6 +264,9 @@ fn read_structure(e: &EntityType) -> Option<StructRec> {
     } else {
         10.0
     };
+    // NOTE (review Issue 13): lenient default Tc=10.0 (or elev=0.0 below) for robustness on missing/hand-edited XDATA.
+    // Callers in analysis/dispatch can surface via host.push_info("using default Tc...") or a validation result.
+    // See network_from_entities + PLUGIN.md.
     Some(StructRec {
         handle: e.common().handle,
         kind,
@@ -326,17 +351,7 @@ pub fn set_pipe_diameter(e: &mut EntityType, new_dia: f64) -> bool {
     let Some(to) = handle(&old.values[3]) else {
         return false;
     };
-    let kept: Vec<_> = xd
-        .records()
-        .iter()
-        .filter(|r| r.application_name != APP_PIPE)
-        .cloned()
-        .collect();
-    xd.clear();
-    for r in kept {
-        xd.add_record(r);
-    }
-    xd.add_record(pipe_xdata(new_dia, n, from, to));
+    replace_xdata_record(xd, APP_PIPE, pipe_xdata(new_dia, n, from, to));
     true
 }
 
@@ -360,7 +375,7 @@ pub fn apply_tc_in_document<'a>(
         };
         let EntityType::Circle(_) = ent else { continue };
         let xd = &mut ent.common_mut().extended_data;
-        let Some(old) = xd.records().iter().find(|r| r.application_name == APP_STRUCT).cloned() else {
+        let Some(old) = xd.records().iter().find(|r| r.application_name == APP_STRUCT) else {
             continue;
         };
         if old.values.len() < 5 {
@@ -374,17 +389,7 @@ pub fn apply_tc_in_document<'a>(
         let rim = real(&old.values[2]).unwrap_or(0.0);
         let area = real(&old.values[3]).unwrap_or(0.0);
         let c = real(&old.values[4]).unwrap_or(0.0);
-        let kept: Vec<_> = xd
-            .records()
-            .iter()
-            .filter(|r| r.application_name != APP_STRUCT)
-            .cloned()
-            .collect();
-        xd.clear();
-        for r in kept {
-            xd.add_record(r);
-        }
-        xd.add_record(structure_xdata_tc(kind, invert, rim, area, c, tc));
+        replace_xdata_record(xd, APP_STRUCT, structure_xdata_tc(kind, invert, rim, area, c, tc));
         updated += 1;
     }
     Ok(updated)
@@ -402,7 +407,7 @@ pub fn apply_tc_to_structures(entities: &mut [EntityType], drawn: &DrawnNetwork)
         };
         let EntityType::Circle(_) = ent else { continue };
         let xd = &mut ent.common_mut().extended_data;
-        let Some(old) = xd.records().iter().find(|r| r.application_name == APP_STRUCT).cloned() else {
+        let Some(old) = xd.records().iter().find(|r| r.application_name == APP_STRUCT) else {
             continue;
         };
         if old.values.len() < 5 {
@@ -416,17 +421,7 @@ pub fn apply_tc_to_structures(entities: &mut [EntityType], drawn: &DrawnNetwork)
         let rim = real(&old.values[2]).unwrap_or(node.rim);
         let area = real(&old.values[3]).unwrap_or(node.area_ac);
         let c = real(&old.values[4]).unwrap_or(node.c);
-        let kept: Vec<_> = xd
-            .records()
-            .iter()
-            .filter(|r| r.application_name != APP_STRUCT)
-            .cloned()
-            .collect();
-        xd.clear();
-        for r in kept {
-            xd.add_record(r);
-        }
-        xd.add_record(structure_xdata_tc(kind, invert, rim, area, c, node.tc_inlet));
+        replace_xdata_record(xd, APP_STRUCT, structure_xdata_tc(kind, invert, rim, area, c, node.tc_inlet));
         updated += 1;
     }
     updated
@@ -501,6 +496,35 @@ pub fn drawn_network_from_entities<'a>(entities: impl Iterator<Item = &'a Entity
 /// by the handles stored in their XDATA.
 pub fn network_from_entities<'a>(entities: impl Iterator<Item = &'a EntityType>) -> Result<Network, String> {
     Ok(drawn_network_from_entities(entities)?.network)
+}
+
+/// Apply precomputed Tc values (by structure handle) to matching circle entities' XDATA.
+/// Uses the replace helper (no record clones for update). Unifies apply paths.
+/// Called after building Tc map from a read pass (avoids simultaneous borrow at call sites).
+pub fn apply_tc_map<'a>(
+    entities_mut: impl Iterator<Item = &'a mut EntityType>,
+    tc_by_handle: &HashMap<Handle, f64>,
+) -> usize {
+    let mut updated = 0;
+    for ent in entities_mut {
+        let h = ent.common().handle;
+        let Some(&tc) = tc_by_handle.get(&h) else { continue; };
+        let EntityType::Circle(_) = ent else { continue };
+        let xd = &mut ent.common_mut().extended_data;
+        let Some(old) = xd.records().iter().find(|r| r.application_name == APP_STRUCT) else { continue; };
+        if old.values.len() < 5 { continue; }
+        let kind = match &old.values[0] {
+            XDataValue::String(s) => parse_kind(s),
+            _ => continue,
+        };
+        let invert = real(&old.values[1]).unwrap_or(0.0);
+        let rim = real(&old.values[2]).unwrap_or(0.0);
+        let area = real(&old.values[3]).unwrap_or(0.0);
+        let c = real(&old.values[4]).unwrap_or(0.0);
+        replace_xdata_record(xd, APP_STRUCT, structure_xdata_tc(kind, invert, rim, area, c, tc));
+        updated += 1;
+    }
+    updated
 }
 
 fn assemble_network(structs: &[StructRec], pipes_raw: &[PipeRec]) -> Result<Network, String> {

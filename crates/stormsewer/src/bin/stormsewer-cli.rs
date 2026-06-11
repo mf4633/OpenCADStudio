@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 
 //! `stormsewer-cli` — run a storm-sewer analysis from a `.ssn` network file.
 //!

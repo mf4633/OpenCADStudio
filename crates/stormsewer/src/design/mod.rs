@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 
 //! Storm-sewer design: criteria catalogs, pipe sizing, and sizing reports.
 

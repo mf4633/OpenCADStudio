@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 
 //! Plain-text report tables for an [`Analysis`] and pipe-sizing output, in the
 //! spirit of Hydraflow Storm Sewers' pipe and HGL summaries.

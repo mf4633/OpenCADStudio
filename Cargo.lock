@@ -57,7 +57,7 @@ checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 [[package]]
 name = "acadrust"
 version = "0.3.4"
-source = "git+https://github.com/HakanSeven12/acadrust?branch=main#041df8c0568ea1242a39e22f2d04e770317bdf7c"
+source = "git+https://github.com/HakanSeven12/acadrust?rev=569bd4d75f189abe9c669e22f3de05c2b7b1963a#569bd4d75f189abe9c669e22f3de05c2b7b1963a"
 dependencies = [
  "ahash",
  "anyhow",
@@ -5191,6 +5191,7 @@ name = "stormsewer"
 version = "0.1.0"
 dependencies = [
  "quick-xml 0.37.5",
+ "wasm-bindgen",
 ]
 
 [[package]]

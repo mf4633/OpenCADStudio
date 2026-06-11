@@ -12,5 +12,4 @@ pub mod registry;
 mod smoke;
 
 pub use registry::all_ribbon_modules;
-pub(crate) use host::BuiltinPlugin;
 pub(crate) use registry::try_dispatch;

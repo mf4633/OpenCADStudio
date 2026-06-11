@@ -26,3 +26,10 @@
   accessors bypass them. acadrust read/write preserves them.
 - AutoCAD UI prefs (`blip_mode`, `drag_mode`, `pick_style`, etc.) —
   H7CAD has its own UI prefs and ignores AutoCAD's. Round-tripped.
+
+## acadrust Patch Pin (per review Issue 3, 2026-06-11)
+Pinned to rev=569bd4d75f189abe9c669e22f3de05c2b7b1963a (HakanSeven12/acadrust main tip at pin time).
+- Hatch boundary-handle cap, raster-image/wipeout clip-vertex, 3DFACE Z, CANNOSCALE/CANNOSCALEVALUE support.
+- Upstream links: https://github.com/HakanSeven12/acadrust (branch main); revert to crates.io once PRs land.
+- HEADER_AUDIT remains authoritative for surfaced HeaderVariables (232 total; acadrust custom headers audited here).
+- Repro: cargo check uses the pinned rev for consistent builds across clones/forks.

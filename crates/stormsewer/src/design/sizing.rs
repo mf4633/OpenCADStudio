@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-only
 
 //! Pipe sizing against design criteria — smallest standard pipe that carries
 //! the Rational design flow within velocity and capacity limits.

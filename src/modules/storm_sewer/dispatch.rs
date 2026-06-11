@@ -1,10 +1,16 @@
 // Storm Sewer command handlers — all domain logic lives here, not in `src/plugin/`.
 
+use std::collections::HashMap;
+
 use crate::command::CadCommand;
 use crate::plugin::host::HostSession;
 
+use acadrust::Handle;
+
+use stormsewer::network::NodeKind;
+
 use super::analysis;
-use super::catchment::{apply_tc_from_network, TagCatchment};
+use super::catchment::TagCatchment;
 use super::landxml_import;
 use super::manifest::PLUGIN_ID;
 use super::params_cmd;
@@ -136,14 +142,29 @@ pub fn handle(host: &mut HostSession<'_>, cmd: &str) -> bool {
         }
         "SS_APPLYTC" => {
             host.push_undo("SS_APPLYTC");
-            let snapshot: Vec<_> = host.entities().cloned().collect();
-            match apply_tc_from_network(snapshot.iter(), host.entities_mut()) {
-                Ok(n) => {
-                    host.set_dirty();
-                    host.bump_geometry();
-                    host.push_info(&format!("Storm sewer: updated inlet Tc on {n} structure(s)."));
+            // Two-pass, zero full-entity clones (Issue 5/9):
+            // Pass 1 (temporary imm borrow): build Tc map from drawn_network (small StructRecs, no deep Entity clones).
+            // Pass 2 (mut borrow): use apply_tc_map + replace_xdata_record helper for targeted updates.
+            // (The old apply_*_in_document simultaneous iters conflicted on host borrow; this unifies.)
+            let tc_by_handle: HashMap<Handle, f64> = match data::drawn_network_from_entities(host.entities()) {
+                Ok(drawn) => drawn
+                    .network
+                    .nodes
+                    .iter()
+                    .zip(drawn.node_handles.iter())
+                    .filter(|(node, _)| node.kind != NodeKind::Outfall)
+                    .map(|(node, &h)| (h, node.tc_inlet))
+                    .collect(),
+                Err(e) => {
+                    host.push_error(&e);
+                    HashMap::new()
                 }
-                Err(e) => host.push_error(&e),
+            };
+            let updated = data::apply_tc_map(host.entities_mut(), &tc_by_handle);
+            if updated > 0 || !tc_by_handle.is_empty() {
+                host.set_dirty();
+                host.bump_geometry();
+                host.push_info(&format!("Storm sewer: updated inlet Tc on {updated} structure(s)."));
             }
             true
         }

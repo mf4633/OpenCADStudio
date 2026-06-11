@@ -1,0 +1,16 @@
+@schoeller — no worries at all, and thank you for raising the scripting angle earlier. That was a useful point, and it lines up well with #29.
+
+You don't need to contribute code for it to matter. The plan we're proposing is:
+
+1. **Native Rust add-ons first** (PR #80 — plugin host only)
+2. **Stable host API** (`HostSession` → `ocs_plugin_api`)
+3. **Python / other languages as bindings over that same API** — not a separate plugin system
+
+So your #29 idea fits naturally as a later consumer of the same surface, rather than something we'd design in parallel.
+
+Framework PR is open for review: https://github.com/HakanSeven12/OpenCADStudio/pull/80
+Storm Sewer stays separate as a reference add-on once the host lands.
+
+Appreciate you jumping in on the discussion.
+
+— Michael

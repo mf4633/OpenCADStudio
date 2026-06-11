@@ -30,9 +30,15 @@ fn main() {
     println!("cargo:rerun-if-changed=src/modules");
 
     // Collect subdirectories that contain mod.rs.
-    let mut modules: Vec<String> = fs::read_dir(mods_dir)
-        .expect("src/modules/ not found")
-        .filter_map(|e| {
+    // Use graceful warning (no hard expect) per review Issue 10.
+    let read_res = fs::read_dir(mods_dir);
+    if read_res.is_err() {
+        println!("cargo:warning=src/modules/ not readable (transient FS?); registry may be stale");
+    }
+    let mut modules: Vec<String> = read_res
+        .ok()
+        .into_iter()
+        .flat_map(|rd| rd.filter_map(|e| {
             let entry = e.ok()?;
             if !entry.file_type().ok()?.is_dir() {
                 return None;
@@ -45,7 +51,7 @@ fn main() {
             } else {
                 None
             }
-        })
+        }))
         .collect();
 
     // Sort: priority order first, then alphabetical for the rest.
@@ -88,6 +94,8 @@ fn main() {
     let out_path = mods_dir.join("registry.rs");
     let current = fs::read_to_string(&out_path).unwrap_or_default();
     if current != out {
-        fs::write(&out_path, &out).expect("failed to write registry.rs");
+        if let Err(e) = fs::write(&out_path, &out) {
+            println!("cargo:warning=failed to write registry.rs: {e}; using stale registry");
+        }
     }
 }
