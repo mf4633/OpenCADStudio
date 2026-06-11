@@ -3032,6 +3032,22 @@ impl OpenCADStudio {
                         pt
                     };
 
+                    // `world_pt` is in offset-relative (local) space, matching
+                    // the camera and the point-creation commands. Entity-pick /
+                    // tangent / structure-pick commands instead compare the
+                    // click against WCS document entities, so they need the
+                    // world_offset added back (model space only — paper-space
+                    // entities are already in sheet coordinates). Without this,
+                    // TRIM/EXTEND/FILLET pick the wrong side on UTM-scale files.
+                    let pick_wcs = {
+                        let wo = if self.tabs[i].scene.current_layout == "Model" {
+                            self.tabs[i].scene.world_offset
+                        } else {
+                            [0.0; 3]
+                        };
+                        world_pt + glam::Vec3::new(wo[0] as f32, wo[1] as f32, wo[2] as f32)
+                    };
+
                     let result = if self.tabs[i]
                         .active_cmd
                         .as_ref()
@@ -3041,12 +3057,12 @@ impl OpenCADStudio {
                         let pick = self.tabs[i].active_cmd.as_ref().and_then(|c| {
                             c.resolve_object_pick(
                                 &self.tabs[i].scene,
-                                world_pt.x as f64,
-                                world_pt.y as f64,
+                                pick_wcs.x as f64,
+                                pick_wcs.y as f64,
                             )
                         });
                         if let Some(pick) = pick {
-                            let center = glam::Vec3::new(pick.x as f32, pick.y as f32, world_pt.z);
+                            let center = glam::Vec3::new(pick.x as f32, pick.y as f32, pick_wcs.z);
                             let result = self.tabs[i]
                                 .active_cmd
                                 .as_mut()
@@ -3094,7 +3110,7 @@ impl OpenCADStudio {
                             let result = self.tabs[i]
                                 .active_cmd
                                 .as_mut()
-                                .map(|c| c.on_entity_pick(handle, world_pt));
+                                .map(|c| c.on_entity_pick(handle, pick_wcs));
                             // HATCHEDIT: after pick, inject hatch model data into the command.
                             if self.tabs[i]
                                 .active_cmd
@@ -3161,7 +3177,7 @@ impl OpenCADStudio {
                             self.tabs[i]
                                 .active_cmd
                                 .as_mut()
-                                .map(|c| c.on_tangent_point(obj, world_pt))
+                                .map(|c| c.on_tangent_point(obj, pick_wcs))
                         } else {
                             self.command_line.push_info("Select a tangent object.");
                             None
