@@ -238,11 +238,23 @@ jobs:
 
       - name: Create .dmg
         run: |
-          hdiutil create \
-            -volname "Open CAD Studio" \
-            -srcfolder OpenCADStudio.app \
-            -ov -format UDZO \
-            OpenCADStudio.dmg
+          # hdiutil intermittently fails with "Resource busy" on the hosted
+          # runner (a stale mount or background indexer holding the image).
+          # Detach any leftover volume and retry a few times before giving up.
+          set +e
+          for attempt in 1 2 3 4 5; do
+            hdiutil detach "/Volumes/Open CAD Studio" >/dev/null 2>&1 || true
+            rm -f OpenCADStudio.dmg
+            hdiutil create \
+              -volname "Open CAD Studio" \
+              -srcfolder OpenCADStudio.app \
+              -ov -format UDZO \
+              OpenCADStudio.dmg && break
+            echo "hdiutil create failed (attempt $attempt) — retrying in 5s"
+            sleep 5
+          done
+          set -e
+          test -f OpenCADStudio.dmg
 
       - name: Upload .dmg to release
         if: github.event_name == 'release'
