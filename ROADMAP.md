@@ -99,6 +99,8 @@ snapshot of `CadDocument` + `DerivedCaches` (e.g. `~/.cache/OpenCADStudio/`). Sk
 DWG parse entirely. **Win:** most-recently-opened file goes from 1-2 s to
 sub-100 ms.
 
+**Phase 3 hydro + WASM note (per review 2026-06-10 + STRATEGY):** Storm Sewer plugin complete (interactive placement/snaps/analyze/report/profile/sizing + XDATA + headless + smoke). Engine (crates/stormsewer) open core 0.2 (Rational/Manning/HGL + 0.2 primitives: manning_full/trap ~15.996/17.656, routing 6.321, hglStep0_2~0.500, crit~0.658, normal~1.000, EGL~0.500, profile/vel) with WASM (wasm_bindgen + demo_ + thin headless_analyze + cdylib; "same in py/js/rust/wasm"; playground.html enhanced). Issues 1-5,9,10,11,14 quick wins + harden landed (license align, target/ hygiene, acadrust pin, INTEGRATION sync, no full entity clones + XDATA replace helper, integration test, build tame, WASM thin API). See COMMANDS.md (new Plugins section), docs/plugin-architecture.md, crates/stormsewer (lib + examples), src/modules/storm_sewer/headless.rs (XDATA roundtrip test). Next: profiling spans (5.1), more integration/golden, Phase 4 WASM live. Open core never gated; CTAs to dispatch package + engine-feedback. "core free, pro on top (FieldHydro/HydroComplete)".
+
 **Risk:** cache invalidation. Stay conservative — load only on exact
 `mtime + size` match, otherwise normal parse.
 

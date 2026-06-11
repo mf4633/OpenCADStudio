@@ -283,4 +283,32 @@ mod tests {
             net.nodes[0].tc_inlet
         );
     }
+
+    // Integration: XDATA roundtrip + headless analyze consistency (review Issue 11).
+    // In-mem ents + XDATA; exercises network_from + analyze_doc + report parity.
+    #[test]
+    fn xdata_roundtrip_and_analyze_consistency() {
+        use crate::modules::storm_sewer::analysis;
+        use crate::modules::storm_sewer::data::{pipe_xdata, structure_xdata};
+        use acadrust::types::Vector3;
+        use acadrust::{Circle, Line};
+        use stormsewer::params::StormAnalysisParams;
+        let mut s1 = EntityType::Circle(Circle { center: Vector3::new(0.0, 0.0, 0.0), radius: 3.0, ..Default::default() });
+        s1.common_mut().handle = Handle::new(1);
+        s1.common_mut().extended_data.add_record(structure_xdata(NodeKind::Inlet, 100.0, 106.0, 1.0, 0.7));
+        let mut s2 = EntityType::Circle(Circle { center: Vector3::new(100.0, 0.0, 0.0), radius: 3.0, ..Default::default() });
+        s2.common_mut().handle = Handle::new(2);
+        s2.common_mut().extended_data.add_record(structure_xdata(NodeKind::Outfall, 99.0, 104.0, 0.0, 0.0));
+        let mut p = EntityType::Line(Line::from_points(Vector3::new(0.0, 0.0, 0.0), Vector3::new(100.0, 0.0, 0.0)));
+        p.common_mut().handle = Handle::new(3);
+        p.common_mut().extended_data.add_record(pipe_xdata(1.5, 0.013, Handle::new(1), Handle::new(2)));
+        let ents = vec![s1, s2, p];
+        let params = StormAnalysisParams::municipal();
+        let (annots, report, _a) = analysis::analyze_doc(ents.iter(), &params).expect("analyze from XDATA ents");
+        assert!(!report.is_empty(), "report should be produced");
+        assert!(report.contains("Q") || report.contains("flow"), "report should mention flow/Q");
+        let net2 = data::network_from_entities(ents.iter()).expect("re-parse net from XDATA");
+        assert_eq!(net2.nodes.len(), 2);
+        assert_eq!(net2.pipes.len(), 1);
+    }
 }

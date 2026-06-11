@@ -55,10 +55,13 @@ const q = rational_peak(0.7, 4.0, 5.0);           // cfs
 const summary = demo_rational_peak(0.7, 4.0, 5.0);
 const qm = manning_full_flow_circular(2.0, 0.013, 0.005); // 0.2 spike ~15.996 cfs
 // Full 0.2 set test vals (self-contained local calcs below match): 17.656 (trap), 0.500 (HGL), 0.658 (crit), 1.000 (normal), 6.321 (routing). Same in Python/JS. See C:\Users\michael.flynn\hydro-tools\rational.py + C:\Users\michael.flynn\dev\OpenCADStudio\crates\stormsewer\src\lib.rs + hc calc.
+// Issue 14: thin headless analyze (no CAD/XDATA) + demo.
+const analyze = (typeof demo_headless_analyze !== 'undefined') ? demo_headless_analyze(4.0) : 'demo_headless_analyze not built (wasm-pack)';
 
 console.log('Peak flow:', q);
 console.log('Manning full (0.2):', qm);
-document.getElementById('result').textContent = summary;</code></pre>
+console.log('Headless analyze (0.2):', analyze);
+document.getElementById('result').textContent = summary + ' | ' + analyze;</code></pre>
 <!-- Phase 3 Friday final push subagent 11 (pro demos executable + cargo tauri dev ready + fieldhydro open + WASM build note + CTAs): WASM build/run note explicit. "wasm-pack build --target web" . Cross CTAs: cargo tauri dev at C:\Users\michael.flynn\dev\hydrocomplete-tauri ; open C:\Users\michael.flynn\fieldhydro\index.html . Pro demos in Tauri/FieldHydro call full 0.2 + gated. ALL: 3-goals + never gate + core free pro on top + "user: dispatch the 5 leads now using the package from real-dispatch-package-5-leads at C:\Users\michael.flynn\real-dispatch-package-5-leads\REAL_DISPATCH_PACKAGE.md (EXECUTION_READY)" + scheduler 019eb2b9ca9b + abs paths + cross PACKAGE/PHASE3/STRATEGY/Tauri/FieldHydro/hydro-tools (0.2 + hglStep0_2) + stormsewer. Hygiene 0. cargo check green. -->
 <!-- p3-pro-demos-executable-12: WASM playground self-contained 0.2 demos (HGL/EGL/crit/normal + "same in py/js/rust/wasm" + test vals + CTAs to PACKAGE EXECUTION_READY). READY-TO-RUN: cd C:\Users\michael.flynn\dev\hydrocomplete-tauri ; cargo tauri dev (pro demos full 0.2 + gated export + CTAs to PACKAGE); open C:\Users\michael.flynn\fieldhydro\index.html reviewerHero pro (hglStep0_2~0.500 batch AR/EAP for Mark dam "exactly like what we need" + Priya network). Reinforce living + CTAs. ALL embed full 3-goals + "never gate fundamentals" + "core free, pro on top (FieldHydro/HydroComplete)" + "user: dispatch the 5 leads now using the package from real-dispatch-package-5-leads at C:\Users\michael.flynn\real-dispatch-package-5-leads\REAL_DISPATCH_PACKAGE.md (EXECUTION_READY)" + scheduler 019eb2b9ca9b + 019eb41d7650 + Friday + abs C:\Users\michael.flynn\ paths + crosses PACKAGE/PHASE3/STRATEGY/Tauri/FieldHydro/hydro-tools/rational.py/stormsewer/hc + recent. Hygiene 0. Report id p3-pro-demos-executable-12. -->
 

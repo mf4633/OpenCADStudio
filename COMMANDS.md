@@ -342,6 +342,19 @@ Status of every standard CAD command in Open CAD Studio:
 
 ---
 
+## Plugins (add-ons via plugin architecture)
+
+Storm Sewer (opencad.storm_sewer) — first-class QGIS-style plugin (no core commands.rs edits).
+- Ribbon tab, interactive placement (SS_INLET/SS_PIPE/SS_CATCHMENT etc with C3D orange snaps), analyze (Rational + Manning + HGL backwater), report, profile, sizing, apply Tc, LandXML, params.
+- XDATA persistence (STORMSEWER_* records) for DWG roundtrip + headless use.
+- Status: ✅ fully wired via try_dispatch + BuiltinPlugin (see docs/plugin-architecture.md, src/modules/storm_sewer/{dispatch, data, analysis, headless}.rs).
+- WASM export of engine (0.2 primitives: manning_*, critical_depth, normal_depth, hgl friction/egl, steady profile, rational; cdylib + wasm32 in crates/stormsewer; playground at crates/stormsewer/examples/wasm-playground.html).
+- See PLUGIN.md for XDATA/cmds; smoke tests in src/plugin/smoke.rs.
+
+Future plugins follow same layout (plugin.toml + register + dispatch).
+
+---
+
 ## Summary
 
 | Category | Total | ✅ Done | 🔶 Partial | ❌ Missing |

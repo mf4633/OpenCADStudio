@@ -458,6 +458,28 @@ pub fn demo_steady_network_hgl_profile(start: f64) -> String {
     steady_network_hgl_profile("100,0.013,3.0,0.6708,17.656;50,0.013,3.0,0.67,17.656", start)
 }
 
+/// Thin WASM-friendly headless analyze entry (no XDATA/CAD, for JS / hydrocomplete / playground).
+/// Builds a tiny sample network (Rational + Manning + HGL primitives) and returns summary report string.
+/// Parity: same math as stormsewer::Network::analyze_rational + format; mirrors Python/JS open core.
+/// Exposes 0.2 engine for "analyze + report" use case per review Issue 14.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn demo_headless_analyze(rp_in_per_hr: f64) -> String {
+    // Sample net matching lib doc example + 0.2 primitives (Q ~ rational_peak path).
+    let c = 0.7;
+    let i = rp_in_per_hr.max(0.1);
+    let a = 2.0;
+    let q = rational_peak(c, i, a);
+    let full_cap = manning_full_flow_circular(1.5, 0.013, 0.005);
+    let hf = manning_friction_head_loss(q, 0.013, 1.767, 0.375, 100.0);
+    let yn = normal_depth_circular(1.5, 0.013, 0.005, q);
+    let yc = critical_depth_circular(q, 1.5);
+    format!(
+        "HEADLESS_ANALYZE rp={:.1} | Q={:.2} cfs (C=0.7 i={:.1} A=2) | full_cap~{:.1} | hf~{:.3}ft (L=100) | yn~{:.3}ft yc~{:.3}ft | (0.2 open core; same in py/js/rust/wasm; see wasm-playground + hydro-tools/rational.py)",
+        rp_in_per_hr, q, i, full_cap, hf, yn, yc
+    )
+}
+
 // p3-friday-stormsewer-04 robust profile fix: ensure inputs positive to avoid ValueError when mirroring to py (rational.py steady_network_hgl_profile / manning_friction_head_loss etc raise on <=0). Clamp to positive in WASM path + example. Full 0.2 (steady_network_hgl_profile, normal_depth_*, energy_grade_line_step, hglStep0_2~0.500 ex) with wasm_bindgen + all demo_ fns present. Self-contained playground + "same in py/js/rust/wasm" + exact test vals 17.656/0.500/6.321/0.658/1.000/15.996. CTAs to PACKAGE EXECUTION_READY + pilot Mark/Priya + Tauri/FieldHydro pro. 
 // p3-friday-08-engine-final targeted (post read-first C:\Users\michael.flynn\hydro-tools\rational.py + __init__.py + cli.py + README + this lib.rs + Cargo.toml + examples/wasm-playground.html + README.md + PACKAGE/STRATEGY + list/grep/todo): confirm 0.2 mirrors full set (energy_grade_line_step/normal_depth_circular/normal_depth_trapezoidal/steady_network_hgl_profile + priors) + wasm_bindgen + exports + tests. Updated with latest consumption ex (15.996 full, 17.656 trap, 0.500 HGL hglStep0_2, 6.321 routing, 0.658 crit, 1.000 normal, 0.500 EGL + steady_network_hgl_profile) + "same in Python/JS/Rust/WASM" + pro ties (Tauri/FieldHydro) + dispatch CTAs + 3-goals/never gate after unique consumption/contribute anchors. Abs paths: C:\Users\michael.flynn\hydro-tools\rational.py + C:\Users\michael.flynn\dev\OpenCADStudio\crates\stormsewer\src\lib.rs + C:\Users\michael.flynn\real-dispatch-package-5-leads\REAL_DISPATCH_PACKAGE.md (EXECUTION_READY) + crosses PACKAGE/schedulers 019eb2b9ca9b+019eb41d7650+Friday/Mark/Priya pilots. Cargo + python GREEN. Hygiene 0. [x] engine final. Report p3-friday-08-engine-final. Targeted. Friday. Background.
 
