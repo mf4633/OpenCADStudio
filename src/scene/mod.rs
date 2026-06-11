@@ -2652,6 +2652,16 @@ impl Scene {
                             any = true;
                         }
                     }
+                    // 3D solids render as meshes, not wires, so fold their
+                    // XY AABBs in too — otherwise ZOOM EXTENTS ignores them.
+                    for set in self.meshes.values() {
+                        let [ax, ay, bx, by] = set.world_aabb;
+                        if ax.is_finite() && bx.is_finite() {
+                            min = min.min(glam::Vec3::new(ax + ox as f32, ay + oy as f32, 0.0));
+                            max = max.max(glam::Vec3::new(bx + ox as f32, by + oy as f32, 0.0));
+                            any = true;
+                        }
+                    }
                     return if any { Some((min, max)) } else { None };
                 }
             }
@@ -2688,6 +2698,15 @@ impl Scene {
                         any = true;
                     }
                 }
+            }
+        }
+        // Same mesh inclusion for the tessellate fallback path.
+        for set in self.meshes.values() {
+            let [ax, ay, bx, by] = set.world_aabb;
+            if ax.is_finite() && bx.is_finite() {
+                min = min.min(glam::Vec3::new(ax + ox as f32, ay + oy as f32, oz));
+                max = max.max(glam::Vec3::new(bx + ox as f32, by + oy as f32, oz));
+                any = true;
             }
         }
         if any {
