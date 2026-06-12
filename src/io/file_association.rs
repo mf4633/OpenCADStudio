@@ -28,6 +28,37 @@
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 const APP_ID: &str = "io.github.HakanSeven12.OpenCadStudio";
 
+/// Silently register this app as *a* handler (not necessarily the default) for
+/// .dwg / .dxf, so it appears in the OS "Open with" list. Unlike
+/// [`set_default_app`], this changes no defaults and shows no UI — it just makes
+/// the running binary discoverable as a handler, which the installers already
+/// do for installed builds but the portable .exe / AppImage otherwise lack.
+///
+/// Idempotent and best-effort; safe to call on every launch. Runs synchronously
+/// (registry / small file writes), so callers should invoke it off the UI
+/// thread.
+pub fn register_as_handler() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        windows_impl::register_handler()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_impl::register_handler()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // .app bundles are registered with LaunchServices automatically when
+        // first launched or moved (it scans Info.plist's CFBundleDocumentTypes),
+        // so there is nothing to do at runtime.
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        Ok(())
+    }
+}
+
 /// Try to make this app the default handler for .dwg and .dxf. Returns a short
 /// human-readable status string on success, or an error message on failure.
 pub async fn set_default_app() -> Result<String, String> {
@@ -155,6 +186,72 @@ mod windows_impl {
             result
         }
     }
+
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
+        KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
+    };
+
+    fn wide(s: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(s).encode_wide().chain(Some(0)).collect()
+    }
+
+    // Create `subkey` under HKCU and write `data` into `value` (None = the key's
+    // default value), as a REG_SZ string.
+    fn set_string(subkey: &str, value: Option<&str>, data: &str) -> Result<(), String> {
+        let subkey_w = wide(subkey);
+        let mut hkey: HKEY = std::ptr::null_mut();
+        let rc = unsafe {
+            RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                subkey_w.as_ptr(),
+                0,
+                std::ptr::null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_WRITE,
+                std::ptr::null(),
+                &mut hkey,
+                std::ptr::null_mut(),
+            )
+        };
+        if rc != 0 {
+            return Err(format!("RegCreateKeyExW failed ({rc}) for {subkey}"));
+        }
+        let name_w = value.map(wide);
+        let name_ptr = name_w.as_ref().map_or(std::ptr::null(), |v| v.as_ptr());
+        let data_w = wide(data);
+        // cbData counts bytes including the trailing NUL that `wide` appended.
+        let cb = (data_w.len() * std::mem::size_of::<u16>()) as u32;
+        let rc = unsafe {
+            RegSetValueExW(hkey, name_ptr, 0, REG_SZ, data_w.as_ptr() as *const u8, cb)
+        };
+        unsafe { RegCloseKey(hkey) };
+        if rc != 0 {
+            return Err(format!("RegSetValueExW failed ({rc}) for {subkey}"));
+        }
+        Ok(())
+    }
+
+    /// Register the running .exe under HKCU\…\Applications so it shows up in the
+    /// shell's "Open with" list for .dwg / .dxf. The MSI does this machine-wide
+    /// for installed builds; this covers the portable .exe.
+    pub(super) fn register_handler() -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let exe = exe.to_string_lossy().to_string();
+        const BASE: &str = r"Software\Classes\Applications\OpenCADStudio.exe";
+
+        set_string(
+            &format!(r"{BASE}\shell\open\command"),
+            None,
+            &format!("\"{exe}\" \"%1\""),
+        )?;
+        set_string(BASE, Some("FriendlyAppName"), "Open CAD Studio")?;
+        // Listing the extensions under SupportedTypes is what makes the app
+        // appear in the "Open with → Choose another app" picker for them.
+        set_string(&format!(r"{BASE}\SupportedTypes"), Some(".dwg"), "")?;
+        set_string(&format!(r"{BASE}\SupportedTypes"), Some(".dxf"), "")?;
+        Ok(())
+    }
 }
 
 // ── Linux ──────────────────────────────────────────────────────────────────
@@ -162,6 +259,72 @@ mod windows_impl {
 #[cfg(target_os = "linux")]
 mod linux_impl {
     use super::APP_ID;
+    use std::path::{Path, PathBuf};
+
+    /// Write a user-level .desktop file pointing at the running binary, then
+    /// refresh the MIME cache so file managers list us under "Open with".
+    /// Skipped when a system package already registered the app, so we don't
+    /// shadow a distro-provided desktop entry.
+    pub(super) fn register_handler() -> Result<(), String> {
+        // A system install already lists us — leave it alone.
+        let data_dirs = std::env::var("XDG_DATA_DIRS")
+            .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+        let already_system = data_dirs.split(':').filter(|d| !d.is_empty()).any(|d| {
+            Path::new(d)
+                .join("applications")
+                .join(format!("{APP_ID}.desktop"))
+                .exists()
+        });
+        if already_system {
+            return Ok(());
+        }
+
+        // Prefer the AppImage path ($APPIMAGE) — current_exe() points inside the
+        // transient mount and isn't a stable command to launch later.
+        let exec = std::env::var_os("APPIMAGE")
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_exe().ok())
+            .ok_or("could not determine the executable path")?;
+        let exec = exec.to_string_lossy();
+
+        let apps = data_home()?.join("applications");
+        let desktop_path = apps.join(format!("{APP_ID}.desktop"));
+
+        let contents = format!(
+            "[Desktop Entry]\n\
+             Name=Open CAD Studio\n\
+             Comment=A CAD application for 2D/3D drawing and design\n\
+             Exec={exec} %f\n\
+             Icon={APP_ID}\n\
+             Terminal=false\n\
+             Type=Application\n\
+             Categories=Graphics;Engineering;\n\
+             MimeType=image/vnd.dwg;image/vnd.dxf;\n\
+             Keywords=CAD;DWG;DXF;drawing;design;\n\
+             StartupWMClass=OpenCADStudio\n"
+        );
+
+        // Nothing changed since last launch → skip the write and the (slow)
+        // desktop-database refresh.
+        if std::fs::read_to_string(&desktop_path).ok().as_deref() == Some(contents.as_str()) {
+            return Ok(());
+        }
+
+        std::fs::create_dir_all(&apps).map_err(|e| e.to_string())?;
+        std::fs::write(&desktop_path, &contents).map_err(|e| e.to_string())?;
+        // Best-effort: refresh the MIME→app cache. Absent on minimal systems.
+        let _ = std::process::Command::new("update-desktop-database")
+            .arg(&apps)
+            .status();
+        Ok(())
+    }
+
+    fn data_home() -> Result<PathBuf, String> {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+            .ok_or_else(|| "neither XDG_DATA_HOME nor HOME is set".to_string())
+    }
 
     pub(super) fn set_default() -> Result<String, String> {
         let desktop = format!("{APP_ID}.desktop");

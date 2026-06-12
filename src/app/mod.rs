@@ -1569,6 +1569,15 @@ impl OpenCADStudio {
     /// opens the primary application window.
     fn boot() -> (Self, Task<Message>) {
         use helpers::build_window_icon;
+        // Silently (re)register this binary as a .dwg/.dxf handler so it appears
+        // in the OS "Open with" list. Best-effort and idempotent; covers the
+        // portable .exe / AppImage that no installer has registered. Detached so
+        // it never delays startup.
+        std::thread::spawn(|| {
+            if let Err(e) = crate::io::file_association::register_as_handler() {
+                eprintln!("file association: handler registration failed: {e}");
+            }
+        });
         let state = Self::new();
         let (id, open_task) = window::open(window::Settings {
             maximized: true,
