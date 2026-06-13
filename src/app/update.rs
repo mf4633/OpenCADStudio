@@ -1826,8 +1826,22 @@ impl OpenCADStudio {
                 if let Some(idx) = self.tabs[i].layers.selected {
                     if let Some(layer) = self.tabs[i].layers.layers.get(idx) {
                         let name = layer.name.clone();
+                        // Mirror the change into the document header (CLAYER) too,
+                        // not just the per-tab default. Otherwise the no-selection
+                        // ribbon refresh (e.g. after Esc) re-reads the stale header
+                        // layer and the dropdown snaps back to it. See #93.
+                        let handle = self.tabs[i]
+                            .scene
+                            .document
+                            .layers
+                            .get(&name)
+                            .map(|l| l.handle)
+                            .unwrap_or(acadrust::types::Handle::NULL);
+                        self.tabs[i].scene.document.header.current_layer_name = name.clone();
+                        self.tabs[i].scene.document.header.current_layer_handle = handle;
                         self.tabs[i].active_layer = name.clone();
                         self.tabs[i].layers.current_layer = name.clone();
+                        self.tabs[i].dirty = true;
                         self.ribbon.active_layer = name;
                     }
                 }

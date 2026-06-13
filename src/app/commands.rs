@@ -232,9 +232,23 @@ impl OpenCADStudio {
                     self.tabs[i].active_cmd = Some(Box::new(cmd));
                 } else {
                     let layer = entities[0].1.common().layer.clone();
+                    // Keep the document header (CLAYER) in sync, not just the
+                    // per-tab default, so a later no-selection ribbon refresh
+                    // (e.g. after Esc) doesn't snap back to the stale header
+                    // layer. See #93.
+                    let handle = self.tabs[i]
+                        .scene
+                        .document
+                        .layers
+                        .get(&layer)
+                        .map(|l| l.handle)
+                        .unwrap_or(acadrust::types::Handle::NULL);
+                    self.tabs[i].scene.document.header.current_layer_name = layer.clone();
+                    self.tabs[i].scene.document.header.current_layer_handle = handle;
                     self.tabs[i].active_layer = layer.clone();
                     self.ribbon.active_layer = layer.clone();
                     self.tabs[i].layers.current_layer = layer.clone();
+                    self.tabs[i].dirty = true;
                     self.command_line
                         .push_info(&format!("Current layer set to \"{layer}\"."));
                     self.refresh_layer_panel();
