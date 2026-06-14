@@ -101,6 +101,7 @@ pub fn load_file(path: &Path) -> Result<CadDocument, String> {
                 .map_err(|e| e.to_string())?;
             fix_viewport_status_flags(&mut doc);
             fix_current_style_names(&mut doc);
+            resolve_raster_image_paths(&mut doc, path.parent());
             Ok(doc)
         }
         "dxf" => {
@@ -111,10 +112,72 @@ pub fn load_file(path: &Path) -> Result<CadDocument, String> {
             fix_dxf_dimension_rotations(&mut doc);
             fix_viewport_status_flags(&mut doc);
             fix_current_style_names(&mut doc);
+            resolve_raster_image_paths(&mut doc, path.parent());
             Ok(doc)
         }
         _ => Err(format!("Unsupported file format: .{ext}")),
     }
+}
+
+/// A RasterImage entity stores its file path on the linked ImageDefinition,
+/// often as the original author's absolute path (e.g. a Windows / VMware share)
+/// that doesn't exist on this machine. Resolve each image to a usable path:
+/// the stored path if it exists, otherwise the same file name next to the
+/// drawing — and write the result onto the entity so the renderer finds it.
+fn resolve_raster_image_paths(doc: &mut CadDocument, base_dir: Option<&Path>) {
+    use acadrust::objects::ObjectType;
+    use acadrust::EntityType;
+    use std::collections::HashMap;
+
+    let defs: HashMap<acadrust::Handle, String> = doc
+        .objects
+        .iter()
+        .filter_map(|(h, o)| match o {
+            ObjectType::ImageDefinition(d) => Some((*h, d.file_name.clone())),
+            _ => None,
+        })
+        .collect();
+
+    for e in doc.entities_mut() {
+        if let EntityType::RasterImage(img) = e {
+            let raw = if !img.file_path.trim().is_empty() {
+                img.file_path.clone()
+            } else {
+                img.definition_handle
+                    .and_then(|h| defs.get(&h).cloned())
+                    .unwrap_or_default()
+            };
+            if raw.trim().is_empty() {
+                continue;
+            }
+            if let Some(resolved) = resolve_image_file(&raw, base_dir) {
+                img.file_path = resolved;
+            } else {
+                // At least surface the stored path so the renderer can try it.
+                img.file_path = raw;
+            }
+        }
+    }
+}
+
+/// Resolve a (possibly foreign / absolute) image path to an existing file:
+/// as stored, then relative to the drawing folder, then just the file name
+/// next to the drawing.
+fn resolve_image_file(raw: &str, base_dir: Option<&Path>) -> Option<String> {
+    if Path::new(raw).is_file() {
+        return Some(raw.to_string());
+    }
+    let base_dir = base_dir?;
+    let joined = base_dir.join(raw);
+    if joined.is_file() {
+        return Some(joined.to_string_lossy().into_owned());
+    }
+    let name = raw.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(raw);
+    let cand = base_dir.join(name);
+    if cand.is_file() {
+        return Some(cand.to_string_lossy().into_owned());
+    }
+    None
 }
 
 // ── Directory listing (used by the custom Save As dialog) ────────────────
