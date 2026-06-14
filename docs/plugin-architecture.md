@@ -15,7 +15,7 @@ This document is the **authoritative spec** for how add-on packages integrate wi
 | Goal | Rationale |
 |------|-----------|
 | **One package, one registration** | Ribbon tab, commands, and manifest ship together — no duplicate hooks in `build.rs` and `commands.rs`. |
-| **Stable host surface** | Plugin authors target `HostSession` / future `ocs_plugin_api` with semver, not `OpenCADStudio` internals. |
+| **Stable host surface** | Plugin authors target the semver-versioned `ocs_plugin_api` crate (manifest + ribbon today) and `HostSession`, not `OpenCADStudio` internals. |
 | **Open-source add-on ergonomics** | Separate git repo + workspace crate is supported; in-tree built-ins use the same layout. |
 | **DWG round-trip** | Domain data on entities (XDATA), not opaque plugin databases. |
 | **Engine reuse** | Headless crates (`stormsewer`, …) run in WASM/CLI without the CAD host. |
@@ -69,7 +69,7 @@ This document is the **authoritative spec** for how add-on packages integrate wi
 |------|-----------------|
 | `metadata.txt` (name, version, author, …) | `plugin.toml` beside the package |
 | `classFactory(iface)` in `__init__.py` | `inventory::submit!(PluginRegistration { construct })` in `register.rs` |
-| `iface` stable API | `HostSession` → future `ocs_plugin_api` crate |
+| `iface` stable API | `ocs_plugin_api` crate (manifest + ribbon) + `HostSession` |
 | User folder `…/python/plugins/<id>/` | Phase 2: `%APPDATA%/OpenCADStudio/plugins/<id>/` |
 | Plugin repository (plugins.qgis.org) | Future: curated index; today = git + in-tree |
 | `qgisMinimumVersion` | `api_version` in manifest (host ABI major) |
@@ -182,7 +182,14 @@ Plugins use `HostSession`, not `OpenCADStudio`:
 | Command line | `push_info`, `push_output`, `push_error`, `set_active_command` |
 | Undo / dirty | `push_undo`, `set_dirty` |
 
-Phase 1b: extract to `crates/ocs_plugin_api` with semver when the surface stabilizes.
+**Status:** The dependency-free half of the contract — `PluginManifest` /
+`ApiVersion` (manifest) and `CadModule` + the ribbon types (`ToolDef`,
+`RibbonGroup`, …) — now lives in the standalone, semver-versioned
+[`crates/ocs_plugin_api`](../crates/ocs_plugin_api) crate. The host re-exports it
+(`crate::plugin::manifest`, `crate::modules`) so in-tree paths are unchanged.
+The `acadrust`-typed runtime surface in the table above (`document_mut`,
+`add_entity`, `set_active_command`, …) stays in the host binary for now; lifting
+it behind a `HostApi` trait in the same crate is the remaining phase-1b step.
 
 ### Command routing
 
@@ -247,7 +254,7 @@ This mirrors QGIS: the application ships core menus; plugins add tabs/tools with
 - [x] Per-tab `plugin_state`
 - [x] Storm Sewer off `commands.rs` monolith
 - [x] Single registration (`plugin.toml` + `BuiltinPlugin::ribbon`)
-- [ ] Extract `ocs_plugin_api` crate
+- [~] Extract `ocs_plugin_api` crate — manifest + ribbon/`CadModule` done; `acadrust`-typed host surface pending
 - [ ] Plugin manager UI stub (list installed, versions)
 
 ### Phase 2 — Dynamic loading (desktop)
@@ -321,7 +328,7 @@ OpenCADStudio/
       storm_sewer/              # add-on (has plugin.toml)
   crates/
     stormsewer/                 # Layer C engine
-    ocs_plugin_api/             # (phase 1b) stable host API
+    ocs_plugin_api/             # stable contract: manifest + ribbon (host API: phase 1b)
   plugins/                      # (phase 2) third-party cdylibs
 ```
 
