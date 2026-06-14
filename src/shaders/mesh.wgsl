@@ -49,8 +49,6 @@ fn vs_main(v: VertexIn) -> VertexOut {
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    // Fixed directional light (world space, tilted toward the viewer).
-    let light_dir = normalize(vec3<f32>(0.4, 0.8, 0.6));
     var n: vec3<f32>;
     if (u.flat_shade > 0.5) {
         // Per-triangle face normal: derivatives of the interpolated
@@ -60,8 +58,19 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     } else {
         n = normalize(in.normal);
     }
-    // Half-Lambert: [0.5, 1.0] so the dark side isn't fully black.
-    let diff = clamp(dot(n, light_dir), 0.0, 1.0) * 0.5 + 0.5;
-    let rgb  = in.color.rgb * diff;
+
+    // Three-point-ish lighting (world space) plus ambient. Spread directions
+    // keep every face — and the back faces seen through an open surface — lit
+    // from at least one source, so the model never reads as a flat dark mass.
+    // `abs(dot)` makes each light two-sided (independent of normal direction).
+    let l0 = normalize(vec3<f32>( 0.5,  0.8,  0.6)); // key (upper front)
+    let l1 = normalize(vec3<f32>(-0.7,  0.3,  0.4)); // fill (left)
+    let l2 = normalize(vec3<f32>( 0.2, -0.6, -0.8)); // back/under
+    let ambient = 0.35;
+    let diff = ambient
+        + 0.45 * abs(dot(n, l0))
+        + 0.30 * abs(dot(n, l1))
+        + 0.25 * abs(dot(n, l2));
+    let rgb = in.color.rgb * clamp(diff, 0.0, 1.0);
     return vec4<f32>(rgb, in.color.a);
 }

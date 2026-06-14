@@ -132,6 +132,31 @@ fn tessellate_sat(
     })
 }
 
+/// Tessellate an ACIS document, preferring the truck B-rep kernel and falling
+/// back to the bespoke per-surface sampler when truck can't rebuild the shell
+/// (e.g. an unhandled surface type).
+fn tessellate_acis(
+    sat: &SatDocument,
+    name: String,
+    color: [f32; 4],
+    facet_res: f64,
+) -> Option<MeshLodSet> {
+    if let Some(set) = crate::scene::acis_to_truck::tessellate_sat_truck(sat, name.clone(), color, facet_res) {
+        if std::env::var_os("OCS_TESS_DEBUG").is_some() {
+            let tris = set.lods.first().map(|m| m.indices.len() / 3).unwrap_or(0);
+            eprintln!("acis_tess[{name}]: truck ({tris} tris)");
+        }
+        return Some(set);
+    }
+    // truck couldn't rebuild the shell — fall back to the bespoke sampler.
+    let fallback = tessellate_sat_lods(sat, name.clone(), color, facet_res);
+    eprintln!(
+        "acis_tess[{name}]: manual fallback ({})",
+        if fallback.is_some() { "ok" } else { "empty" }
+    );
+    fallback
+}
+
 /// Tessellate a SAT document at all three LODs and bundle them into a
 /// `MeshLodSet` ready for the render pipeline to pick a level per frame.
 fn tessellate_sat_lods(
@@ -164,7 +189,7 @@ fn tessellate_sat_lods(
 /// geometry in body-local space and records the placement in a `transform`
 /// record (`<3×3> <tx ty tz> <scale> rotate reflect shear`). `None` when the
 /// document has no transform (treated as identity).
-fn body_transform(sat: &SatDocument) -> Option<([f64; 9], [f64; 3], f64)> {
+pub(crate) fn body_transform(sat: &SatDocument) -> Option<([f64; 9], [f64; 3], f64)> {
     let t = sat.records.iter().find(|r| r.entity_type == "transform")?;
     let mut m = [0.0f64; 9];
     for (i, slot) in m.iter_mut().enumerate() {
@@ -178,7 +203,7 @@ fn body_transform(sat: &SatDocument) -> Option<([f64; 9], [f64; 3], f64)> {
 /// Apply a body placement transform to a mesh. ACIS treats points as row
 /// vectors (`p' = scale·(p·M) + T`), so the 3×3 is indexed transposed relative
 /// to a column-vector multiply. Normals get the rotation only, renormalized.
-fn apply_body_transform(mesh: &mut MeshModel, m: &[f64; 9], tr: &[f64; 3], scale: f64) {
+pub(crate) fn apply_body_transform(mesh: &mut MeshModel, m: &[f64; 9], tr: &[f64; 3], scale: f64) {
     for v in &mut mesh.verts {
         let (x, y, z) = (v[0] as f64, v[1] as f64, v[2] as f64);
         let wx = scale * (x * m[0] + y * m[3] + z * m[6]) + tr[0];
@@ -212,7 +237,7 @@ fn scale_lod(base: LodConfig, facet_res: f64) -> LodConfig {
 
 /// World-XY AABB of the mesh — used by the render-pipeline LOD selector
 /// to pick a level based on projected pixel diagonal.
-fn mesh_aabb(mesh: &MeshModel) -> [f32; 4] {
+pub(crate) fn mesh_aabb(mesh: &MeshModel) -> [f32; 4] {
     let mut min_x = f32::INFINITY;
     let mut min_y = f32::INFINITY;
     let mut max_x = f32::NEG_INFINITY;
@@ -251,7 +276,7 @@ pub fn tessellate_region(region: &Region, color: [f32; 4], facet_res: f64) -> Op
         &region.acis_data.sab_data,
     )?;
     let name = region.common.handle.value().to_string();
-    tessellate_sat_lods(&sat, name, color, facet_res)
+    tessellate_acis(&sat, name, color, facet_res)
 }
 
 /// Tessellate a `Body` entity (3D ACIS body) at all three LOD levels.
@@ -262,7 +287,7 @@ pub fn tessellate_body(body: &Body, color: [f32; 4], facet_res: f64) -> Option<M
         &body.acis_data.sab_data,
     )?;
     let name = body.common.handle.value().to_string();
-    tessellate_sat_lods(&sat, name, color, facet_res)
+    tessellate_acis(&sat, name, color, facet_res)
 }
 
 /// Tessellate a `Surface` entity (ACAD_SURFACE family) at all three LOD
@@ -280,7 +305,7 @@ pub fn tessellate_surface(
         &surface.acis_data.sab_data,
     )?;
     let name = surface.common.handle.value().to_string();
-    tessellate_sat_lods(&sat, name, color, facet_res)
+    tessellate_acis(&sat, name, color, facet_res)
 }
 
 /// Tessellate a `Solid3D` entity at all three LOD levels.
@@ -295,7 +320,7 @@ pub fn tessellate_solid3d(solid: &Solid3D, color: [f32; 4], facet_res: f64) -> O
         &solid.acis_data.sab_data,
     )?;
     let name = solid.common.handle.value().to_string();
-    tessellate_sat_lods(&sat, name, color, facet_res)
+    tessellate_acis(&sat, name, color, facet_res)
 }
 
 // ── Topology helpers ──────────────────────────────────────────────────────────
@@ -310,7 +335,7 @@ pub fn tessellate_solid3d(solid: &Solid3D, color: [f32; 4], facet_res: f64) -> O
 ///
 /// Returns an empty `Vec` when the loop topology is broken or has fewer than
 /// three distinct points.
-fn collect_face_polygon(sat: &SatDocument, face: &SatFace, circ_segs: usize) -> Vec<[f64; 3]> {
+pub(crate) fn collect_face_polygon(sat: &SatDocument, face: &SatFace, circ_segs: usize) -> Vec<[f64; 3]> {
     let loop_ptr = face.first_loop();
     let Some(loop_rec) = sat.resolve(loop_ptr) else {
         return vec![];
@@ -355,7 +380,7 @@ fn collect_face_polygon(sat: &SatDocument, face: &SatFace, circ_segs: usize) -> 
 /// sampled along their parametric arc (excluding the end param so the next
 /// coedge's start point provides the junction); all other curve types fall
 /// back to the single start vertex, respecting coedge sense.
-fn append_coedge_points(
+pub(crate) fn append_coedge_points(
     sat: &SatDocument,
     coedge: &SatCoedge,
     circ_segs: usize,
@@ -442,7 +467,7 @@ fn sample_ellipse_arc(
 }
 
 /// Resolve a vertex pointer all the way to its `[x, y, z]` coordinate.
-fn resolve_point(sat: &SatDocument, v_ptr: SatPointer) -> Option<[f64; 3]> {
+pub(crate) fn resolve_point(sat: &SatDocument, v_ptr: SatPointer) -> Option<[f64; 3]> {
     let v_rec = sat.resolve(v_ptr)?;
     let vertex = SatVertex::from_record(v_rec)?;
     let pt_rec = sat.resolve(vertex.point())?;
@@ -702,7 +727,7 @@ fn angular_range(
 /// projects their centres onto the axis to get rim heights. For a true cone
 /// with a single rim, the tip is added analytically (the height where the
 /// radius reaches zero). Returns `None` when no coaxial rim is found.
-fn cone_axis_span(
+pub(crate) fn cone_axis_span(
     sat: &SatDocument,
     cone: &SatConeSurface,
     axis: [f64; 3],

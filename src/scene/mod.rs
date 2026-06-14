@@ -25,6 +25,7 @@ pub(super) struct EntityIndex {
 }
 pub(crate) mod render;
 mod selection;
+pub mod acis_to_truck;
 pub mod solid3d_tess;
 pub mod spline_tess;
 pub mod tess_util;
