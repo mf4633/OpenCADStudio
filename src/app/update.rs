@@ -1376,13 +1376,16 @@ impl OpenCADStudio {
                     let idx = self.grip_popup.as_ref().map(|p| p.selected).unwrap_or(0);
                     return Task::done(Message::GripMenuPick(idx));
                 }
-                // Pending typed command-line text (e.g. an option keyword like
-                // "R") must be submitted rather than finalising the command.
-                // The focused-input Enter routes through CommandSubmit, but a
-                // command started from the ribbon never focuses the field, so
-                // its Enter arrives here — forward to the same submit path.
+                // Any typed command-line text must be submitted rather than
+                // finalising. The focused-input Enter routes through
+                // CommandSubmit, but when the field isn't focused — e.g. at
+                // startup before the window grabs focus, or a command started
+                // from the ribbon — its Enter arrives here. Forward a non-empty
+                // buffer to the same submit path so typing a command name (or
+                // an option keyword like "R") and pressing Enter works without
+                // first clicking into the command line (issue #99).
                 let i = self.active_tab;
-                if self.tabs[i].active_cmd.is_some() && !self.command_line.input.trim().is_empty() {
+                if !self.command_line.input.trim().is_empty() {
                     return self.update(Message::CommandSubmit);
                 }
                 // A typed dynamic-input value commits as a point pick
