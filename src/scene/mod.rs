@@ -34,6 +34,7 @@ pub mod transform;
 pub mod truck_tess;
 pub mod viewport_pane;
 pub mod wire_model;
+pub mod xclip;
 
 use camera::Camera;
 pub use camera::Projection;
@@ -7327,6 +7328,14 @@ fn tessellate_entity(
                 is_xref,
                 bg_color,
             ) {
+                // XCLIP: if this INSERT carries an enabled spatial filter,
+                // clip the expanded block geometry to the boundary polygon so
+                // only the portion inside the clip is drawn.
+                if let Some(sf) = xclip::insert_spatial_filter(document, ins) {
+                    let poly = xclip::world_clip_polygon(sf, ins, world_offset);
+                    xclip::clip_wires(&mut wires, &poly);
+                }
+
                 // Per-INSERT attribute values. The block defn carries the
                 // AttributeDefinitions (templates) which expand_insert skips;
                 // the AttributeEntity instances live on the Insert itself in

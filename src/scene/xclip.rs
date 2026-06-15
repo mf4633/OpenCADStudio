@@ -1,0 +1,462 @@
+//! XCLIP clip-boundary application for block references.
+//!
+//! A block reference (INSERT) may carry an `AcDbSpatialFilter` under its
+//! extension dictionary (`ACAD_FILTER` → `SPATIAL`). When present and enabled,
+//! only the portion of the block's geometry inside the boundary polygon is
+//! drawn. This module resolves the filter, builds the world-space boundary
+//! polygon, and clips the expanded block [`WireModel`]s to it.
+//!
+//! Geometry is assumed planar in the boundary's +Z plane — the standard XCLIP
+//! case. The clip is performed in 2D (XY) after the INSERT transform has been
+//! applied, matching the space the block wires are already emitted in.
+
+use acadrust::entities::Insert;
+use acadrust::objects::{ObjectType, SpatialFilter};
+use acadrust::types::{Handle, Vector3};
+use acadrust::CadDocument;
+
+use crate::scene::wire_model::WireModel;
+
+const NAN3: [f32; 3] = [f32::NAN, f32::NAN, f32::NAN];
+
+/// Resolve the enabled XCLIP spatial filter for `ins`, if any.
+///
+/// Walks the INSERT's extension dictionary: `xdictionary → ACAD_FILTER
+/// (dictionary) → SPATIAL (SpatialFilter)`. Returns `None` when there is no
+/// filter, it is disabled (code 71 = 0), or it has fewer than two boundary
+/// points.
+pub fn insert_spatial_filter<'a>(
+    doc: &'a CadDocument,
+    ins: &Insert,
+) -> Option<&'a SpatialFilter> {
+    let xdict = ins.common.xdictionary_handle?;
+    let acad_filter = dict_entry(doc, xdict, "ACAD_FILTER")?;
+    let spatial = dict_entry(doc, acad_filter, "SPATIAL")?;
+    match doc.objects.get(&spatial)? {
+        ObjectType::SpatialFilter(sf)
+            if sf.display_enabled && sf.boundary_points.len() >= 2 =>
+        {
+            Some(sf)
+        }
+        _ => None,
+    }
+}
+
+fn dict_entry(doc: &CadDocument, dict: Handle, key: &str) -> Option<Handle> {
+    match doc.objects.get(&dict)? {
+        ObjectType::Dictionary(d) => {
+            d.entries.iter().find(|(k, _)| k == key).map(|(_, h)| *h)
+        }
+        _ => None,
+    }
+}
+
+/// Build the clip boundary as a closed world-space ring in the same f32 XY
+/// space as the emitted wires (i.e. with `world_offset` already subtracted).
+///
+/// Boundary points are stored in the clip-definition coordinate system. The
+/// `inverse_block_transform` maps them into the block's coordinate system, then
+/// the INSERT transform maps that to world — `world = T_insert · (M⁻¹ · vert)`.
+/// (For a clip made against the current insert, `M⁻¹` is the insert's own
+/// inverse and the two transforms cancel, leaving the vertices in WCS; when the
+/// insert was later rescaled the stored `M⁻¹` still places the clip correctly.)
+/// Two points describe a rectangle (opposite corners); three or more an
+/// explicit polygon.
+pub fn world_clip_polygon(
+    sf: &SpatialFilter,
+    ins: &Insert,
+    world_offset: [f64; 3],
+) -> Vec<[f32; 2]> {
+    let xform = ins.get_transform();
+    let inv_block = &sf.inverse_block_transform;
+    let [ox, oy, _] = world_offset;
+    let local: Vec<[f64; 2]> = if sf.boundary_points.len() == 2 {
+        let a = sf.boundary_points[0];
+        let b = sf.boundary_points[1];
+        vec![[a.x, a.y], [b.x, a.y], [b.x, b.y], [a.x, b.y]]
+    } else {
+        sf.boundary_points.iter().map(|p| [p.x, p.y]).collect()
+    };
+    local
+        .into_iter()
+        .map(|[x, y]| {
+            let block = inv_block.transform_point(Vector3::new(x, y, 0.0));
+            let w = xform.apply(block);
+            [(w.x - ox) as f32, (w.y - oy) as f32]
+        })
+        .collect()
+}
+
+/// Clip every wire in `wires` to the boundary `poly` (a closed ring in f32 XY,
+/// world_offset-subtracted). Polylines are split into NaN-separated inside
+/// runs; fill triangles are clipped against the polygon; snap / key vertices
+/// outside the boundary are dropped. Wires left with no geometry are removed.
+pub fn clip_wires(wires: &mut Vec<WireModel>, poly: &[[f32; 2]]) {
+    if poly.len() < 3 {
+        return;
+    }
+    for w in wires.iter_mut() {
+        if !w.points.is_empty() {
+            w.points = clip_polyline(&w.points, poly);
+        }
+        if !w.fill_tris.is_empty() {
+            w.fill_tris = clip_triangles(&w.fill_tris, poly);
+        }
+        w.key_vertices
+            .retain(|v| point_in_poly(v[0], v[1], poly));
+        w.snap_pts.retain(|(p, _)| point_in_poly(p.x, p.y, poly));
+        w.aabb = recompute_aabb(&w.points, &w.fill_tris);
+    }
+    wires.retain(|w| !w.points.is_empty() || !w.fill_tris.is_empty());
+}
+
+/// Ray-cast point-in-polygon test for a closed ring.
+fn point_in_poly(x: f32, y: f32, poly: &[[f32; 2]]) -> bool {
+    let mut inside = false;
+    let n = poly.len();
+    let mut j = n - 1;
+    for i in 0..n {
+        let (xi, yi) = (poly[i][0], poly[i][1]);
+        let (xj, yj) = (poly[j][0], poly[j][1]);
+        if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Clip a NaN-separated polyline to `poly`, returning a NaN-separated polyline
+/// of only the inside portions.
+fn clip_polyline(pts: &[[f32; 3]], poly: &[[f32; 2]]) -> Vec<[f32; 3]> {
+    let mut out: Vec<[f32; 3]> = Vec::new();
+    let mut i = 0;
+    while i < pts.len() {
+        if !pts[i][0].is_finite() || !pts[i][1].is_finite() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < pts.len() && pts[i][0].is_finite() && pts[i][1].is_finite() {
+            i += 1;
+        }
+        let seg = &pts[start..i];
+        let mut last: Option<[f32; 3]> = None;
+        for j in 0..seg.len().saturating_sub(1) {
+            for (a, b) in clip_segment(seg[j], seg[j + 1], poly) {
+                let contiguous = last.is_some_and(|l| {
+                    (l[0] - a[0]).abs() <= 1e-4 && (l[1] - a[1]).abs() <= 1e-4
+                });
+                if !contiguous {
+                    if !out.is_empty() {
+                        out.push(NAN3);
+                    }
+                    out.push(a);
+                }
+                out.push(b);
+                last = Some(b);
+            }
+        }
+    }
+    out
+}
+
+/// Return the inside-the-polygon sub-segments of `p0`→`p1` as endpoint pairs.
+/// Handles convex and concave boundaries by testing the midpoint of every
+/// interval between consecutive boundary crossings.
+fn clip_segment(
+    p0: [f32; 3],
+    p1: [f32; 3],
+    poly: &[[f32; 2]],
+) -> Vec<([f32; 3], [f32; 3])> {
+    let mut ts: Vec<f32> = vec![0.0, 1.0];
+    let n = poly.len();
+    let mut j = n - 1;
+    for i in 0..n {
+        if let Some(t) = seg_cross_t(p0, p1, poly[j], poly[i]) {
+            if t > 0.0 && t < 1.0 {
+                ts.push(t);
+            }
+        }
+        j = i;
+    }
+    ts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    ts.dedup_by(|a, b| (*a - *b).abs() < 1e-7);
+
+    let lerp = |t: f32| {
+        [
+            p0[0] + (p1[0] - p0[0]) * t,
+            p0[1] + (p1[1] - p0[1]) * t,
+            p0[2] + (p1[2] - p0[2]) * t,
+        ]
+    };
+    let mut out = Vec::new();
+    for w in ts.windows(2) {
+        let mid = lerp(0.5 * (w[0] + w[1]));
+        if point_in_poly(mid[0], mid[1], poly) {
+            out.push((lerp(w[0]), lerp(w[1])));
+        }
+    }
+    out
+}
+
+/// Parameter `t` along segment `p0`→`p1` where it crosses the boundary edge
+/// `a`→`b`, or `None` if they do not cross within the edge's extent.
+fn seg_cross_t(p0: [f32; 3], p1: [f32; 3], a: [f32; 2], b: [f32; 2]) -> Option<f32> {
+    let r = (p1[0] - p0[0], p1[1] - p0[1]);
+    let s = (b[0] - a[0], b[1] - a[1]);
+    let denom = r.0 * s.1 - r.1 * s.0;
+    if denom.abs() < 1e-12 {
+        return None;
+    }
+    let qp = (a[0] - p0[0], a[1] - p0[1]);
+    let t = (qp.0 * s.1 - qp.1 * s.0) / denom;
+    let u = (qp.0 * r.1 - qp.1 * r.0) / denom;
+    if (0.0..=1.0).contains(&u) {
+        Some(t)
+    } else {
+        None
+    }
+}
+
+/// Clip a flat triangle list against `poly` (Sutherland–Hodgman per triangle,
+/// fan-triangulating the clipped convex result). Exact for convex boundaries;
+/// approximate for concave ones.
+fn clip_triangles(tris: &[[f32; 3]], poly: &[[f32; 2]]) -> Vec<[f32; 3]> {
+    let mut out = Vec::new();
+    for tri in tris.chunks_exact(3) {
+        let clipped = sutherland_hodgman(tri, poly);
+        for k in 1..clipped.len().saturating_sub(1) {
+            out.push(clipped[0]);
+            out.push(clipped[k]);
+            out.push(clipped[k + 1]);
+        }
+    }
+    out
+}
+
+fn sutherland_hodgman(tri: &[[f32; 3]], poly: &[[f32; 2]]) -> Vec<[f32; 3]> {
+    // Boundary orientation decides which half-plane is "inside".
+    let mut area2 = 0.0f32;
+    let n = poly.len();
+    let mut j = n - 1;
+    for i in 0..n {
+        area2 += poly[j][0] * poly[i][1] - poly[i][0] * poly[j][1];
+        j = i;
+    }
+    let ccw = area2 > 0.0;
+
+    let mut output: Vec<[f32; 3]> = tri.to_vec();
+    let mut j = n - 1;
+    for i in 0..n {
+        if output.is_empty() {
+            break;
+        }
+        let (a, b) = (poly[j], poly[i]);
+        j = i;
+        let inside = |p: &[f32; 3]| {
+            let cr = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+            if ccw {
+                cr >= 0.0
+            } else {
+                cr <= 0.0
+            }
+        };
+        let input = std::mem::take(&mut output);
+        let len = input.len();
+        for k in 0..len {
+            let cur = input[k];
+            let prev = input[(k + len - 1) % len];
+            let cur_in = inside(&cur);
+            let prev_in = inside(&prev);
+            if cur_in {
+                if !prev_in {
+                    output.push(line_cross(prev, cur, a, b));
+                }
+                output.push(cur);
+            } else if prev_in {
+                output.push(line_cross(prev, cur, a, b));
+            }
+        }
+    }
+    output
+}
+
+/// Intersection of segment `p0`→`p1` with the infinite line through `a`→`b`,
+/// interpolating Z.
+fn line_cross(p0: [f32; 3], p1: [f32; 3], a: [f32; 2], b: [f32; 2]) -> [f32; 3] {
+    let r = (p1[0] - p0[0], p1[1] - p0[1]);
+    let s = (b[0] - a[0], b[1] - a[1]);
+    let denom = r.0 * s.1 - r.1 * s.0;
+    let t = if denom.abs() < 1e-12 {
+        0.0
+    } else {
+        ((a[0] - p0[0]) * s.1 - (a[1] - p0[1]) * s.0) / denom
+    };
+    [
+        p0[0] + r.0 * t,
+        p0[1] + r.1 * t,
+        p0[2] + (p1[2] - p0[2]) * t,
+    ]
+}
+
+fn recompute_aabb(points: &[[f32; 3]], tris: &[[f32; 3]]) -> [f32; 4] {
+    let mut bb = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    let mut any = false;
+    for p in points.iter().chain(tris.iter()) {
+        if p[0].is_finite() && p[1].is_finite() {
+            bb[0] = bb[0].min(p[0]);
+            bb[1] = bb[1].min(p[1]);
+            bb[2] = bb[2].max(p[0]);
+            bb[3] = bb[3].max(p[1]);
+            any = true;
+        }
+    }
+    if any {
+        bb
+    } else {
+        [0.0; 4]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn square() -> Vec<[f32; 2]> {
+        vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]
+    }
+
+    #[test]
+    fn point_in_poly_basic() {
+        let p = square();
+        assert!(point_in_poly(5.0, 5.0, &p));
+        assert!(!point_in_poly(15.0, 5.0, &p));
+        assert!(!point_in_poly(-1.0, 5.0, &p));
+    }
+
+    #[test]
+    fn segment_clipped_to_boundary() {
+        // Horizontal line crossing the square from outside to outside.
+        let segs = clip_segment([-5.0, 5.0, 0.0], [15.0, 5.0, 0.0], &square());
+        assert_eq!(segs.len(), 1);
+        let (a, b) = segs[0];
+        assert!((a[0] - 0.0).abs() < 1e-3);
+        assert!((b[0] - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn segment_fully_outside_dropped() {
+        let segs = clip_segment([20.0, 5.0, 0.0], [30.0, 5.0, 0.0], &square());
+        assert!(segs.is_empty());
+    }
+
+    #[test]
+    fn polyline_keeps_inside_run() {
+        // Polyline that dips outside then comes back: expect a NaN break.
+        let pts = vec![
+            [5.0, 5.0, 0.0],
+            [15.0, 5.0, 0.0],
+            [15.0, 8.0, 0.0],
+            [5.0, 8.0, 0.0],
+        ];
+        let out = clip_polyline(&pts, &square());
+        assert!(out.iter().any(|p| p[0].is_nan()));
+        assert!(out.iter().all(|p| p[0].is_nan() || p[0] <= 10.0 + 1e-3));
+    }
+
+    #[test]
+    fn resolves_filter_and_clips_block_geometry() {
+        use acadrust::objects::Dictionary;
+        use acadrust::types::Vector2;
+
+        // Handles: insert, xdict, acad_filter dict, spatial filter.
+        let (h_ins, h_xdict, h_filter, h_spatial) = (
+            Handle::new(0x10),
+            Handle::new(0x11),
+            Handle::new(0x12),
+            Handle::new(0x13),
+        );
+
+        let mut doc = CadDocument::new();
+
+        // xdictionary → ACAD_FILTER → SPATIAL chain.
+        let mut xdict = Dictionary::new();
+        xdict.handle = h_xdict;
+        xdict.add_entry("ACAD_FILTER", h_filter);
+        doc.objects.insert(h_xdict, ObjectType::Dictionary(xdict));
+
+        let mut filter_dict = Dictionary::new();
+        filter_dict.handle = h_filter;
+        filter_dict.add_entry("SPATIAL", h_spatial);
+        doc.objects
+            .insert(h_filter, ObjectType::Dictionary(filter_dict));
+
+        let mut sf = SpatialFilter::new();
+        sf.handle = h_spatial;
+        sf.display_enabled = true;
+        sf.boundary_points = vec![Vector2::new(0.0, 0.0), Vector2::new(10.0, 10.0)];
+        doc.objects.insert(h_spatial, ObjectType::SpatialFilter(sf));
+
+        // Identity-transform insert (origin, unit scale, no rotation).
+        let mut ins = Insert::new("BLK", Vector3::new(0.0, 0.0, 0.0));
+        ins.common.handle = h_ins;
+        ins.common.xdictionary_handle = Some(h_xdict);
+
+        let resolved = insert_spatial_filter(&doc, &ins).expect("filter resolves");
+        let poly = world_clip_polygon(resolved, &ins, [0.0, 0.0, 0.0]);
+        assert_eq!(poly.len(), 4);
+
+        // A polyline half inside, half outside the 0..10 square.
+        let mut wires = vec![WireModel {
+            points: vec![[5.0, 5.0, 0.0], [15.0, 5.0, 0.0]],
+            ..Default::default()
+        }];
+        clip_wires(&mut wires, &poly);
+
+        assert_eq!(wires.len(), 1);
+        let pts = &wires[0].points;
+        assert!(pts.iter().all(|p| p[0].is_nan() || p[0] <= 10.0 + 1e-3));
+        assert!(pts.iter().any(|p| (p[0] - 10.0).abs() < 1e-3));
+    }
+
+    #[test]
+    fn world_polygon_applies_inverse_block_then_insert() {
+        use acadrust::types::{Matrix4, Vector2};
+        // Clip stored against a normalized space: inverse_block_transform scales
+        // the small boundary points up by 1000 into block space, then the insert
+        // (scale 0.1 + translation) maps them to world.
+        let mut sf = SpatialFilter::new();
+        sf.boundary_points = vec![Vector2::new(580.0, 4528.0), Vector2::new(581.0, 4529.0)];
+        sf.inverse_block_transform = Matrix4 {
+            m: [
+                [1000.0, 0.0, 0.0, 0.0],
+                [0.0, 1000.0, 0.0, 0.0],
+                [0.0, 0.0, 1000.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        let mut ins = Insert::new("BLK", Vector3::new(581668.0, 4064155.0, 0.0));
+        ins.set_x_scale(0.1);
+        ins.set_y_scale(0.1);
+
+        let poly = world_clip_polygon(&sf, &ins, [0.0, 0.0, 0.0]);
+        // vert (580,4528) → ×1000 → (580000,4528000) → ×0.1 + insert →
+        // (639668, 4516955).
+        let xs: Vec<f32> = poly.iter().map(|p| p[0]).collect();
+        let ys: Vec<f32> = poly.iter().map(|p| p[1]).collect();
+        let minx = xs.iter().cloned().fold(f32::MAX, f32::min);
+        let miny = ys.iter().cloned().fold(f32::MAX, f32::min);
+        assert!((minx - 639668.0).abs() < 1.0, "minx={minx}");
+        assert!((miny - 4516955.0).abs() < 1.0, "miny={miny}");
+    }
+
+    #[test]
+    fn triangle_clipped_to_square() {
+        // Triangle straddling the right edge → clipped, area reduced.
+        let tri = [[5.0, 5.0, 0.0], [15.0, 5.0, 0.0], [5.0, 9.0, 0.0]];
+        let out = clip_triangles(&tri, &square());
+        assert!(!out.is_empty());
+        assert!(out.iter().all(|p| p[0] <= 10.0 + 1e-3));
+    }
+}
