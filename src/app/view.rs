@@ -40,35 +40,9 @@ impl std::fmt::Display for RenderModeChoice {
 impl OpenCADStudio {
     pub fn view(&self, window_id: window::Id) -> Element<'_, Message> {
         // ── Floating panel windows ─────────────────────────────────────────
-        if Some(window_id) == self.assoc_prompt_window {
-            return default_assoc_dialog_window();
-        }
-        if Some(window_id) == self.unsaved_dialog_window {
-            let tab_name = match &self.pending_close {
-                Some(super::PendingClose::Tab(idx)) => self
-                    .tabs
-                    .get(*idx)
-                    .map(|t| t.tab_display_name())
-                    .unwrap_or_default(),
-                Some(super::PendingClose::Quit) => self
-                    .tabs
-                    .iter()
-                    .find(|t| t.dirty)
-                    .map(|t| t.tab_display_name())
-                    .unwrap_or_default(),
-                None => String::new(),
-            };
-            return unsaved_changes_dialog_window(&tab_name);
-        }
-        if Some(window_id) == self.save_dialog_window {
-            return save_as_dialog_window(
-                &self.save_dialog_filename,
-                &self.save_dialog_folder,
-                &self.save_dialog_entries,
-                &self.save_dialog_format,
-            );
-        }
-
+        // All dialogs are in-canvas modals now (Plan B); view_main stacks the
+        // active one. `window_id` is unused — there is only the main window.
+        let _ = window_id;
         self.view_main()
     }
 
@@ -1543,6 +1517,34 @@ impl OpenCADStudio {
                 &self.style_rename_buf,
             ), 720, 560)
             }
+            super::ModalKind::AssocPrompt => sized(default_assoc_dialog_window(), 440, 210),
+            super::ModalKind::Unsaved => {
+                let tab_name = match &self.pending_close {
+                    Some(super::PendingClose::Tab(idx)) => self
+                        .tabs
+                        .get(*idx)
+                        .map(|t| t.tab_display_name())
+                        .unwrap_or_default(),
+                    Some(super::PendingClose::Quit) => self
+                        .tabs
+                        .iter()
+                        .find(|t| t.dirty)
+                        .map(|t| t.tab_display_name())
+                        .unwrap_or_default(),
+                    None => String::new(),
+                };
+                sized(unsaved_changes_dialog_window(&tab_name), 420, 160)
+            }
+            super::ModalKind::SaveDialog => sized(
+                save_as_dialog_window(
+                    &self.save_dialog_filename,
+                    &self.save_dialog_folder,
+                    &self.save_dialog_entries,
+                    &self.save_dialog_format,
+                ),
+                560,
+                480,
+            ),
         })
     }
 

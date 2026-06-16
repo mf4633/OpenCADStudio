@@ -606,6 +606,9 @@ pub enum ModalKind {
     MlStyle,
     MLeaderStyle,
     DimStyle,
+    Unsaved,
+    SaveDialog,
+    AssocPrompt,
 }
 
 /// Identifies a DimStyle field that can be edited in the dialog.
@@ -1687,18 +1690,10 @@ impl OpenCADStudio {
         // One-time prompt offering to make Open CAD Studio the default app for
         // .dwg / .dxf. Shown only on the first launch that hasn't answered it
         // yet; the flag is persisted so we never ask twice.
-        let assoc_prompt: Task<Message> = if s.default_assoc_prompted {
-            Task::none()
-        } else {
-            let (id, open) = window::open(window::Settings {
-                size: iced::Size::new(440.0, 210.0),
-                resizable: false,
-                level: window::Level::AlwaysOnTop,
-                ..Default::default()
-            });
-            s.assoc_prompt_window = Some(id);
-            open.map(|_| Message::Noop)
-        };
+        let assoc_prompt: Task<Message> = Task::none();
+        if !s.default_assoc_prompted {
+            s.active_modal = Some(ModalKind::AssocPrompt);
+        }
         (
             s,
             Task::batch([open_main, check_update, focus_cmd, cli_open, assoc_prompt]),

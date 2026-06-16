@@ -117,6 +117,9 @@ impl OpenCADStudio {
                 self.ribbon.deactivate_tool_if("KEYBOARD");
             }
             Some(About) => self.ribbon.deactivate_tool_if("ABOUT"),
+            // Dismissing these via ✕ is the cancel/decline path.
+            Some(Unsaved) => self.pending_close = None,
+            Some(AssocPrompt) => self.mark_assoc_prompted(),
             _ => {}
         }
         self.active_modal = None;
@@ -5784,24 +5787,16 @@ impl OpenCADStudio {
             }
             Message::AssocPromptYes => {
                 self.mark_assoc_prompted();
-                let close = if let Some(id) = self.assoc_prompt_window.take() {
-                    window::close(id)
-                } else {
-                    Task::none()
-                };
-                let run = Task::perform(
+                self.active_modal = None;
+                Task::perform(
                     crate::io::file_association::set_default_app(),
                     Message::AssocResult,
-                );
-                Task::batch([close, run])
+                )
             }
             Message::AssocPromptNo => {
                 self.mark_assoc_prompted();
-                if let Some(id) = self.assoc_prompt_window.take() {
-                    window::close(id)
-                } else {
-                    Task::none()
-                }
+                self.active_modal = None;
+                Task::none()
             }
             Message::AssocResult(result) => {
                 match result {
@@ -8534,44 +8529,27 @@ impl OpenCADStudio {
             self.save_dialog_filename = format!("{}.{ext}", self.tabs[tab_idx].tab_display_name());
         }
         self.save_dialog_entries = crate::io::read_dir_entries(&self.save_dialog_folder.clone());
-        let (id, task) = window::open(window::Settings {
-            size: iced::Size::new(560.0, 480.0),
-            resizable: true,
-            level: window::Level::AlwaysOnTop,
-            ..Default::default()
-        });
-        self.save_dialog_window = Some(id);
-        task.map(|_| Message::Noop)
+        self.active_modal = Some(super::ModalKind::SaveDialog);
+        Task::none()
     }
 
     fn close_save_dialog_window(&mut self) -> Task<Message> {
-        if let Some(id) = self.save_dialog_window.take() {
-            window::close(id)
-        } else {
-            Task::none()
+        if self.active_modal == Some(super::ModalKind::SaveDialog) {
+            self.active_modal = None;
         }
+        Task::none()
     }
 
     fn open_unsaved_dialog_window(&mut self) -> Task<Message> {
-        if let Some(id) = self.unsaved_dialog_window {
-            return window::gain_focus(id);
-        }
-        let (id, task) = window::open(window::Settings {
-            size: iced::Size::new(420.0, 155.0),
-            resizable: false,
-            level: window::Level::AlwaysOnTop,
-            ..Default::default()
-        });
-        self.unsaved_dialog_window = Some(id);
-        task.map(|_| Message::Noop)
+        self.active_modal = Some(super::ModalKind::Unsaved);
+        Task::none()
     }
 
     fn close_unsaved_dialog_window(&mut self) -> Task<Message> {
-        if let Some(id) = self.unsaved_dialog_window.take() {
-            window::close(id)
-        } else {
-            Task::none()
+        if self.active_modal == Some(super::ModalKind::Unsaved) {
+            self.active_modal = None;
         }
+        Task::none()
     }
 
     pub(super) fn load_textstyle_bufs(&mut self, tab: usize) {
