@@ -78,6 +78,9 @@ pub struct UserSettings {
     /// plugins keep their manifest listed but drop their ribbon tab and command
     /// dispatch.
     pub disabled_plugins: Vec<String>,
+    /// Linked plugin source repositories (`owner/repo`) the marketplace installs
+    /// from.
+    pub plugin_repos: Vec<String>,
 }
 
 impl Default for UserSettings {
@@ -101,6 +104,7 @@ impl Default for UserSettings {
             ],
             default_assoc_prompted: false,
             disabled_plugins: Vec::new(),
+            plugin_repos: Vec::new(),
         }
     }
 }
@@ -143,6 +147,14 @@ impl UserSettings {
                         .map(|t| t.to_string())
                         .collect();
                 }
+                "plugin_repos" => {
+                    s.plugin_repos = val
+                        .split(',')
+                        .map(|t| t.trim())
+                        .filter(|t| !t.is_empty())
+                        .map(|t| t.to_string())
+                        .collect();
+                }
                 "snap_modes" => {
                     let modes: Vec<SnapType> =
                         val.split(',').filter_map(|t| snap_from_id(t.trim())).collect();
@@ -168,7 +180,7 @@ impl UserSettings {
             .collect::<Vec<_>>()
             .join(",");
         let body = format!(
-            "dyn={}\northo={}\npolar={}\npolar_increment_deg={}\ngrid={}\nosnap={}\notrack={}\ndefault_assoc_prompted={}\nsnap_modes={}\ndisabled_plugins={}\n",
+            "dyn={}\northo={}\npolar={}\npolar_increment_deg={}\ngrid={}\nosnap={}\notrack={}\ndefault_assoc_prompted={}\nsnap_modes={}\ndisabled_plugins={}\nplugin_repos={}\n",
             b(self.dyn_input),
             b(self.ortho),
             b(self.polar),
@@ -179,6 +191,7 @@ impl UserSettings {
             b(self.default_assoc_prompted),
             modes,
             self.disabled_plugins.join(","),
+            self.plugin_repos.join(","),
         );
         let _ = std::fs::write(path, body);
     }

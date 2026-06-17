@@ -7,6 +7,7 @@
 pub mod external;
 pub mod host;
 pub mod manifest;
+pub mod marketplace;
 pub mod registry;
 
 pub use registry::{all_ribbon_modules, ribbon_modules_enabled};

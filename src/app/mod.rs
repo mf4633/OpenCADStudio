@@ -303,6 +303,18 @@ pub(super) struct OpenCADStudio {
     /// Ids of external packages actually loaded this session (a subset of
     /// `external_plugins` — compatible, with a library, dlopen'd at startup).
     loaded_plugin_ids: rustc_hash::FxHashSet<String>,
+    /// Curated plugin registry fetched from the OpenCADStudio repo.
+    plugin_registry: Vec<crate::plugin::external::RegistryEntry>,
+    /// User-linked plugin source repos (`owner/repo`) beyond the curated list.
+    plugin_repos: Vec<String>,
+    /// Add-repository text field in the Plugin Manager.
+    plugin_repo_input: String,
+    /// Installable release tags fetched per linked repo (for the dropdown).
+    repo_release_tags: rustc_hash::FxHashMap<String, Vec<String>>,
+    /// The release tag currently selected per linked repo.
+    repo_selected_tag: rustc_hash::FxHashMap<String, String>,
+    /// Last marketplace status / error line shown in the Plugin Manager.
+    marketplace_status: String,
     /// PDSIZE text buffer for the Point Style (DDPTYPE) dialog.
     point_size_buf: String,
     /// Point Style size mode: `true` = relative to screen, `false` = absolute.
@@ -1044,6 +1056,23 @@ pub enum Message {
     PluginManagerClose,
     /// Enable (`true`) or disable (`false`) the plugin with this id.
     SetPluginEnabled(String, bool),
+    // ── Plugin marketplace (install from a linked repo's releases) ─────────
+    /// Edit the add-repository text field.
+    PluginRepoInput(String),
+    /// Link the repository currently in the text field.
+    PluginRepoAdd,
+    /// Unlink a repository.
+    PluginRepoRemove(String),
+    /// The curated registry was fetched.
+    PluginRegistryFetched(Result<Vec<crate::plugin::external::RegistryEntry>, String>),
+    /// Installable release tags fetched for `owner/repo`.
+    PluginReleasesFetched(String, Result<Vec<String>, String>),
+    /// Choose a release tag for a repo (`repo`, `tag`).
+    PluginReleaseSelect(String, String),
+    /// Install the selected release of `owner/repo`.
+    PluginInstall(String),
+    /// Result of an install: the plugin id, or an error message.
+    PluginInstalled(Result<String, String>),
     // ── Point Style (DDPTYPE) dialog ──────────────────────────────────────
     /// Set the full PDMODE value from a glyph-grid cell.
     PointStyleSetMode(i16),
@@ -1469,6 +1498,12 @@ impl OpenCADStudio {
             disabled_plugins: rustc_hash::FxHashSet::default(),
             external_plugins: Vec::new(),
             loaded_plugin_ids: rustc_hash::FxHashSet::default(),
+            plugin_registry: Vec::new(),
+            plugin_repos: Vec::new(),
+            plugin_repo_input: String::new(),
+            repo_release_tags: rustc_hash::FxHashMap::default(),
+            repo_selected_tag: rustc_hash::FxHashMap::default(),
+            marketplace_status: String::new(),
             point_size_buf: String::new(),
             point_size_relative: true,
             default_assoc_prompted: false,

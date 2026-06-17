@@ -1,0 +1,7 @@
+[
+  {
+    "repo": "HakanSeven12/opencad-example-plugin",
+    "name": "Example Plugin",
+    "description": "Reference dynamically-loaded add-on (ribbon tab + EX_HELLO command)."
+  }
+]

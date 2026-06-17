@@ -146,6 +146,7 @@ impl OpenCADStudio {
                 v.sort();
                 v
             },
+            plugin_repos: self.plugin_repos.clone(),
         }
     }
 
@@ -161,6 +162,7 @@ impl OpenCADStudio {
         self.snapper.enabled = s.snap_modes.iter().copied().collect();
         self.default_assoc_prompted = s.default_assoc_prompted;
         self.disabled_plugins = s.disabled_plugins.iter().cloned().collect();
+        self.plugin_repos = s.plugin_repos.clone();
         self.rebuild_ribbon_modules();
     }
 
@@ -176,6 +178,58 @@ impl OpenCADStudio {
     /// holds a `&mut` borrow of the app via `HostSession`.
     pub(crate) fn disabled_plugin_ids(&self) -> rustc_hash::FxHashSet<String> {
         self.disabled_plugins.clone()
+    }
+
+    /// Background task: fetch the curated plugin registry.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn fetch_registry_task(&self) -> Task<Message> {
+        Task::perform(
+            async { crate::plugin::marketplace::fetch_registry() },
+            Message::PluginRegistryFetched,
+        )
+    }
+
+    /// Background task: fetch `owner/repo`'s installable release tags.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn fetch_releases_task(&self, repo: String) -> Task<Message> {
+        let label = repo.clone();
+        Task::perform(
+            async move {
+                crate::plugin::marketplace::fetch_releases(&repo).map(|rs| {
+                    rs.into_iter()
+                        .filter(|r| r.installable())
+                        .map(|r| r.tag)
+                        .collect::<Vec<_>>()
+                })
+            },
+            move |res| Message::PluginReleasesFetched(label, res),
+        )
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn fetch_releases_task(&self, _repo: String) -> Task<Message> {
+        Task::none()
+    }
+
+    /// Background task: download and install the `tag` release of `owner/repo`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn install_task(&self, repo: String, tag: String) -> Task<Message> {
+        Task::perform(
+            async move {
+                let releases = crate::plugin::marketplace::fetch_releases(&repo)?;
+                let rel = releases
+                    .into_iter()
+                    .find(|r| r.tag == tag)
+                    .ok_or_else(|| format!("release {tag} not found"))?;
+                crate::plugin::marketplace::install(&rel)
+            },
+            Message::PluginInstalled,
+        )
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn install_task(&self, _repo: String, _tag: String) -> Task<Message> {
+        Task::none()
     }
 
     /// Write PDSIZE from the dialog buffer with the current relative/absolute
@@ -5530,6 +5584,19 @@ impl OpenCADStudio {
                 // opens so newly dropped-in packages show up.
                 self.external_plugins = crate::plugin::external::discover();
                 self.active_modal = Some(super::ModalKind::PluginManager);
+                // Fetch the curated registry and release lists for linked repos.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let mut tasks = vec![self.fetch_registry_task()];
+                    tasks.extend(
+                        self.plugin_repos
+                            .clone()
+                            .into_iter()
+                            .map(|r| self.fetch_releases_task(r)),
+                    );
+                    return Task::batch(tasks);
+                }
+                #[cfg(target_arch = "wasm32")]
                 Task::none()
             }
             Message::PluginManagerClose => {
@@ -5544,6 +5611,92 @@ impl OpenCADStudio {
                 }
                 self.rebuild_ribbon_modules();
                 self.persist_settings_if_changed();
+                Task::none()
+            }
+            Message::PluginRepoInput(s) => {
+                self.plugin_repo_input = s;
+                Task::none()
+            }
+            Message::PluginRepoAdd => {
+                let repo = self
+                    .plugin_repo_input
+                    .trim()
+                    .trim_start_matches("https://github.com/")
+                    .trim_end_matches('/')
+                    .to_string();
+                if repo.is_empty() || self.plugin_repos.contains(&repo) {
+                    return Task::none();
+                }
+                self.plugin_repos.push(repo.clone());
+                self.plugin_repo_input.clear();
+                self.persist_settings_if_changed();
+                self.marketplace_status = format!("Fetching releases for {repo}…");
+                self.fetch_releases_task(repo)
+            }
+            Message::PluginRepoRemove(repo) => {
+                self.plugin_repos.retain(|r| r != &repo);
+                self.repo_release_tags.remove(&repo);
+                self.repo_selected_tag.remove(&repo);
+                self.persist_settings_if_changed();
+                Task::none()
+            }
+            Message::PluginRegistryFetched(Ok(entries)) => {
+                // Fetch releases for every curated repo so the dropdowns fill in.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let tasks: Vec<_> = entries
+                        .iter()
+                        .map(|e| self.fetch_releases_task(e.repo.clone()))
+                        .collect();
+                    self.plugin_registry = entries;
+                    return Task::batch(tasks);
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    self.plugin_registry = entries;
+                    Task::none()
+                }
+            }
+            Message::PluginRegistryFetched(Err(e)) => {
+                self.marketplace_status = format!("Registry: {e}");
+                Task::none()
+            }
+            Message::PluginReleasesFetched(repo, Ok(tags)) => {
+                if let Some(first) = tags.first() {
+                    self.repo_selected_tag
+                        .entry(repo.clone())
+                        .or_insert_with(|| first.clone());
+                }
+                self.marketplace_status =
+                    format!("{repo}: {} installable release(s)", tags.len());
+                self.repo_release_tags.insert(repo, tags);
+                Task::none()
+            }
+            Message::PluginReleasesFetched(repo, Err(e)) => {
+                self.marketplace_status = format!("{repo}: {e}");
+                Task::none()
+            }
+            Message::PluginReleaseSelect(repo, tag) => {
+                self.repo_selected_tag.insert(repo, tag);
+                Task::none()
+            }
+            Message::PluginInstall(repo) => {
+                let Some(tag) = self.repo_selected_tag.get(&repo).cloned() else {
+                    return Task::none();
+                };
+                self.marketplace_status = format!("Installing {repo} {tag}…");
+                self.install_task(repo, tag)
+            }
+            Message::PluginInstalled(Ok(id)) => {
+                self.marketplace_status = format!("Installed '{id}'. Restart to load it.");
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.external_plugins = crate::plugin::external::discover();
+                }
+                Task::none()
+            }
+            Message::PluginInstalled(Err(e)) => {
+                self.marketplace_status = format!("Install failed: {e}");
                 Task::none()
             }
             Message::PointStyleSetMode(mode) => {

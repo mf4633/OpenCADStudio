@@ -15,6 +15,14 @@
 
 use std::path::PathBuf;
 
+/// One entry in the curated plugin registry (`plugins/registry.json`).
+#[derive(Debug, Clone)]
+pub struct RegistryEntry {
+    pub repo: String,
+    pub name: String,
+    pub description: String,
+}
+
 /// An add-on package found on disk (not necessarily loaded or compatible).
 #[derive(Debug, Clone)]
 pub struct ExternalPlugin {
@@ -125,7 +133,7 @@ fn lib_present_in(dir: &std::path::Path) -> bool {
 /// host doesn't pull in a full TOML parser for a fixed, host-defined schema.
 /// Returns `None` when the required `id` is missing. `dir` / `lib_present` are
 /// filled in by the caller.
-fn parse_plugin_toml(text: &str) -> Option<ExternalPlugin> {
+pub(crate) fn parse_plugin_toml(text: &str) -> Option<ExternalPlugin> {
     let mut id = None;
     let mut name = String::new();
     let mut version = String::new();
