@@ -19,6 +19,7 @@ Each call returns the parsed response dict and raises `OcsError` on `ok: false`.
 from __future__ import annotations
 
 import json
+import socket
 import subprocess
 from typing import Any, Optional
 
@@ -28,26 +29,45 @@ class OcsError(RuntimeError):
 
 
 class Ocs:
-    def __init__(self, binary: str = "OpenCADStudio") -> None:
-        self.proc = subprocess.Popen(
-            [binary, "--serve"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
+    """Connect by spawning the server (default) or over a TCP socket.
+
+    - `Ocs()` spawns `OpenCADStudio --serve` and talks over stdin/stdout.
+    - `Ocs(port=4242)` connects to a server started with `--serve --port 4242`.
+    """
+
+    def __init__(
+        self,
+        binary: str = "OpenCADStudio",
+        port: Optional[int] = None,
+        host: str = "127.0.0.1",
+    ) -> None:
+        self.proc: Optional[subprocess.Popen] = None
+        self.sock: Optional[socket.socket] = None
+        if port is not None:
+            self.sock = socket.create_connection((host, port))
+            io = self.sock.makefile("rw")
+            self._r, self._w = io, io
+        else:
+            self.proc = subprocess.Popen(
+                [binary, "--serve"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+            self._r, self._w = self.proc.stdout, self.proc.stdin
         self._read()  # the {"ready": true} greeting
 
     # ── protocol ────────────────────────────────────────────────────────────
     def _read(self) -> dict[str, Any]:
-        line = self.proc.stdout.readline()
+        line = self._r.readline()
         if not line:
             raise OcsError("server closed the connection")
         return json.loads(line)
 
     def _send(self, **req: Any) -> dict[str, Any]:
-        self.proc.stdin.write(json.dumps(req) + "\n")
-        self.proc.stdin.flush()
+        self._w.write(json.dumps(req) + "\n")
+        self._w.flush()
         resp = self._read()
         if not resp.get("ok", False):
             raise OcsError(resp.get("error", "unknown error"))
@@ -114,12 +134,17 @@ class Ocs:
 
     # ── lifecycle ───────────────────────────────────────────────────────────
     def close(self) -> None:
-        if self.proc.stdin:
-            self.proc.stdin.close()
         try:
-            self.proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
+            self._w.close()
+        except Exception:
+            pass
+        if self.proc is not None:
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        if self.sock is not None:
+            self.sock.close()
 
     def __enter__(self) -> "Ocs":
         return self

@@ -4,12 +4,14 @@ Open CAD Studio can run without a GUI and be driven over a line-based JSON
 protocol — for scripts, batch jobs, or AI agents.
 
 ```sh
-OpenCADStudio --serve
+OpenCADStudio --serve              # stdin/stdout transport
+OpenCADStudio --serve --port 4242  # listen on 127.0.0.1:4242 instead
 ```
 
-It reads one JSON request per line on **stdin** and writes one JSON response per
-line on **stdout**. The active document persists across requests, so a caller
-can act → observe → act.
+It reads one JSON request per line and writes one JSON response per line — over
+**stdin/stdout**, or over a **local TCP socket** with `--port`. The active
+document persists across requests (and, on the socket, across reconnects), so a
+caller can act → observe → act.
 
 ## Protocol
 

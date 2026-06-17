@@ -21,17 +21,40 @@ use serde_json::{json, Value};
 
 use super::OpenCADStudio;
 
-/// Run the headless JSON server until stdin closes.
+/// Run the headless JSON server. Default transport is stdin/stdout; with
+/// `--port <N>` it instead listens on `127.0.0.1:<N>` and serves one client at
+/// a time (the document session persists across reconnects).
 pub fn serve() {
     let mut app = OpenCADStudio::new();
+    match port_arg() {
+        Some(port) => serve_socket(&mut app, port),
+        None => serve_stdio(&mut app),
+    }
+}
+
+/// `--port <N>` if present on the command line.
+fn port_arg() -> Option<u16> {
+    let mut args = std::env::args();
+    while let Some(a) = args.next() {
+        if a == "--port" {
+            return args.next().and_then(|s| s.parse().ok());
+        }
+    }
+    None
+}
+
+fn ready() -> Value {
+    json!({ "ok": true, "ready": true, "version": env!("CARGO_PKG_VERSION") })
+}
+
+fn serve_stdio(app: &mut OpenCADStudio) {
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-
-    emit(
-        &stdout,
-        json!({"ok": true, "ready": true, "version": env!("CARGO_PKG_VERSION")}),
-    );
-
+    {
+        let mut o = stdout.lock();
+        let _ = writeln!(o, "{}", ready());
+        let _ = o.flush();
+    }
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         let line = line.trim();
@@ -39,14 +62,42 @@ pub fn serve() {
             continue;
         }
         let resp = app.automation_op(line);
-        emit(&stdout, resp);
+        let mut o = stdout.lock();
+        let _ = writeln!(o, "{resp}");
+        let _ = o.flush();
     }
 }
 
-fn emit(stdout: &std::io::Stdout, value: Value) {
-    let mut o = stdout.lock();
-    let _ = writeln!(o, "{value}");
-    let _ = o.flush();
+fn serve_socket(app: &mut OpenCADStudio, port: u16) {
+    let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("--serve: cannot bind 127.0.0.1:{port}: {e}");
+            return;
+        }
+    };
+    eprintln!("OpenCADStudio --serve listening on 127.0.0.1:{port}");
+    for stream in listener.incoming().flatten() {
+        let Ok(read_half) = stream.try_clone() else {
+            continue;
+        };
+        let reader = std::io::BufReader::new(read_half);
+        let mut writer = stream;
+        let _ = writeln!(writer, "{}", ready());
+        let _ = writer.flush();
+        for line in reader.lines() {
+            let Ok(line) = line else { break };
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let resp = app.automation_op(line);
+            if writeln!(writer, "{resp}").is_err() {
+                break;
+            }
+            let _ = writer.flush();
+        }
+    }
 }
 
 fn err(msg: impl std::fmt::Display) -> Value {
