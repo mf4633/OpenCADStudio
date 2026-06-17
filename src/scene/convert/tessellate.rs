@@ -42,6 +42,7 @@ pub fn tessellate(
     line_weight_px: f32,
     world_offset: [f64; 3],
     anno_scale: f32,
+    world_per_pixel: Option<f32>,
 ) -> Vec<WireModel> {
     let color = if selected {
         WireModel::SELECTED
@@ -87,7 +88,11 @@ pub fn tessellate(
     }
 
     // ── Try the truck path first ───────────────────────────────────────────
-    if let Some(te) = convert(entity, document) {
+    // Relative-PDSIZE points size their glyph from the current zoom so they
+    // stay a roughly constant on-screen size; otherwise the header-driven path.
+    let te = crate::entities::point::relative_truck(entity, document, world_per_pixel)
+        .or_else(|| convert(entity, document));
+    if let Some(te) = te {
         match te.object {
             // ── Text / MText: pre-tessellated glyph strokes ───────────────
             //

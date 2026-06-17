@@ -297,6 +297,12 @@ pub(super) struct OpenCADStudio {
     /// keep their manifest listed but drop their ribbon tab and command
     /// dispatch. Persisted via [`settings::UserSettings::disabled_plugins`].
     disabled_plugins: rustc_hash::FxHashSet<String>,
+    /// PDSIZE text buffer for the Point Style (DDPTYPE) dialog.
+    point_size_buf: String,
+    /// Point Style size mode: `true` = relative to screen, `false` = absolute.
+    /// Tracked separately from the PDSIZE sign so a size of 0 (sign-less) still
+    /// remembers which radio is active.
+    point_size_relative: bool,
     /// New-release notification window — opened on startup when the
     /// GitHub releases API reports a newer version than this build.
     /// First-launch "make Open CAD Studio the default for .dwg/.dxf?" prompt
@@ -603,6 +609,7 @@ pub enum ModalKind {
     Unsaved,
     SaveDialog,
     AssocPrompt,
+    PointStyle,
 }
 
 /// Identifies a DimStyle field that can be edited in the dialog.
@@ -1031,6 +1038,18 @@ pub enum Message {
     PluginManagerClose,
     /// Enable (`true`) or disable (`false`) the plugin with this id.
     SetPluginEnabled(String, bool),
+    // ── Point Style (DDPTYPE) dialog ──────────────────────────────────────
+    /// Set the full PDMODE value from a glyph-grid cell.
+    PointStyleSetMode(i16),
+    /// Choose size mode: `true` = relative to screen (PDSIZE < 0), `false` =
+    /// absolute units (PDSIZE > 0).
+    PointStyleSizeRelative(bool),
+    /// Edit the point-size text field (magnitude only).
+    PointStyleSizeInput(String),
+    /// Commit the point-size text field to the header with the current sign.
+    PointStyleApplySize,
+    /// Apply the point-size field and close the dialog (OK button).
+    PointStyleOk,
     // ── Quick Select / Select Similar ───────────────────────────────────
     /// Extend the current selection with every entity in the active
     /// layout that matches a selected entity by (type, layer).
@@ -1442,6 +1461,8 @@ impl OpenCADStudio {
             modal_drag_last: None,
             modal_dragging: false,
             disabled_plugins: rustc_hash::FxHashSet::default(),
+            point_size_buf: String::new(),
+            point_size_relative: true,
             default_assoc_prompted: false,
             update_notice_version: None,
             update_notice_body: None,

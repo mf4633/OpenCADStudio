@@ -1,4 +1,5 @@
 use acadrust::entities::Point;
+use acadrust::EntityType;
 use glam::Vec3;
 use truck_modeling::{builder, Point3};
 
@@ -9,20 +10,96 @@ use crate::scene::convert::acad_to_truck::{TruckEntity, TruckObject};
 use crate::scene::model::object::{GripApply, GripDef, PropSection};
 use crate::scene::model::wire_model::SnapHint;
 
-/// Resolve PDSIZE (negative = % of viewport, 0 = 5% default, positive = world).
-/// We don't know the viewport height at tessellation time, so percentages and
-/// the 0 default expand to a small fixed world size as a best-effort fallback.
+/// Nominal viewport height (px) used to turn a relative PDSIZE percentage into
+/// an on-screen pixel size. The exact viewport height isn't threaded into
+/// tessellation; this reference keeps relative points a roughly constant
+/// fraction of the screen across zoom levels.
+const REL_REF_PX: f64 = 600.0;
+
+/// Resolve a positive (absolute) PDSIZE to a world size. Relative/zero PDSIZE
+/// is handled by [`relative_truck`] when a world-per-pixel factor is available;
+/// without one it falls back to a small fixed world size.
 fn pdsize_world(pdsize: f64) -> f64 {
     if pdsize > 0.0 {
         pdsize
     } else {
-        // Both PDSIZE = 0 and negative (relative) fall back to a sensible
-        // visible default until viewport-aware sizing is wired up.
         2.0
     }
 }
 
-fn point_glyph(cx: f64, cy: f64, z: f64, pdmode: i16, pdsize: f64) -> Vec<[f64; 3]> {
+/// Build the truck entity for a point given the glyph half-size `s` in world
+/// units. Shared by the header-driven path ([`to_truck`]) and the
+/// viewport-aware relative path ([`relative_truck`]).
+fn point_truck(pt: &Point, pdmode: i16, s: f64) -> TruckEntity {
+    let normal = (pt.normal.x, pt.normal.y, pt.normal.z);
+    let (wx, wy, wz) = crate::scene::view::transform::ocs_point_to_wcs(
+        (pt.location.x, pt.location.y, pt.location.z),
+        normal,
+    );
+    let snap = Vec3::new(wx as f32, wy as f32, wz as f32);
+    if pdmode == 0 {
+        // Default: a single vertex (driver handles the dot pixel).
+        let p = Point3::new(wx, wy, wz);
+        return TruckEntity {
+            object: TruckObject::Point(builder::vertex(p)),
+            snap_pts: vec![(snap, SnapHint::Node)],
+            tangent_geoms: vec![],
+            key_vertices: vec![],
+            fill_tris: vec![],
+        };
+    }
+    let pts = point_glyph(wx, wy, wz, pdmode, s);
+    if pts.is_empty() {
+        // PDMODE 1 = nothing — emit an empty Lines wire so picking still works.
+        return TruckEntity {
+            object: TruckObject::Lines(vec![]),
+            snap_pts: vec![(snap, SnapHint::Node)],
+            tangent_geoms: vec![],
+            key_vertices: vec![[wx, wy, wz]],
+            fill_tris: vec![],
+        };
+    }
+    TruckEntity {
+        object: TruckObject::Lines(pts),
+        snap_pts: vec![(snap, SnapHint::Node)],
+        tangent_geoms: vec![],
+        key_vertices: vec![[wx, wy, wz]],
+        fill_tris: vec![],
+    }
+}
+
+/// Viewport-aware override for a relative (≤ 0) PDSIZE: size the glyph from the
+/// world-per-pixel factor so the point stays a roughly constant on-screen size
+/// across zoom. Returns `None` for an absolute PDSIZE, the size-independent
+/// default dot (PDMODE 0), or when no `wpp` is available — the caller then uses
+/// the normal header-driven path.
+pub fn relative_truck(
+    entity: &EntityType,
+    document: &acadrust::CadDocument,
+    wpp: Option<f32>,
+) -> Option<TruckEntity> {
+    let EntityType::Point(pt) = entity else {
+        return None;
+    };
+    let pdsize = document.header.point_display_size;
+    let pdmode = document.header.point_display_mode;
+    if pdsize > 0.0 || pdmode == 0 {
+        return None;
+    }
+    let wpp = wpp.filter(|w| *w > 0.0)?;
+    Some(point_truck(pt, pdmode, relative_world_size(pdsize, wpp) * 0.5))
+}
+
+/// Full on-screen glyph size (world units) for a relative (≤ 0) PDSIZE at the
+/// given world-per-pixel factor. PDSIZE 0 is the 5% default; negative is the
+/// percentage. Used both for rendering and to seed an absolute size when the
+/// user switches the Point Style dialog to absolute units.
+pub fn relative_world_size(pdsize: f64, wpp: f32) -> f64 {
+    let pct = if pdsize == 0.0 { 5.0 } else { -pdsize };
+    (pct / 100.0) * REL_REF_PX * wpp as f64
+}
+
+fn point_glyph(cx: f64, cy: f64, z: f64, pdmode: i16, s_half: f64) -> Vec<[f64; 3]> {
     // PDMODE bits:
     //   shape:  0=dot, 1=nothing, 2='+', 3='×', 4='|'
     //   +32   = enclose in a circle
@@ -31,7 +108,7 @@ fn point_glyph(cx: f64, cy: f64, z: f64, pdmode: i16, pdsize: f64) -> Vec<[f64; 
     let shape = (pdmode & 0x0F) as i32;
     let circle = (pdmode & 32) != 0;
     let square = (pdmode & 64) != 0;
-    let s = pdsize_world(pdsize) * 0.5;
+    let s = s_half;
     let nan = [f64::NAN, f64::NAN, f64::NAN];
     let mut pts: Vec<[f64; 3]> = Vec::new();
     let mut push_seg = |a: [f64; 3], b: [f64; 3]| {
@@ -92,43 +169,9 @@ fn point_glyph(cx: f64, cy: f64, z: f64, pdmode: i16, pdsize: f64) -> Vec<[f64; 
 }
 
 fn to_truck(pt: &Point, document: &acadrust::CadDocument) -> TruckEntity {
-    let normal = (pt.normal.x, pt.normal.y, pt.normal.z);
-    let (wx, wy, wz) = crate::scene::view::transform::ocs_point_to_wcs(
-        (pt.location.x, pt.location.y, pt.location.z),
-        normal,
-    );
-    let snap = Vec3::new(wx as f32, wy as f32, wz as f32);
     let pdmode = document.header.point_display_mode;
-    let pdsize = document.header.point_display_size;
-    if pdmode == 0 {
-        // Default: a single vertex (driver handles the dot pixel).
-        let p = Point3::new(wx, wy, wz);
-        return TruckEntity {
-            object: TruckObject::Point(builder::vertex(p)),
-            snap_pts: vec![(snap, SnapHint::Node)],
-            tangent_geoms: vec![],
-            key_vertices: vec![],
-            fill_tris: vec![],
-        };
-    }
-    let pts = point_glyph(wx, wy, wz, pdmode, pdsize);
-    if pts.is_empty() {
-        // PDMODE 1 = nothing — emit an empty Lines wire so picking still works.
-        return TruckEntity {
-            object: TruckObject::Lines(vec![]),
-            snap_pts: vec![(snap, SnapHint::Node)],
-            tangent_geoms: vec![],
-            key_vertices: vec![[wx, wy, wz]],
-            fill_tris: vec![],
-        };
-    }
-    TruckEntity {
-        object: TruckObject::Lines(pts),
-        snap_pts: vec![(snap, SnapHint::Node)],
-        tangent_geoms: vec![],
-        key_vertices: vec![[wx, wy, wz]],
-        fill_tris: vec![],
-    }
+    let s = pdsize_world(document.header.point_display_size) * 0.5;
+    point_truck(pt, pdmode, s)
 }
 
 fn grips(pt: &Point) -> Vec<GripDef> {

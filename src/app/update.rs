@@ -178,6 +178,50 @@ impl OpenCADStudio {
         self.disabled_plugins.clone()
     }
 
+    /// Write PDSIZE from the dialog buffer with the current relative/absolute
+    /// sign. A relative size is stored negative; absolute positive. Switching to
+    /// absolute with an empty/zero size seeds a positive value from the current
+    /// on-screen size so the point stays representable (PDSIZE 0 always reads as
+    /// relative, so absolute needs a non-zero magnitude).
+    fn apply_point_size(&mut self) {
+        let i = self.active_tab;
+        let mut mag = self
+            .point_size_buf
+            .trim()
+            .parse::<f64>()
+            .unwrap_or(0.0)
+            .abs();
+        if !self.point_size_relative && mag == 0.0 {
+            let wpp = self.tabs[i].scene.world_per_pixel().unwrap_or(0.0);
+            mag = if wpp > 0.0 {
+                crate::entities::point::relative_world_size(0.0, wpp)
+            } else {
+                1.0
+            };
+            self.point_size_buf = format!("{mag:.4}");
+        }
+        let next = if self.point_size_relative { -mag } else { mag };
+        self.push_undo_snapshot(i, "PDSIZE");
+        self.tabs[i].scene.document.header.point_display_size = next;
+        self.tabs[i].scene.bump_geometry();
+        self.tabs[i].dirty = true;
+    }
+
+    /// Replace the `mask` bits of PDMODE with `value`, rebuild the point glyphs
+    /// and mark the document dirty. Used by the Point Style (DDPTYPE) dialog.
+    fn set_point_mode_bits(&mut self, mask: i16, value: i16) {
+        let i = self.active_tab;
+        let cur = self.tabs[i].scene.document.header.point_display_mode;
+        let next = (cur & !mask) | (value & mask);
+        if next == cur {
+            return;
+        }
+        self.push_undo_snapshot(i, "PDMODE");
+        self.tabs[i].scene.document.header.point_display_mode = next;
+        self.tabs[i].scene.bump_geometry();
+        self.tabs[i].dirty = true;
+    }
+
     /// Write preferences to disk only when they differ from the last write,
     /// so a toggle persists immediately without thrashing the file.
     fn persist_settings_if_changed(&mut self) {
@@ -5497,6 +5541,28 @@ impl OpenCADStudio {
                 }
                 self.rebuild_ribbon_modules();
                 self.persist_settings_if_changed();
+                Task::none()
+            }
+            Message::PointStyleSetMode(mode) => {
+                self.set_point_mode_bits(!0, mode);
+                Task::none()
+            }
+            Message::PointStyleSizeRelative(relative) => {
+                self.point_size_relative = relative;
+                self.apply_point_size();
+                Task::none()
+            }
+            Message::PointStyleSizeInput(s) => {
+                self.point_size_buf = s;
+                Task::none()
+            }
+            Message::PointStyleApplySize => {
+                self.apply_point_size();
+                Task::none()
+            }
+            Message::PointStyleOk => {
+                self.apply_point_size();
+                self.close_active_modal();
                 Task::none()
             }
 

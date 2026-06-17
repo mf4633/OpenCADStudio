@@ -1100,6 +1100,7 @@ impl OpenCADStudio {
             AssocPrompt => (440, 210),
             Unsaved => (420, 160),
             SaveDialog => (560, 480),
+            PointStyle => (360, 470),
         };
         Some((w as f32 + EXTRA_W, h as f32 + EXTRA_H))
     }
@@ -1572,6 +1573,15 @@ impl OpenCADStudio {
                 };
                 sized(unsaved_changes_dialog_window(&tab_name), 420, 160)
             }
+            super::ModalKind::PointStyle => sized(
+                crate::ui::point_style::view_window(
+                    self.tabs[self.active_tab].scene.document.header.point_display_mode,
+                    self.point_size_relative,
+                    &self.point_size_buf,
+                ),
+                360,
+                470,
+            ),
             super::ModalKind::SaveDialog => sized(
                 save_as_dialog_window(
                     &self.save_dialog_filename,

@@ -450,7 +450,7 @@ fn tessellate_sub_local(
     // top-level MTEXT outside blocks the colour split is preserved via the
     // hot path in `tessellate_entity`.
     let mut wires_out = tessellate::tessellate(
-        doc, h, sub, false, sub_color, pat_len, pat, lw_px, local_offset, anno_scale,
+        doc, h, sub, false, sub_color, pat_len, pat, lw_px, local_offset, anno_scale, None,
     );
     if wires_out.is_empty() {
         return None;

@@ -408,6 +408,7 @@ impl super::OpenCADStudio {
             1.0,
             woff,
             anno,
+            None,
         );
         // Per-character boxes in the same offset-subtracted frame as the
         // preview wires (tessellate removes world_offset; mirror that).

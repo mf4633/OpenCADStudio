@@ -19,6 +19,7 @@ pub mod overlay;
 pub mod page_setup;
 pub mod plotstyle;
 pub mod plugin_manager;
+pub mod point_style;
 pub mod properties;
 pub mod ribbon;
 pub mod scale_popup;

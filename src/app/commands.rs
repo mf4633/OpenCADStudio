@@ -4801,6 +4801,50 @@ impl OpenCADStudio {
                     self.command_line.push_error("Usage: LTSCALE [value]");
                 }
             }
+            cmd if cmd == "PDMODE" || cmd.starts_with("PDMODE ") => {
+                let val_str = cmd.trim_start_matches("PDMODE").trim();
+                if val_str.is_empty() {
+                    let v = self.tabs[i].scene.document.header.point_display_mode;
+                    self.command_line.push_output(&format!("PDMODE = {v}"));
+                } else if let Ok(v) = val_str.parse::<i16>() {
+                    self.push_undo_snapshot(i, "PDMODE");
+                    self.tabs[i].scene.document.header.point_display_mode = v;
+                    // Point glyphs are built at tessellation time — rebuild them.
+                    self.tabs[i].scene.bump_geometry();
+                    self.tabs[i].dirty = true;
+                    self.command_line.push_output(&format!("PDMODE set to {v}"));
+                } else {
+                    self.command_line.push_error(
+                        "Usage: PDMODE [value]  (0=dot 1=none 2=+ 3=x 4=tick; +32 circle, +64 square)",
+                    );
+                }
+            }
+            cmd if cmd == "PDSIZE" || cmd.starts_with("PDSIZE ") => {
+                let val_str = cmd.trim_start_matches("PDSIZE").trim();
+                if val_str.is_empty() {
+                    let v = self.tabs[i].scene.document.header.point_display_size;
+                    self.command_line.push_output(&format!("PDSIZE = {v:.4}"));
+                } else if let Ok(v) = val_str.parse::<f64>() {
+                    self.push_undo_snapshot(i, "PDSIZE");
+                    self.tabs[i].scene.document.header.point_display_size = v;
+                    self.tabs[i].scene.bump_geometry();
+                    self.tabs[i].dirty = true;
+                    self.command_line.push_output(&format!("PDSIZE set to {v:.4}"));
+                } else {
+                    self.command_line.push_error(
+                        "Usage: PDSIZE [value]  (>0 absolute size, <0 percent of viewport, 0 default)",
+                    );
+                }
+            }
+            cmd if cmd == "DDPTYPE" => {
+                // The dialog shows the magnitude; the sign (relative/absolute)
+                // is driven by the radio buttons. A positive PDSIZE is absolute;
+                // zero or negative is relative.
+                let pdsize = self.tabs[i].scene.document.header.point_display_size;
+                self.point_size_relative = pdsize <= 0.0;
+                self.point_size_buf = format!("{}", pdsize.abs());
+                self.active_modal = Some(super::ModalKind::PointStyle);
+            }
             cmd if cmd == "LWDISPLAY" || cmd.starts_with("LWDISPLAY ") => {
                 let val_str = cmd.trim_start_matches("LWDISPLAY").trim();
                 let parsed: Result<Option<bool>, ()> =

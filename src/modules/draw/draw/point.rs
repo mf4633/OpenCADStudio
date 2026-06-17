@@ -59,3 +59,7 @@ impl CadCommand for PointCommand {
 
 // ── Autocomplete registry ─────────────────────────────────
 inventory::submit!(crate::command::CommandRegistration { names: &["PO", "POINT"] });  // PointCommand
+// Point display style system variables + dialog.
+inventory::submit!(crate::command::CommandRegistration {
+    names: &["PDMODE", "PDSIZE", "DDPTYPE"]
+});

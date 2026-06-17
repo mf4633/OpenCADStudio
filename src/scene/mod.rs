@@ -7109,6 +7109,7 @@ fn tessellate_entity(
             1.5,
             world_offset,
             1.0,
+            world_per_pixel,
         );
         let ab = entity_aabb(e, world_offset);
         for w in &mut wires {
@@ -7423,6 +7424,7 @@ fn tessellate_entity(
                     sub_line_weight_px,
                     world_offset,
                     anno_scale,
+                    world_per_pixel,
                 );
                 for w in &mut wires {
                     w.name = h.value().to_string();
@@ -7584,6 +7586,7 @@ fn tessellate_entity(
         line_weight_px,
         world_offset,
         anno_scale,
+        world_per_pixel,
     );
     for b in &mut bases {
         b.aci = aci;

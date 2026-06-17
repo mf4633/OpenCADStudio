@@ -1340,6 +1340,7 @@ impl MultiLeaderTess for MultiLeader {
                         leader_lw_px,
                         world_offset,
                         1.0,
+                        None,
                     );
                     for w in &mut sub_wires {
                         w.name = name.clone();
