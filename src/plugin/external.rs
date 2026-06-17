@@ -76,6 +76,16 @@ pub fn plugins_dir() -> Option<PathBuf> {
     Some(p)
 }
 
+/// Delete an installed package's folder. It stays loaded for the current
+/// session (the library is resident); the removal takes effect on next start.
+pub fn uninstall(id: &str) -> Result<(), String> {
+    let dir = plugins_dir().ok_or("cannot locate the plugins folder")?.join(id);
+    if dir.is_dir() {
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Native dynamic-library extension for the current platform (no dot).
 fn lib_extension() -> &'static str {
     if cfg!(target_os = "windows") {

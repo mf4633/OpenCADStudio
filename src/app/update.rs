@@ -5699,6 +5699,24 @@ impl OpenCADStudio {
                 self.marketplace_status = format!("Install failed: {e}");
                 Task::none()
             }
+            Message::PluginUninstall(id) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match crate::plugin::external::uninstall(&id) {
+                        Ok(()) => {
+                            self.marketplace_status =
+                                format!("Uninstalled '{id}'. Restart to unload it.");
+                            self.external_plugins = crate::plugin::external::discover();
+                        }
+                        Err(e) => {
+                            self.marketplace_status = format!("Uninstall failed: {e}");
+                        }
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                let _ = id;
+                Task::none()
+            }
             Message::PointStyleSetMode(mode) => {
                 self.set_point_mode_bits(!0, mode);
                 Task::none()

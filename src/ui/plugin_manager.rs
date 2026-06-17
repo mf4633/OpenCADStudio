@@ -150,6 +150,12 @@ fn external_card<'a>(p: &ExternalPlugin, loaded: bool, disabled: bool) -> Elemen
         header = header.push(Space::new().width(10));
         header = header.push(toggle_button(&p.id, disabled));
     }
+    header = header.push(Space::new().width(6));
+    header = header.push(pill_button(
+        "Uninstall",
+        Message::PluginUninstall(p.id.clone()),
+        Color { r: 0.4, g: 0.25, b: 0.25, a: 1.0 },
+    ));
 
     let id_line = text(p.id.clone()).size(11).color(ACCENT);
     let mut body = column![header, id_line].spacing(5);

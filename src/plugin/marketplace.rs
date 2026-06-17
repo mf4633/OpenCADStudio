@@ -192,6 +192,19 @@ pub fn install(release: &Release) -> Result<String, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
     let bytes = download_bytes(&lib.url)?;
+    // Clean upgrade / reinstall: drop any previously-installed native library
+    // with a different name so the loader doesn't pick a stale one. The
+    // currently-resident library (if loaded) keeps running until restart.
+    let ext = external_lib_ext();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for old in rd.flatten() {
+            let p = old.path();
+            let is_lib = p.extension().and_then(|s| s.to_str()) == Some(ext);
+            if is_lib && p.file_name().and_then(|s| s.to_str()) != Some(lib.name.as_str()) {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
     std::fs::write(dir.join(&lib.name), bytes).map_err(|e| e.to_string())?;
     std::fs::write(dir.join("plugin.toml"), toml_text).map_err(|e| e.to_string())?;
     Ok(manifest.id)

@@ -1073,6 +1073,8 @@ pub enum Message {
     PluginInstall(String),
     /// Result of an install: the plugin id, or an error message.
     PluginInstalled(Result<String, String>),
+    /// Delete an installed plugin's folder (effective next restart).
+    PluginUninstall(String),
     // ── Point Style (DDPTYPE) dialog ──────────────────────────────────────
     /// Set the full PDMODE value from a glyph-grid cell.
     PointStyleSetMode(i16),
