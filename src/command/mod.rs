@@ -225,6 +225,21 @@ pub enum CmdResult {
     /// The host should look up the attdefs for `block_name` from the document
     /// and call `attreq_set_attdefs()` on the command, then loop on text input.
     AttreqNeeded { block_name: String },
+    /// Add a command-owned "live" entity to the document mid-command and hand
+    /// its assigned handle back to the active command via `set_live_handle()`.
+    /// One undo snapshot is pushed here, so the whole in-progress object reverts
+    /// as a single unit. The command stays active. Used by PLINE so the partial
+    /// polyline is a real, snappable entity while later vertices are placed.
+    CommitLiveEntity(EntityType),
+    /// Replace the geometry of the live entity `handle` in place — preserving
+    /// its layer — without pushing a new undo snapshot. When `finish` is true
+    /// the command also exits (the entity is already committed, so no separate
+    /// commit is needed).
+    UpdateLiveEntity {
+        handle: Handle,
+        entity: EntityType,
+        finish: bool,
+    },
 }
 
 /// What kind of value the active command is currently asking for. Drives
@@ -416,6 +431,11 @@ pub trait CadCommand: Send {
     fn on_entity_pick(&mut self, _handle: Handle, _pt: Vec3) -> CmdResult {
         CmdResult::Cancel
     }
+
+    /// Host callback after `CmdResult::CommitLiveEntity`: records the handle the
+    /// new live entity was assigned so later `UpdateLiveEntity` results can
+    /// target it.
+    fn set_live_handle(&mut self, _handle: Handle) {}
 
     /// Point-click pick of domain objects (wire hit-test often misses small markers).
     fn needs_structure_point_pick(&self) -> bool {

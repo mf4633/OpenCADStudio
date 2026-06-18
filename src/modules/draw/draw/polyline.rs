@@ -11,7 +11,7 @@
 
 use acadrust::entities::LwVertex;
 use acadrust::types::Vector2;
-use acadrust::{EntityType, LwPolyline};
+use acadrust::{EntityType, Handle, LwPolyline};
 use glam::{Vec2, Vec3};
 
 use crate::command::{CadCommand, CmdResult};
@@ -46,6 +46,11 @@ pub struct PlineCommand {
     mode: SegMode,
     /// Unit direction of the last committed segment (for arc tangent continuity).
     last_tangent: Option<Vec2>,
+    /// Handle of the live polyline entity once it exists (created at the 2nd
+    /// vertex). `None` while only the start point is placed. Having it in the
+    /// document makes the partial polyline snappable while later vertices are
+    /// being placed. (#119)
+    live_handle: Option<Handle>,
 }
 
 impl PlineCommand {
@@ -55,6 +60,24 @@ impl PlineCommand {
             bulges: Vec::new(),
             mode: SegMode::Line,
             last_tangent: None,
+            live_handle: None,
+        }
+    }
+
+    /// Build the result that publishes the current vertices to the document:
+    /// create the live entity at the 2nd vertex, then replace it in place as
+    /// more vertices land. `finish` ends the command (used for close/done).
+    fn sync_live(&self, closed: bool, finish: bool) -> CmdResult {
+        let entity = self.build_entity(closed);
+        match (entity, self.live_handle) {
+            (Some(e), Some(handle)) => CmdResult::UpdateLiveEntity {
+                handle,
+                entity: e,
+                finish,
+            },
+            (Some(e), None) => CmdResult::CommitLiveEntity(e),
+            // Fewer than 2 vertices: nothing to publish.
+            (None, _) => CmdResult::Cancel,
         }
     }
 
@@ -231,21 +254,26 @@ impl CadCommand for PlineCommand {
 
         self.vertices.push(pt);
         self.bulges.push(0.0);
-        CmdResult::NeedPoint
+        // Publish to the document as soon as the polyline has a segment so it
+        // becomes snappable while the rest is drawn. (#119)
+        if self.vertices.len() >= 2 {
+            self.sync_live(false, false)
+        } else {
+            CmdResult::NeedPoint
+        }
+    }
+
+    fn set_live_handle(&mut self, handle: Handle) {
+        self.live_handle = Some(handle);
     }
 
     fn on_enter(&mut self) -> CmdResult {
-        match self.build_entity(false) {
-            Some(e) => CmdResult::CommitAndExit(e),
-            None => CmdResult::Cancel,
-        }
+        // The committed vertices already live in the document; finalise it.
+        self.sync_live(false, true)
     }
 
     fn on_escape(&mut self) -> CmdResult {
-        match self.build_entity(false) {
-            Some(e) => CmdResult::CommitAndExit(e),
-            None => CmdResult::Cancel,
-        }
+        self.sync_live(false, true)
     }
 
     fn wants_text_input(&self) -> bool {
@@ -269,44 +297,21 @@ impl CadCommand for PlineCommand {
                 self.mode = SegMode::Line;
                 Some(CmdResult::NeedPoint)
             }
-            "C" | "CLOSE" => match self.build_entity(true) {
-                Some(e) => Some(CmdResult::CommitAndExit(e)),
-                None => Some(CmdResult::Cancel),
-            },
+            "C" | "CLOSE" => Some(self.sync_live(true, true)),
             _ => None,
         }
     }
 
     fn on_mouse_move(&mut self, pt: Vec3) -> Option<WireModel> {
-        if self.vertices.is_empty() {
-            return None;
-        }
-        let last = *self.vertices.last().unwrap();
+        // The committed vertices already render as a real document entity, so
+        // the preview is just the pending segment from the last vertex to the
+        // cursor. (#119)
+        let last = *self.vertices.last()?;
 
-        // Build committed segments first.
         let mut pts: Vec<[f32; 3]> = Vec::new();
-
-        // Re-emit all committed vertices + arc samples between them.
-        for i in 0..self.vertices.len() {
-            let v = self.vertices[i];
-            if i == 0 {
-                pts.push([v.x, v.y, v.z]);
-            } else {
-                let prev = self.vertices[i - 1];
-                let b = self.bulges.get(i - 1).copied().unwrap_or(0.0);
-                if b.abs() > 1e-6 {
-                    // Arc segment: sample it.
-                    let arc_pts = arc_sample_points(prev, b, v, 16);
-                    pts.extend_from_slice(&arc_pts[1..]); // skip first (already added)
-                } else {
-                    pts.push([v.x, v.y, v.z]);
-                }
-            }
-        }
-
-        // Rubber-band to cursor.
         match self.mode {
             SegMode::Line => {
+                pts.push([last.x, last.y, last.z]);
                 pts.push([pt.x, pt.y, pt.z]);
             }
             SegMode::Arc => {
@@ -315,7 +320,7 @@ impl CadCommand for PlineCommand {
                 let tangent = self.last_tangent.unwrap_or(Vec2::new(1.0, 0.0));
                 let bulge = compute_bulge(a, tangent, b);
                 let arc_pts = arc_sample_points(last, bulge, pt, 16);
-                pts.extend_from_slice(&arc_pts[1..]);
+                pts.extend_from_slice(&arc_pts);
             }
         }
 

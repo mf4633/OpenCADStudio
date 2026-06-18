@@ -460,6 +460,56 @@ impl OpenCADStudio {
                     }
                 }
             }
+            CmdResult::CommitLiveEntity(entity) => {
+                let label = self.history_label_from_active_cmd(i, "ENTITY");
+                self.push_undo_snapshot(i, label);
+                let handle = self.commit_entity_handle(entity);
+                self.tabs[i].dirty = true;
+                self.tabs[i].scene.clear_preview_wire();
+                if let Some(h) = handle {
+                    if let Some(cmd) = self.tabs[i].active_cmd.as_mut() {
+                        cmd.set_live_handle(h);
+                    }
+                }
+                let prompt = self.tabs[i].active_cmd.as_ref().map(|c| c.prompt());
+                if let Some(p) = prompt {
+                    self.command_line.push_info(&p);
+                }
+            }
+            CmdResult::UpdateLiveEntity {
+                handle,
+                entity,
+                finish,
+            } => {
+                // Replace the live entity's geometry in place, preserving its
+                // handle and layer (the fresh entity from the command carries
+                // defaults — a NULL handle would desync it from the document
+                // map key and drop it from rendering / hit-test). No undo
+                // snapshot — the create already pushed one, so the whole object
+                // reverts as a unit.
+                if let Some(old) = self.tabs[i].scene.document.get_entity_mut(handle) {
+                    let old_handle = old.as_entity().handle();
+                    let layer = old.as_entity().layer().to_string();
+                    let mut new = entity;
+                    new.as_entity_mut().set_handle(old_handle);
+                    new.as_entity_mut().set_layer(layer);
+                    *old = new;
+                    self.tabs[i].scene.mark_entity_dirty(handle);
+                    self.tabs[i].scene.bump_geometry_no_blocks();
+                    self.tabs[i].dirty = true;
+                }
+                if finish {
+                    self.tabs[i].scene.clear_preview_wire();
+                    self.tabs[i].active_cmd = None;
+                    self.tabs[i].snap_result = None;
+                    self.restore_pre_cmd_tangent();
+                } else {
+                    let prompt = self.tabs[i].active_cmd.as_ref().map(|c| c.prompt());
+                    if let Some(p) = prompt {
+                        self.command_line.push_info(&p);
+                    }
+                }
+            }
             CmdResult::Cancel => {
                 self.tabs[i].scene.clear_preview_wire();
                 self.tabs[i].active_cmd = None;
