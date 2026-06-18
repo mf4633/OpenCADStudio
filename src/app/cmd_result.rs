@@ -1617,6 +1617,46 @@ impl OpenCADStudio {
                 self.ribbon.deactivate_tool();
                 return self.begin_text_edit(handle);
             }
+            CmdResult::SuspendForTextEdit { handle } => {
+                let is_editable = self.tabs[i]
+                    .scene
+                    .document
+                    .get_entity(handle)
+                    .map(|e| crate::app::text_inline::read_text_field(e).is_some())
+                    .unwrap_or(false);
+                if !is_editable {
+                    self.command_line.push_error("TEXTEDIT: selected entity is not text.");
+                    let prompt = self.tabs[i].active_cmd.as_ref().map(|c| c.prompt());
+                    if let Some(p) = prompt {
+                        self.command_line.push_info(&p);
+                    }
+                    return Task::none();
+                }
+                let cmd = self.tabs[i].active_cmd.take();
+                self.tabs[i].suspended_cmd = cmd;
+                self.tabs[i].snap_result = None;
+                self.tabs[i].scene.clear_preview_wire();
+                self.restore_pre_cmd_tangent();
+                self.ribbon.deactivate_tool();
+                return self.begin_text_edit(handle);
+            }
+            CmdResult::UndoDocument => {
+                let active = self.tabs[i].active_cmd.take();
+                self.undo_active_tab();
+                self.tabs[i].active_cmd = active;
+                let prompt = self.tabs[i].active_cmd.as_ref().map(|c| c.prompt());
+                if let Some(p) = prompt {
+                    self.command_line.push_info(&p);
+                }
+            }
+            CmdResult::SetTexteditMode(val) => {
+                self.texteditmode = val;
+                let display_val = if val { 1 } else { 0 };
+                self.command_line.push_output(&format!("TEXTEDITMODE set to {display_val}"));
+                self.tabs[i].active_cmd = None;
+                self.tabs[i].snap_result = None;
+                self.tabs[i].scene.clear_preview_wire();
+            }
             CmdResult::DdeditEntity { handle, new_text } => {
                 let mut updated = false;
                 if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(handle) {

@@ -81,6 +81,8 @@ pub struct UserSettings {
     /// Linked plugin source repositories (`owner/repo`) the marketplace installs
     /// from.
     pub plugin_repos: Vec<String>,
+    /// Controls whether the TEXTEDIT command repeats automatically (0 = Multiple, 1 = Single).
+    pub texteditmode: bool,
 }
 
 impl Default for UserSettings {
@@ -105,6 +107,7 @@ impl Default for UserSettings {
             default_assoc_prompted: false,
             disabled_plugins: Vec::new(),
             plugin_repos: Vec::new(),
+            texteditmode: false,
         }
     }
 }
@@ -139,6 +142,14 @@ impl UserSettings {
                 "osnap" => s.snap_enabled = val == "1",
                 "otrack" => s.otrack = val == "1",
                 "default_assoc_prompted" => s.default_assoc_prompted = val == "1",
+                "texteditmode" => {
+                    let lower = val.to_lowercase();
+                    if lower == "0" || lower == "m" || lower == "multiple" || lower == "false" {
+                        s.texteditmode = false;
+                    } else if lower == "1" || lower == "s" || lower == "single" || lower == "true" {
+                        s.texteditmode = true;
+                    }
+                }
                 "disabled_plugins" => {
                     s.disabled_plugins = val
                         .split(',')
@@ -180,7 +191,7 @@ impl UserSettings {
             .collect::<Vec<_>>()
             .join(",");
         let body = format!(
-            "dyn={}\northo={}\npolar={}\npolar_increment_deg={}\ngrid={}\nosnap={}\notrack={}\ndefault_assoc_prompted={}\nsnap_modes={}\ndisabled_plugins={}\nplugin_repos={}\n",
+            "dyn={}\northo={}\npolar={}\npolar_increment_deg={}\ngrid={}\nosnap={}\notrack={}\ndefault_assoc_prompted={}\nsnap_modes={}\ndisabled_plugins={}\nplugin_repos={}\ntexteditmode={}\n",
             b(self.dyn_input),
             b(self.ortho),
             b(self.polar),
@@ -192,6 +203,7 @@ impl UserSettings {
             modes,
             self.disabled_plugins.join(","),
             self.plugin_repos.join(","),
+            self.texteditmode,
         );
         let _ = std::fs::write(path, body);
     }

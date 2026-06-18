@@ -1,0 +1,230 @@
+// TEXTEDIT — edit multiline text, single-line text, or dimension text in-place.
+//
+// Workflow:
+//   1. Enters a loop prompting to select an annotation object.
+//   2. Accepts keyword options: Undo (to revert the last edit) and Mode (to switch Single/Multiple).
+//   3. In Multiple mode (default), editing an object suspends the command, opens the editor,
+//      and when closed, resumes the command loop.
+//   4. In Single mode, editing an object exits the command immediately.
+
+use acadrust::Handle;
+use glam::Vec3;
+
+use crate::command::{CadCommand, CmdResult};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Step {
+    PickObject,
+    EnterMode,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TextEditMode {
+    Single,
+    Multiple,
+}
+
+pub struct TexteditCommand {
+    mode: TextEditMode,
+    edit_count: usize,
+    step: Step,
+}
+
+impl TexteditCommand {
+    pub fn new(texteditmode: bool) -> Self {
+        let mode = if texteditmode {
+            TextEditMode::Single
+        } else {
+            TextEditMode::Multiple
+        };
+        Self {
+            mode,
+            edit_count: 0,
+            step: Step::PickObject,
+        }
+    }
+}
+
+impl CadCommand for TexteditCommand {
+    fn name(&self) -> &'static str {
+        "TEXTEDIT"
+    }
+
+    fn prompt(&self) -> String {
+        match self.step {
+            Step::PickObject => {
+                if self.edit_count == 0 {
+                    "TEXTEDIT Select an annotation object or [Undo Mode]:".to_string()
+                } else {
+                    "TEXTEDIT Select an annotation object or [Undo Mode] <exit>:".to_string()
+                }
+            }
+            Step::EnterMode => {
+                format!(
+                    "TEXTEDIT Enter text edit mode [Single/Multiple] <{}>:",
+                    match self.mode {
+                        TextEditMode::Single => "Single",
+                        TextEditMode::Multiple => "Multiple",
+                    }
+                )
+            }
+        }
+    }
+
+    fn needs_entity_pick(&self) -> bool {
+        self.step == Step::PickObject
+    }
+
+    fn on_entity_pick(&mut self, handle: Handle, _pt: Vec3) -> CmdResult {
+        if handle.is_null() {
+            return CmdResult::NeedPoint;
+        }
+        CmdResult::SuspendForTextEdit { handle }
+    }
+
+    fn wants_text_input(&self) -> bool {
+        true
+    }
+
+    fn on_text_input(&mut self, text: &str) -> Option<CmdResult> {
+        let text = text.trim();
+        match self.step {
+            Step::PickObject => {
+                if text.is_empty() {
+                    if self.edit_count > 0 {
+                        return Some(CmdResult::Cancel);
+                    } else {
+                        return Some(CmdResult::NeedPoint);
+                    }
+                }
+                
+                let lower = text.to_lowercase();
+                if lower == "u" || lower == "undo" {
+                    if self.edit_count > 0 {
+                        self.edit_count -= 1;
+                        return Some(CmdResult::UndoDocument);
+                    } else {
+                        return Some(CmdResult::NeedPoint);
+                    }
+                } else if lower == "m" || lower == "mode" {
+                    self.step = Step::EnterMode;
+                    return Some(CmdResult::NeedPoint);
+                }
+                
+                Some(CmdResult::NeedPoint)
+            }
+            Step::EnterMode => {
+                if text.is_empty() {
+                    self.step = Step::PickObject;
+                    return Some(CmdResult::NeedPoint);
+                }
+                
+                let lower = text.to_lowercase();
+                if lower == "s" || lower == "single" || lower == "1" {
+                    self.mode = TextEditMode::Single;
+                    self.step = Step::PickObject;
+                } else if lower == "m" || lower == "multiple" || lower == "0" {
+                    self.mode = TextEditMode::Multiple;
+                    self.step = Step::PickObject;
+                }
+                
+                Some(CmdResult::NeedPoint)
+            }
+        }
+    }
+
+    fn on_point(&mut self, _pt: Vec3) -> CmdResult {
+        CmdResult::NeedPoint
+    }
+
+    fn on_enter(&mut self) -> CmdResult {
+        match self.step {
+            Step::PickObject => {
+                if self.edit_count > 0 {
+                    CmdResult::Cancel
+                } else {
+                    CmdResult::NeedPoint
+                }
+            }
+            Step::EnterMode => {
+                self.step = Step::PickObject;
+                CmdResult::NeedPoint
+            }
+        }
+    }
+
+    fn on_escape(&mut self) -> CmdResult {
+        CmdResult::Cancel
+    }
+
+    fn on_editor_closed(&mut self, committed: bool) -> CmdResult {
+        if committed {
+            self.edit_count += 1;
+        }
+
+        match self.mode {
+            TextEditMode::Single => CmdResult::Cancel,
+            TextEditMode::Multiple => CmdResult::NeedPoint,
+        }
+    }
+}
+
+pub struct TexteditmodeCommand {
+    current: bool,
+}
+
+impl TexteditmodeCommand {
+    pub fn new(current: bool) -> Self {
+        Self { current }
+    }
+}
+
+impl CadCommand for TexteditmodeCommand {
+    fn name(&self) -> &'static str {
+        "TEXTEDITMODE"
+    }
+
+    fn prompt(&self) -> String {
+        let v = if self.current { 1 } else { 0 };
+        format!("TEXTEDITMODE Enter new value for TEXTEDITMODE <{}>:", v)
+    }
+
+    fn wants_text_input(&self) -> bool {
+        true
+    }
+
+    fn on_text_input(&mut self, text: &str) -> Option<CmdResult> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Some(CmdResult::Cancel);
+        }
+        
+        let lower = text.to_lowercase();
+        if lower == "0" || lower == "m" || lower == "multiple" {
+            return Some(CmdResult::SetTexteditMode(false));
+        } else if lower == "1" || lower == "s" || lower == "single" {
+            return Some(CmdResult::SetTexteditMode(true));
+        }
+        
+        Some(CmdResult::Measurement("Requires 0 OR 1 OR MULTIPLE OR SINGLE".to_string()))
+    }
+
+    fn on_point(&mut self, _pt: Vec3) -> CmdResult {
+        CmdResult::NeedPoint
+    }
+
+    fn on_enter(&mut self) -> CmdResult {
+        CmdResult::Cancel
+    }
+
+    fn on_escape(&mut self) -> CmdResult {
+        CmdResult::Cancel
+    }
+
+    fn dyn_field(&self) -> crate::command::DynField {
+        crate::command::DynField::Scalar
+    }
+}
+
+// ── Autocomplete registry ─────────────────────────────────
+inventory::submit!(crate::command::CommandRegistration { names: &["TEXTEDIT", "TEDIT", "TEXTEDITMODE"] });
