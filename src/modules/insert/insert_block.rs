@@ -37,6 +37,10 @@ pub struct InsertBlockCommand {
     step: Step,
     /// Pending Insert entity stored while attr-filling is in progress.
     pending_insert: Option<Insert>,
+    /// Optional drag preview: the block's wire geometry plus the base point it
+    /// is measured from, so `on_preview_wires` can rubber-band it to the
+    /// cursor. Set by paste-as-block; empty for a plain INSERT.
+    preview: Option<(Vec<WireModel>, Vec3)>,
 }
 
 impl InsertBlockCommand {
@@ -45,6 +49,20 @@ impl InsertBlockCommand {
             available,
             step: Step::Name,
             pending_insert: None,
+            preview: None,
+        }
+    }
+
+    /// Start the command already locked to `name`, skipping the name prompt and
+    /// going straight to "specify insertion point". `preview_wires` (measured
+    /// from `base`) rubber-band under the cursor. Used by paste-as-block, which
+    /// has just defined the block and only needs the drop point.
+    pub fn new_for_block(name: String, preview_wires: Vec<WireModel>, base: Vec3) -> Self {
+        Self {
+            available: vec![name.clone()],
+            step: Step::Point { name },
+            pending_insert: None,
+            preview: Some((preview_wires, base)),
         }
     }
 }
@@ -138,8 +156,14 @@ impl CadCommand for InsertBlockCommand {
         }
     }
 
-    fn on_preview_wires(&mut self, _pt: Vec3) -> Vec<WireModel> {
-        vec![]
+    fn on_preview_wires(&mut self, pt: Vec3) -> Vec<WireModel> {
+        match (&self.step, &self.preview) {
+            (Step::Point { .. }, Some((wires, base))) => {
+                let delta = pt - *base;
+                wires.iter().map(|w| w.translated(delta)).collect()
+            }
+            _ => vec![],
+        }
     }
 
     fn attreq_set_attdefs(&mut self, attdefs: Vec<(String, String, String)>) {

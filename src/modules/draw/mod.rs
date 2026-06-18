@@ -214,7 +214,13 @@ impl CadModule for DrawModule {
             RibbonGroup {
                 title: "Clipboard",
                 tools: vec![
-                    RibbonItem::LargeTool(paste::tool()),
+                    RibbonItem::LargeDropdown {
+                        id: "PASTE_MENU",
+                        label: "Paste",
+                        icon: paste::ICON,
+                        items: paste::MENU_ITEMS.to_vec(),
+                        default: "PASTECLIP",
+                    },
                     copy_clip::tool().into(),
                     cut::tool().into(),
                 ],

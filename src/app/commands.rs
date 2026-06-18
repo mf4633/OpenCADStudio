@@ -5,6 +5,20 @@ use iced::Task;
 use std::path::PathBuf;
 
 impl OpenCADStudio {
+    /// First `"{prefix}{n}"` (n ≥ 1) not already used by a block record in the
+    /// active drawing. Used to auto-name a paste-as-block definition.
+    fn unique_block_name(&self, prefix: &str) -> String {
+        let i = self.active_tab;
+        let mut n = 1;
+        loop {
+            let name = format!("{prefix}{n}");
+            if self.tabs[i].scene.document.block_records.get(&name).is_none() {
+                return name;
+            }
+            n += 1;
+        }
+    }
+
     pub(super) fn dispatch_command(&mut self, cmd: &str) -> Task<Message> {
         let i = self.active_tab;
         // Starting a command closes any open ribbon dropdown (e.g. a style
@@ -586,7 +600,7 @@ impl OpenCADStudio {
                 }
             }
 
-            // PASTEORIG — paste at original coordinates (no move to pick point)
+            // PASTEORIG — paste at the entities' original coordinates (no pick).
             "PASTEORIG" => {
                 if self.clipboard.is_empty() {
                     self.command_line
@@ -594,14 +608,53 @@ impl OpenCADStudio {
                 } else {
                     let count = self.clipboard.len();
                     self.push_undo_snapshot(i, "PASTEORIG");
-                    for entity in &self.clipboard {
-                        self.tabs[i].scene.add_entity(entity.clone());
+                    // Recreate any layer / style this drawing lacks, then add
+                    // each entity with fresh handles (top-level + inline subs)
+                    // so a same-document paste can't duplicate handles. (#129)
+                    self.merge_clipboard_deps(i);
+                    for entity in self.clipboard.clone() {
+                        self.tabs[i].scene.add_entity_clone(entity);
                     }
                     self.tabs[i].dirty = true;
+                    self.refresh_properties();
                     self.command_line.push_output(&format!(
                         "PASTEORIG: {} object(s) pasted at original coordinates.",
                         count
                     ));
+                }
+            }
+
+            // PASTEBLOCK — wrap the clipboard contents in a new block definition
+            // and place one insert of it at the clipboard's original location.
+            "PASTEBLOCK" => {
+                if self.clipboard.is_empty() {
+                    self.command_line
+                        .push_error("PASTEBLOCK: clipboard is empty.");
+                } else {
+                    self.push_undo_snapshot(i, "PASTEBLOCK");
+                    self.merge_clipboard_deps(i);
+                    let name = self.unique_block_name("Block");
+                    let base = self.clipboard_centroid;
+                    let entities = self.clipboard.clone();
+                    match self
+                        .tabs[i]
+                        .scene
+                        .define_block_from_owned_entities(entities, &name, base)
+                    {
+                        Ok(()) => {
+                            // Block defined; now place it interactively so the
+                            // user picks the drop point (insertion uses the
+                            // clipboard centroid as the block's base). The
+                            // clipboard wires rubber-band under the cursor.
+                            self.tabs[i].dirty = true;
+                            let wires = self.tabs[i].scene.wires_for_entities(&self.clipboard);
+                            use crate::modules::insert::insert_block::InsertBlockCommand;
+                            let cmd = InsertBlockCommand::new_for_block(name, wires, base);
+                            self.command_line.push_info(&cmd.prompt());
+                            self.tabs[i].active_cmd = Some(Box::new(cmd));
+                        }
+                        Err(e) => self.command_line.push_error(&format!("PASTEBLOCK: {e}")),
+                    }
                 }
             }
 

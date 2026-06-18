@@ -3588,6 +3588,77 @@ impl Scene {
         Ok(self.add_entity(EntityType::Insert(insert)))
     }
 
+    /// Define a new block named `name` from `entities` (owned, not yet in the
+    /// document), with `base` as its insertion origin. Unlike
+    /// [`create_block_from_entities`] this does NOT place an insert — the
+    /// caller starts an interactive insert so paste-as-block can prompt for the
+    /// drop point. The geometry comes from the clipboard rather than live
+    /// entities, so there is nothing to stage or erase. (#129)
+    pub fn define_block_from_owned_entities(
+        &mut self,
+        entities: Vec<EntityType>,
+        name: &str,
+        base: glam::Vec3,
+    ) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Block name cannot be empty.".into());
+        }
+        if name.starts_with('*') {
+            return Err("Block name cannot start with '*'.".into());
+        }
+        if self.document.block_records.get(name).is_some() {
+            return Err(format!("Block \"{name}\" already exists."));
+        }
+        if entities.is_empty() {
+            return Err("Nothing to make into a block.".into());
+        }
+
+        let next = self.document.next_handle();
+        let br_handle = Handle::new(next);
+        let block_handle = Handle::new(next + 1);
+        let end_handle = Handle::new(next + 2);
+
+        let mut block_record = acadrust::tables::BlockRecord::new(name);
+        block_record.handle = br_handle;
+        block_record.block_entity_handle = block_handle;
+        block_record.block_end_handle = end_handle;
+        self.document
+            .block_records
+            .add(block_record)
+            .map_err(|e| e.to_string())?;
+
+        let mut block = Block::new(name, acadrust::types::Vector3::ZERO);
+        block.common.handle = block_handle;
+        block.common.owner_handle = br_handle;
+        self.document
+            .add_entity(EntityType::Block(block))
+            .map_err(|e| e.to_string())?;
+
+        let mut block_end = BlockEnd::new();
+        block_end.common.handle = end_handle;
+        block_end.common.owner_handle = br_handle;
+        self.document
+            .add_entity(EntityType::BlockEnd(block_end))
+            .map_err(|e| e.to_string())?;
+
+        let local = EntityTransform::Translate(-base);
+        for mut entity in entities {
+            view::dispatch::apply_transform(&mut entity, &local);
+            entity = crate::modules::draw::modify::explode::normalize_entity_for_block(entity);
+            Self::reset_clone_subhandles(&mut self.document, &mut entity);
+            entity.common_mut().handle = Handle::NULL;
+            entity.common_mut().owner_handle = br_handle;
+            self.document
+                .add_entity(entity)
+                .map_err(|e| e.to_string())?;
+        }
+        // Block defns don't render on their own, but the geometry cache must
+        // pick up the new definition so the interactive insert can preview it.
+        self.bump_geometry();
+        Ok(())
+    }
+
     fn synced_hatch_models(&self) -> Vec<HatchModel> {
         let layout_block = self.current_layout_block_handle();
         let hatch_offset = if self.current_layout == "Model" {

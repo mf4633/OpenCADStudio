@@ -1682,7 +1682,7 @@ impl OpenCADStudio {
     /// this drawing doesn't already have. Each recreated record gets a fresh
     /// handle from the target document so it can't collide with an existing
     /// one. No-op for same-document pastes (the records already exist). (#129)
-    fn merge_clipboard_deps(&mut self, i: usize) {
+    pub(super) fn merge_clipboard_deps(&mut self, i: usize) {
         use acadrust::TableEntry;
         if self.clipboard_deps.is_empty() {
             return;

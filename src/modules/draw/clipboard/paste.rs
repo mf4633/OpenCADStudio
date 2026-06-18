@@ -2,11 +2,22 @@
 
 use crate::modules::{IconKind, ModuleEvent, ToolDef};
 
+/// Shared icon for the Paste button and its dropdown entries.
+pub const ICON: IconKind = IconKind::Svg(include_bytes!("../../../../assets/icons/paste.svg"));
+
+/// Paste-menu entries: (command id, label, icon). The first is the default
+/// fired by clicking the button body; the rest open from the ▾.
+pub const MENU_ITEMS: &[(&str, &str, IconKind)] = &[
+    ("PASTECLIP", "Paste", ICON),
+    ("PASTEORIG", "Paste to Original Coordinates", ICON),
+    ("PASTEBLOCK", "Paste as Block", ICON),
+];
+
 pub fn tool() -> ToolDef {
     ToolDef {
         id: "PASTECLIP",
         label: "Paste",
-        icon: IconKind::Svg(include_bytes!("../../../../assets/icons/paste.svg")),
+        icon: ICON,
         event: ModuleEvent::Command("PASTECLIP".to_string()),
     }
 }
@@ -62,3 +73,5 @@ impl CadCommand for PasteCommand {
 
 // ── Autocomplete registry ─────────────────────────────────
 inventory::submit!(crate::command::CommandRegistration { names: &["PASTECLIP", "PC"] });  // PasteCommand
+inventory::submit!(crate::command::CommandRegistration { names: &["PASTEORIG"] });
+inventory::submit!(crate::command::CommandRegistration { names: &["PASTEBLOCK"] });

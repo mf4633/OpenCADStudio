@@ -186,8 +186,14 @@ pub(super) fn entities_centroid(wires: &[WireModel]) -> glam::Vec3 {
     let mut count = 0usize;
     for w in wires {
         for p in &w.points {
-            sum += glam::Vec3::from(*p);
-            count += 1;
+            let v = glam::Vec3::from(*p);
+            // Wire models carry NaN points as separators between disjoint
+            // segments; summing them poisons the whole centroid into NaN,
+            // which then makes every paste base point NaN. (#129)
+            if v.is_finite() {
+                sum += v;
+                count += 1;
+            }
         }
     }
     if count > 0 {
