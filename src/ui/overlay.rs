@@ -1475,9 +1475,15 @@ impl DynInputCanvas {
             let center = match b.role {
                 DynRole::Angle => {
                     let a_mid = a_ref + sweep * 0.5;
+                    // Pull the box back along the ray and lift it to the side
+                    // opposite the distance box. A near-zero sweep collapses the
+                    // mid-angle direction onto the cursor ray, so placing the box
+                    // at full `len` would plant it on the cursor / snap point and
+                    // hide it. (#124)
+                    let r = (len - DYN_BOX_H * 2.0).max(len * 0.5);
                     Point {
-                        x: base.x + a_mid.cos() * len,
-                        y: base.y + a_mid.sin() * len,
+                        x: base.x + a_mid.cos() * r - nx * 18.0,
+                        y: base.y + a_mid.sin() * r - ny * 18.0,
                     }
                 }
                 DynRole::X | DynRole::Width => Point {
