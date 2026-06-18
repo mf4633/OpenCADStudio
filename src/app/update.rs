@@ -2507,6 +2507,8 @@ impl OpenCADStudio {
                     // `hit_test_wires` — snap against the set directly, no clone
                     // and no self-snap.
                     let all_wires = self.tabs[i].scene.hit_test_wires();
+                    // Grip drag has no single rubber-band origin for a perp foot.
+                    self.snapper.from_point = None;
                     let snap_hit = self.snapper.snap(raw, p, &all_wires[..], vp_mat, bounds);
                     let mut snapped = snap_hit.map(|s| s.world).unwrap_or(raw);
                     self.tabs[i].snap_result = snap_hit;
@@ -2679,6 +2681,7 @@ impl OpenCADStudio {
                             bounds,
                         )
                     } else {
+                        self.snapper.from_point = self.last_point;
                         self.snapper
                             .snap(cursor_world, p, &all_wires[..], view_proj, bounds)
                     };
@@ -3292,6 +3295,7 @@ impl OpenCADStudio {
                             self.snapper
                                 .snap_tangent_only(raw, p, &all_wires[..], vp_mat, bounds)
                         } else {
+                            self.snapper.from_point = self.last_point;
                             self.snapper.snap(raw, p, &all_wires[..], vp_mat, bounds)
                         };
                         // snap.world is in paper-space (projected wire coords in MSPACE);

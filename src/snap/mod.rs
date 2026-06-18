@@ -101,6 +101,11 @@ pub struct Snapper {
     pub dwell_since: Option<Instant>,
     /// Whether the current dwell already acquired/removed a point (fire once).
     pub dwell_acquired: bool,
+    /// The point the in-progress command is drawing *from* (the rubber-band
+    /// origin), if any. Perpendicular snap drops its foot from here so the new
+    /// segment is genuinely perpendicular to the target — without it, perp
+    /// would just give the nearest point on the line. Set before each `snap`.
+    pub from_point: Option<Vec3>,
 }
 
 impl Default for Snapper {
@@ -123,6 +128,7 @@ impl Default for Snapper {
             last_snap_world: None,
             dwell_since: None,
             dwell_acquired: false,
+            from_point: None,
         }
     }
 }
@@ -417,6 +423,7 @@ impl Snapper {
             last_snap_world: None,
             dwell_since: None,
             dwell_acquired: false,
+            from_point: None,
         };
         tmp.snap(cursor_world, cursor_screen, wires, view_proj, bounds)
     }
@@ -433,8 +440,17 @@ impl Snapper {
         if !self.snap_enabled {
             return None;
         }
+        // Object-snap selection is priority-then-distance, NOT nearest-wins.
+        // "Continuous" snaps (Nearest, Perpendicular, …) sit on the geometry
+        // and are therefore almost always closer to the cursor than a discrete
+        // Endpoint/Midpoint/Center, so a pure-distance pick would let them mask
+        // every other enabled snap. Instead a higher-priority snap inside the
+        // snap circle wins even when a lower-priority one is closer; distance
+        // only breaks ties within the same priority. See #118.
+        let radius2 = self.osnap_radius_px * self.osnap_radius_px;
         let mut best: Option<SnapResult> = None;
-        let mut best_d2 = self.osnap_radius_px * self.osnap_radius_px;
+        let mut best_rank = u8::MAX;
+        let mut best_d2 = f32::MAX;
 
         // World-space snap radius — derived from the view scale so wires whose
         // entire extent is clearly outside the snap circle can be skipped cheaply
@@ -465,7 +481,16 @@ impl Snapper {
         let mut try_pt = |world: Vec3, snap_type: SnapType| {
             let screen = world_to_screen(world, view_proj, bounds);
             let d2 = dist2(screen, cursor_screen);
-            if d2 < best_d2 {
+            // `!(d2 < radius2)` (not `d2 >= radius2`) so a NaN distance from
+            // degenerate geometry is rejected: with priority selection a NaN
+            // would otherwise pass the gate and be chosen on rank alone,
+            // feeding a NaN snap point to the renderer. (#118)
+            if !(d2 < radius2) {
+                return;
+            }
+            let rank = snap_priority(snap_type);
+            if rank < best_rank || (rank == best_rank && d2 < best_d2) {
+                best_rank = rank;
                 best_d2 = d2;
                 best = Some(SnapResult {
                     world,
@@ -554,16 +579,21 @@ impl Snapper {
             }
         }
 
-        // ── Perpendicular — foot of perpendicular from cursor (unclamped) ──
+        // ── Perpendicular — foot of perpendicular from the drawing base ──
+        // Drop the foot from the point the command is drawing *from* (so the
+        // new segment is truly perpendicular to the target). Only when there
+        // is no base point — e.g. picking the very first point — does it fall
+        // back to the cursor (a plain nearest-on-line). The candidate is gated
+        // on its screen distance to the cursor like every other snap, so it
+        // offers when the cursor is near the perpendicular foot. (#118)
         if self.is_on(SnapType::Perpendicular) {
+            let q = self.from_point.unwrap_or(cursor_world);
             for wire in wires {
                 if !wire_in_range(wire) {
                     continue;
                 }
                 for seg in wire.points.windows(2) {
-                    if let Some(foot) =
-                        perp_foot(cursor_world, Vec3::from(seg[0]), Vec3::from(seg[1]))
-                    {
+                    if let Some(foot) = perp_foot(q, Vec3::from(seg[0]), Vec3::from(seg[1])) {
                         try_pt(foot, SnapType::Perpendicular);
                     }
                 }
@@ -739,7 +769,9 @@ impl Snapper {
                             (w, edge_d * edge_d)
                         }
                     };
-                    if d2 < best_d2 {
+                    let rank = snap_priority(SnapType::Tangent);
+                    if d2 < radius2 && (rank < best_rank || (rank == best_rank && d2 < best_d2)) {
+                        best_rank = rank;
                         best_d2 = d2;
                         let screen_pt = world_to_screen(world_pt, view_proj, bounds);
                         let tangent_obj = match tg {
@@ -764,6 +796,34 @@ impl Snapper {
         }
 
         best
+    }
+}
+
+// ── Object-snap priority ───────────────────────────────────────────────────
+
+/// Selection priority for an object snap — lower wins. Discrete snaps that
+/// land on a specific feature (Endpoint, Midpoint, Center, …) outrank the
+/// "continuous" snaps (Perpendicular, Tangent, Nearest) that can sit anywhere
+/// along the geometry, so enabling a continuous snap can't suppress the
+/// discrete ones the user also turned on. Mirrors the usual CAD running-osnap
+/// precedence. See #118.
+fn snap_priority(t: SnapType) -> u8 {
+    match t {
+        SnapType::Endpoint => 0,
+        SnapType::Intersection => 1,
+        SnapType::ApparentIntersection => 2,
+        SnapType::Midpoint => 3,
+        SnapType::Center => 4,
+        SnapType::Node => 5,
+        SnapType::Quadrant => 6,
+        SnapType::Insertion => 7,
+        SnapType::ObjectPick => 8,
+        SnapType::Perpendicular => 9,
+        SnapType::Tangent => 10,
+        SnapType::Parallel => 11,
+        SnapType::Extension => 12,
+        SnapType::Nearest => 13,
+        SnapType::Grid => 14,
     }
 }
 
