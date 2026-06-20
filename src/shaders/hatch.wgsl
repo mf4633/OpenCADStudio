@@ -119,18 +119,33 @@ fn in_polygon(p: vec2<f32>) -> bool {
     var inside = false;
     let n = h.vcount;
     var prev = vec2<f32>(0.0, 0.0);
+    var first = vec2<f32>(0.0, 0.0);
     var have_prev = false;
     for (var i = 0u; i < n; i++) {
         let vi = b.verts[i].xy;
         if !valid_vertex(vi) {
+            // Close the sub-loop that just ended (last → first edge). An
+            // unclosed boundary — e.g. a SOLID's 4 corners, which are not
+            // repeated — otherwise miscounts crossings and the fill bleeds
+            // outside the shape. (#140)
+            if have_prev && edge_crosses(p, prev, first) {
+                inside = !inside;
+            }
             have_prev = false;
             continue;
         }
-        if have_prev && edge_crosses(p, prev, vi) {
-            inside = !inside;
+        if have_prev {
+            if edge_crosses(p, prev, vi) {
+                inside = !inside;
+            }
+        } else {
+            first = vi;
         }
         prev = vi;
         have_prev = true;
+    }
+    if have_prev && edge_crosses(p, prev, first) {
+        inside = !inside;
     }
     return inside;
 }
