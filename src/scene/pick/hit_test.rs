@@ -168,6 +168,108 @@ pub fn mesh_click_hit<'a>(
     best.map(|(_, h)| h)
 }
 
+/// Project a mesh's vertices to screen space.
+fn project_mesh_verts(mesh: &MeshModel, view_proj: Mat4, bounds: Rectangle) -> Vec<Point> {
+    mesh.verts
+        .iter()
+        .map(|w| {
+            let ndc = view_proj.project_point3(Vec3::new(w[0], w[1], w[2]));
+            Point::new(
+                (ndc.x + 1.0) * 0.5 * bounds.width,
+                (1.0 - ndc.y) * 0.5 * bounds.height,
+            )
+        })
+        .collect()
+}
+
+/// True when any of `mesh`'s projected triangles contains one of `pts`
+/// (used so a crossing box / lasso entirely inside a solid still selects it).
+fn mesh_covers_any(proj: &[Point], indices: &[u32], pts: &[Point]) -> bool {
+    let mut t = 0;
+    while t + 2 < indices.len() {
+        let tri = [
+            proj[indices[t] as usize],
+            proj[indices[t + 1] as usize],
+            proj[indices[t + 2] as usize],
+        ];
+        t += 3;
+        if pts.iter().any(|p| point_in_polygon(*p, &tri)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Solid (mesh) handles caught by a rectangular selection box. Window mode
+/// (`crossing == false`) needs every projected vertex inside the box;
+/// crossing mode needs any vertex inside, or the box to sit inside the solid.
+pub fn mesh_box_hit<'a>(
+    a: Point,
+    b: Point,
+    crossing: bool,
+    meshes: impl Iterator<Item = (Handle, &'a MeshModel)>,
+    view_proj: Mat4,
+    bounds: Rectangle,
+) -> Vec<Handle> {
+    let (min_x, max_x) = (a.x.min(b.x), a.x.max(b.x));
+    let (min_y, max_y) = (a.y.min(b.y), a.y.max(b.y));
+    let in_box = |p: &Point| p.x >= min_x && p.x <= max_x && p.y >= min_y && p.y <= max_y;
+    let corners = [
+        Point::new(min_x, min_y),
+        Point::new(max_x, min_y),
+        Point::new(max_x, max_y),
+        Point::new(min_x, max_y),
+    ];
+    let mut out = Vec::new();
+    for (h, mesh) in meshes {
+        let proj = project_mesh_verts(mesh, view_proj, bounds);
+        if proj.is_empty() {
+            continue;
+        }
+        let hit = if crossing {
+            proj.iter().any(in_box) || mesh_covers_any(&proj, &mesh.indices, &corners)
+        } else {
+            proj.iter().all(in_box)
+        };
+        if hit {
+            out.push(h);
+        }
+    }
+    out
+}
+
+/// Solid (mesh) handles caught by a lasso polygon. Window mode needs every
+/// projected vertex inside the lasso; crossing mode needs any vertex inside,
+/// or the lasso to sit inside the solid.
+pub fn mesh_poly_hit<'a>(
+    poly: &[Point],
+    crossing: bool,
+    meshes: impl Iterator<Item = (Handle, &'a MeshModel)>,
+    view_proj: Mat4,
+    bounds: Rectangle,
+) -> Vec<Handle> {
+    if poly.len() < 3 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (h, mesh) in meshes {
+        let proj = project_mesh_verts(mesh, view_proj, bounds);
+        if proj.is_empty() {
+            continue;
+        }
+        let hit = if crossing {
+            proj.iter().any(|p| point_in_polygon(*p, poly))
+                || mesh_covers_any(&proj, &mesh.indices, poly)
+        } else {
+            proj.iter().all(|p| point_in_polygon(*p, poly))
+        };
+        if hit {
+            out.push(h);
+        }
+    }
+    out
+}
+
 // ── Box / window selection ────────────────────────────────────────────────
 
 /// Return the names of wires selected by a completed rectangular selection box.

@@ -2264,6 +2264,52 @@ impl Scene {
         pick::hit_test::mesh_click_hit(cursor, iter, view_proj, bounds)
     }
 
+    /// True when any handle resolves to an ACIS volume entity (3D solid /
+    /// region / body / surface) — i.e. one whose render geometry is a cached
+    /// mesh that must be re-tessellated after an edit.
+    pub fn any_solid(&self, handles: &[Handle]) -> bool {
+        handles.iter().any(|&h| {
+            matches!(
+                self.document.get_entity(h),
+                Some(EntityType::Solid3D(_))
+                    | Some(EntityType::Region(_))
+                    | Some(EntityType::Body(_))
+                    | Some(EntityType::Surface(_))
+            )
+        })
+    }
+
+    /// Top-level solid handles caught by a rectangular selection box.
+    pub fn mesh_box_hit(
+        &self,
+        a: iced::Point,
+        b: iced::Point,
+        crossing: bool,
+        view_proj: glam::Mat4,
+        bounds: iced::Rectangle,
+    ) -> Vec<Handle> {
+        let iter = self
+            .meshes
+            .iter()
+            .filter_map(|(h, set)| set.lods.first().map(|m| (*h, m)));
+        pick::hit_test::mesh_box_hit(a, b, crossing, iter, view_proj, bounds)
+    }
+
+    /// Top-level solid handles caught by a lasso polygon.
+    pub fn mesh_poly_hit(
+        &self,
+        poly: &[iced::Point],
+        crossing: bool,
+        view_proj: glam::Mat4,
+        bounds: iced::Rectangle,
+    ) -> Vec<Handle> {
+        let iter = self
+            .meshes
+            .iter()
+            .filter_map(|(h, set)| set.lods.first().map(|m| (*h, m)));
+        pick::hit_test::mesh_poly_hit(poly, crossing, iter, view_proj, bounds)
+    }
+
     /// Tessellate all non-invisible entities owned by `block_handle`.
     fn wires_for_block(&self, block_handle: Handle) -> Vec<WireModel> {
         // Default culling is driven by the live `Scene::camera`. Multi-tile

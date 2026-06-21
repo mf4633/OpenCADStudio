@@ -3739,6 +3739,9 @@ impl OpenCADStudio {
                                     vp_mat,
                                     bounds,
                                 ));
+                                handles.extend(
+                                    self.tabs[i].scene.mesh_box_hit(a, p, crossing, vp_mat, bounds),
+                                );
                                 // Box/lasso accumulates like individual picks
                                 // (issue #83): a plain box adds to the current
                                 // selection, Shift+box removes the boxed
@@ -3790,6 +3793,9 @@ impl OpenCADStudio {
                                 vp_mat,
                                 bounds,
                             ));
+                            handles.extend(
+                                self.tabs[i].scene.mesh_poly_hit(&poly_pts, crossing, vp_mat, bounds),
+                            );
                             // Selection filter: keep only allowed types.
                             handles.retain(|&h| self.tabs[i].scene.passes_selection_filter(h));
                             // Accumulate like the box path (issue #83): plain
@@ -3926,6 +3932,9 @@ impl OpenCADStudio {
                                 vp_mat,
                                 bounds,
                             ));
+                            handles.extend(
+                                self.tabs[i].scene.mesh_box_hit(a, p, crossing, vp_mat, bounds),
+                            );
                             // Selection filter: keep only allowed types.
                             handles.retain(|&h| self.tabs[i].scene.passes_selection_filter(h));
                             // Accumulate (issue #83): a plain box adds to the

@@ -77,6 +77,13 @@ impl OpenCADStudio {
                 let label = self.history_label_from_active_cmd(i, "MOVE");
                 self.push_undo_snapshot(i, label);
                 self.tabs[i].scene.transform_entities(&handles, &transform);
+                // ACIS solids render from a cached mesh, so a move/rotate/
+                // scale/mirror needs the mesh re-tessellated from the now-moved
+                // body — wire re-tessellation alone leaves the solid drawn at
+                // its old spot. (#135)
+                if self.tabs[i].scene.any_solid(&handles) {
+                    self.tabs[i].scene.populate_meshes_from_document();
+                }
                 self.tabs[i].dirty = true;
                 self.tabs[i].scene.clear_preview_wire();
                 self.tabs[i].active_cmd = None;
@@ -88,6 +95,9 @@ impl OpenCADStudio {
                 let label = self.history_label_from_active_cmd(i, "COPY");
                 self.push_undo_snapshot(i, label);
                 let new_handles = self.tabs[i].scene.copy_entities(&handles, &transform);
+                if self.tabs[i].scene.any_solid(&new_handles) {
+                    self.tabs[i].scene.populate_meshes_from_document();
+                }
                 self.tabs[i].dirty = true;
                 self.tabs[i].scene.deselect_all();
                 for h in new_handles {
