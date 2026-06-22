@@ -110,7 +110,6 @@ impl UcsXform {
     }
 
     /// WCS direction → UCS (rotation only, no origin shift).
-    #[allow(dead_code)]
     pub(super) fn vec_to_ucs(&self, v: glam::Vec3) -> glam::Vec3 {
         glam::Vec3::new(v.dot(self.x), v.dot(self.y), v.dot(self.z))
     }

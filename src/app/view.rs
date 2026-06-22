@@ -296,7 +296,7 @@ impl OpenCADStudio {
                             {
                                 format!("{lv:.4}")
                             }
-                            _ => dyn_component_value(f, w, base),
+                            _ => dyn_component_value(f, w, base, &tab.ucs_xform()),
                         };
                         overlay::DynBox {
                             label: f.role.label().to_string(),
@@ -4356,13 +4356,22 @@ fn viewport_controls<'a>(
 /// The string shown inside a dynamic-input box: the typed buffer when the
 /// field is locked, otherwise the live value derived from the cursor
 /// world position (and the base point for polar quantities).
-fn dyn_component_value(f: &DynFieldEntry, w: glam::Vec3, base: Option<glam::Vec3>) -> String {
+fn dyn_component_value(
+    f: &DynFieldEntry,
+    w: glam::Vec3,
+    base: Option<glam::Vec3>,
+    xf: &super::helpers::UcsXform,
+) -> String {
     if let Some(b) = &f.buffer {
         return b.clone();
     }
     let b = base.unwrap_or(glam::Vec3::ZERO);
-    let dx = (w.x - b.x) as f64;
-    let dy = (w.y - b.y) as f64;
+    // Relative deltas and the polar angle read in the active UCS plane. The
+    // delta is offset-invariant, so only the axis rotation matters (identity
+    // xf reproduces the world-frame deltas).
+    let d = xf.vec_to_ucs(w - b);
+    let dx = d.x as f64;
+    let dy = d.y as f64;
     // When a base point exists (DYN-on after the first pick) the cartesian
     // fields show relative deltas — matching the typed-value convention
     // in `dyn_resolve_point` so the live preview and the committed
