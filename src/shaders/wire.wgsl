@@ -28,6 +28,17 @@ struct Uniforms {
     // Transparency-display toggle: 1.0 = honour baked alpha, 0.0 = force
     // every line opaque.
     transparency_enable: f32,
+    _pad: vec2<f32>,
+    // ── Relative-to-eye (double-single) ──────────────────────────────────
+    // view_rot is the rotation-only view-projection; vertices subtract the eye
+    // (eye_high + eye_low, two f32 emulating f64) before transforming, so the
+    // large eye translation never enters the f32 matrix → no large-coordinate
+    // jitter on pan / zoom / rotate.
+    view_rot:         mat4x4<f32>,
+    eye_high:         vec3<f32>,
+    _pad_eh:          f32,
+    eye_low:          vec3<f32>,
+    _pad_el:          f32,
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 
@@ -74,8 +85,15 @@ struct VertexOut {
     let which_end = which_end_arr[vid];
     let side      = side_arr[vid];
 
-    let clip_a = u.view_proj * vec4<f32>(in.pos_a, 1.0);
-    let clip_b = u.view_proj * vec4<f32>(in.pos_b, 1.0);
+    // Relative-to-eye: subtract the eye (high+low) from each endpoint, then
+    // transform by the rotation-only view-projection. (pos − eye_high) is exact
+    // in f32 when both are the same magnitude (Sterbenz), and eye_low corrects
+    // the eye's sub-f32 residual — so the position tracks the camera smoothly
+    // at large coordinates instead of snapping onto the f32 grid each frame.
+    let rel_a = (in.pos_a - u.eye_high) - u.eye_low;
+    let rel_b = (in.pos_b - u.eye_high) - u.eye_low;
+    let clip_a = u.view_rot * vec4<f32>(rel_a, 1.0);
+    let clip_b = u.view_rot * vec4<f32>(rel_b, 1.0);
 
     // NDC of both endpoints.
     let ndc_a = clip_a.xy / clip_a.w;

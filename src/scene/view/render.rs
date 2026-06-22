@@ -744,6 +744,9 @@ impl Scene {
         let mut uniforms =
             Uniforms::new(&inst.camera, full_bounds, self.document.header.lineweight_display);
         uniforms.view_proj = crop_view_proj(uniforms.view_proj, uo, vo, us, vs);
+        // The RTE matrix is a view-projection too, so the same clip-space crop
+        // applies — keep it in lock-step with view_proj for tiled / sub-rect panes.
+        uniforms.view_rot = crop_view_proj(uniforms.view_rot, uo, vo, us, vs);
         uniforms.viewport_size = [visible_w, visible_h];
         uniforms.flat_shade = if flags.flat_shade { 1.0 } else { 0.0 };
         uniforms.transparency_enable = if self.transparency_display { 1.0 } else { 0.0 };
