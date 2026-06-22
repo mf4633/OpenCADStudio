@@ -428,7 +428,16 @@ impl Snapper {
             dwell_acquired: false,
             from_point: None,
         };
-        tmp.snap(cursor_world, cursor_screen, wires, view_proj, bounds)
+        // Tangent-only: Grid is disabled here, so the grid basis is irrelevant.
+        tmp.snap(
+            cursor_world,
+            cursor_screen,
+            wires,
+            view_proj,
+            bounds,
+            Vec3::ZERO,
+            Mat4::IDENTITY,
+        )
     }
 
     /// Find the best snap candidate near the cursor.
@@ -439,6 +448,10 @@ impl Snapper {
         wires: &[WireModel],
         view_proj: Mat4,
         bounds: Rectangle,
+        // Grid origin (render/wire space) and UCS→world rotation, so grid snap
+        // lands on the UCS grid the user sees. `(ZERO, IDENTITY)` = world grid.
+        grid_origin: Vec3,
+        grid_rot: Mat4,
     ) -> Option<SnapResult> {
         if !self.snap_enabled {
             return None;
@@ -727,10 +740,15 @@ impl Snapper {
         // ── Grid ───────────────────────────────────────────────────────────
         if self.is_on(SnapType::Grid) {
             let s = self.grid_spacing;
-            let gx = (cursor_world.x / s).round() * s;
-            let gy = (cursor_world.y / s).round() * s;
-            let gz = (cursor_world.z / s).round() * s;
-            try_pt(Vec3::new(gx, gy, gz), SnapType::Grid);
+            // Round in the UCS grid frame, then map back to world.
+            let ax = grid_rot.transform_vector3(Vec3::X);
+            let ay = grid_rot.transform_vector3(Vec3::Y);
+            let az = grid_rot.transform_vector3(Vec3::Z);
+            let rel = cursor_world - grid_origin;
+            let ux = (rel.dot(ax) / s).round() * s;
+            let uy = (rel.dot(ay) / s).round() * s;
+            let uz = (rel.dot(az) / s).round() * s;
+            try_pt(grid_origin + ax * ux + ay * uy + az * uz, SnapType::Grid);
         }
 
         // ── Tangent ────────────────────────────────────────────────────────

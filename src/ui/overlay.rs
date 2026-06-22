@@ -981,14 +981,21 @@ fn draw_grid(
         );
     }
 
-    // World-space axes always drawn on top of the grid lines.
+    // Coloured axes drawn on top of the grid lines, along the same UCS basis.
     let extent = (min1.abs().max(max1.abs()).max(min2.abs()).max(max2.abs()) + s) * 1.5;
-    draw_axes(frame, vp, bounds, extent.max(10.0));
+    draw_axes(frame, vp, bounds, extent.max(10.0), grid_origin, grid_axes);
 }
 
-// ── Coloured world-space axes ─────────────────────────────────────────────
+// ── Coloured UCS axes ──────────────────────────────────────────────────────
 
-fn draw_axes(frame: &mut canvas::Frame, vp: Mat4, bounds: iced::Rectangle, extent: f32) {
+fn draw_axes(
+    frame: &mut canvas::Frame,
+    vp: Mat4,
+    bounds: iced::Rectangle,
+    extent: f32,
+    origin: Vec3,
+    axes: (Vec3, Vec3, Vec3),
+) {
     let w2s = |world: Vec3| -> Point {
         let ndc = vp.project_point3(world);
         Point::new(
@@ -997,35 +1004,25 @@ fn draw_axes(frame: &mut canvas::Frame, vp: Mat4, bounds: iced::Rectangle, exten
         )
     };
     let e = extent;
+    let (ax, ay, az) = axes;
     let axis_stroke = |r: f32, g: f32, b: f32| canvas::Stroke {
         width: 1.5,
         style: canvas::Style::Solid(Color { r, g, b, a: 0.85 }),
         ..Default::default()
     };
-    // X — red
-    frame.stroke(
-        &canvas::Path::new(|p| {
-            p.move_to(w2s(Vec3::new(-e, 0.0, 0.0)));
-            p.line_to(w2s(Vec3::new(e, 0.0, 0.0)));
-        }),
-        axis_stroke(0.90, 0.20, 0.20),
-    );
-    // Y — green
-    frame.stroke(
-        &canvas::Path::new(|p| {
-            p.move_to(w2s(Vec3::new(0.0, -e, 0.0)));
-            p.line_to(w2s(Vec3::new(0.0, e, 0.0)));
-        }),
-        axis_stroke(0.20, 0.85, 0.20),
-    );
-    // Z — blue
-    frame.stroke(
-        &canvas::Path::new(|p| {
-            p.move_to(w2s(Vec3::new(0.0, 0.0, -e)));
-            p.line_to(w2s(Vec3::new(0.0, 0.0, e)));
-        }),
-        axis_stroke(0.20, 0.40, 0.90),
-    );
+    // Axes run through the UCS origin along the UCS axis directions.
+    let mut line = |dir: Vec3, r: f32, g: f32, b: f32| {
+        frame.stroke(
+            &canvas::Path::new(|p| {
+                p.move_to(w2s(origin - dir * e));
+                p.line_to(w2s(origin + dir * e));
+            }),
+            axis_stroke(r, g, b),
+        );
+    };
+    line(ax, 0.90, 0.20, 0.20); // X — red
+    line(ay, 0.20, 0.85, 0.20); // Y — green
+    line(az, 0.20, 0.40, 0.90); // Z — blue
 }
 
 // ── UCS icon ──────────────────────────────────────────────────────────────

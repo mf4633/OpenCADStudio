@@ -195,6 +195,23 @@ impl DocumentTab {
         self.scene.viewcube_ucs = self.ucs_xform().rotation_mat();
     }
 
+    /// Grid origin (render/wire space) and UCS→world rotation for grid snap and
+    /// the grid overlay. Identity / origin-at-zero outside model space.
+    pub(super) fn ucs_grid_basis(&self) -> (glam::Vec3, glam::Mat4) {
+        if self.scene.current_layout != "Model" {
+            return (glam::Vec3::ZERO, glam::Mat4::IDENTITY);
+        }
+        let xf = self.ucs_xform();
+        let (o, ..) = xf.axes();
+        let wo = self.scene.world_offset;
+        let origin = glam::Vec3::new(
+            o.x - wo[0] as f32,
+            o.y - wo[1] as f32,
+            o.z - wo[2] as f32,
+        );
+        (origin, xf.rotation_mat())
+    }
+
     pub(super) fn new_drawing(n: usize) -> Self {
         let mut scene = Scene::new();
         linetypes::populate_document(&mut scene.document);
