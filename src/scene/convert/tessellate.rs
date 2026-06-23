@@ -169,6 +169,7 @@ pub fn tessellate(
                     return vec![WireModel {
                         name,
                         points: Vec::new(),
+                        points_low: Vec::new(),
                         color,
                         selected,
                         pattern_length: 0.0,
@@ -207,6 +208,7 @@ pub fn tessellate(
                     out.push(WireModel {
                         name: name.clone(),
                         points: pts,
+                        points_low: Vec::new(),
                         color: wire_color,
                         selected,
                         pattern_length: 0.0,
@@ -248,6 +250,7 @@ pub fn tessellate(
                                 [x, y - s, z],
                                 [x, y + s, z],
                             ],
+                            points_low: Vec::new(),
                             color,
                             selected,
                             pattern_length: 0.0,
@@ -279,6 +282,7 @@ pub fn tessellate(
                     return vec![WireModel {
                         name,
                         points,
+                        points_low: Vec::new(),
                         color,
                         selected,
                         pattern_length,
@@ -308,6 +312,7 @@ pub fn tessellate(
                     return vec![WireModel {
                         name,
                         points,
+                        points_low: Vec::new(),
                         color,
                         selected,
                         pattern_length,
@@ -355,6 +360,7 @@ pub fn tessellate(
                 return vec![WireModel {
                     name,
                     points: local_pts,
+                    points_low: Vec::new(),
                     color,
                     selected,
                     pattern_length: 0.0,
@@ -392,6 +398,7 @@ pub fn tessellate(
                 return vec![WireModel {
                     name,
                     points: local_pts,
+                    points_low: Vec::new(),
                     color,
                     selected,
                     pattern_length,
@@ -432,6 +439,7 @@ pub fn tessellate(
     vec![WireModel {
         name,
         points,
+        points_low: Vec::new(),
         color,
         selected,
         aci: 0,

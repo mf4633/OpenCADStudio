@@ -133,6 +133,7 @@ fn preview_wire(points: Vec<Vec3>) -> WireModel {
     WireModel {
         name: "dimlinear_preview".to_string(),
         points: points.into_iter().map(|p| [p.x, p.y, p.z]).collect(),
+        points_low: Vec::new(),
         color: WireModel::CYAN,
         selected: false,
         pattern_length: 0.0,

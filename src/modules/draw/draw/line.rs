@@ -78,6 +78,7 @@ impl CadCommand for LineCommand {
         Some(WireModel {
             name: "rubber_band".to_string(),
             points: vec![[last.x, last.y, last.z], [pt.x, pt.y, pt.z]],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

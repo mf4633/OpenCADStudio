@@ -82,6 +82,7 @@ impl CadCommand for RevCloudCommand {
         Some(WireModel {
             name: "revcloud_preview".into(),
             points: preview_pts,
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

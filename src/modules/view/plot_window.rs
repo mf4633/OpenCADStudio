@@ -59,6 +59,7 @@ impl CadCommand for PlotWindowCommand {
                 [p1.x, pt.y, pt.z],
                 [p1.x, p1.y, p1.z],
             ],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

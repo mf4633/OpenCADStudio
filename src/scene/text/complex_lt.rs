@@ -210,6 +210,7 @@ pub fn apply_along(
         .map(|pts| WireModel {
             name: name.to_string(),
             points: pts,
+            points_low: Vec::new(),
             color,
             selected,
             pattern_length: 0.0,

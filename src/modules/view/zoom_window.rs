@@ -59,6 +59,7 @@ impl CadCommand for ZoomWindowCommand {
                 [min.x, max.y, 0.0],
                 [min.x, min.y, 0.0],
             ],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

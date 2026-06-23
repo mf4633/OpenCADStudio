@@ -603,6 +603,7 @@ impl LeaderTess for Leader {
             return WireModel {
                 name,
                 points: vec![],
+                points_low: Vec::new(),
                 color,
                 selected,
                 aci: 0,
@@ -701,6 +702,7 @@ impl LeaderTess for Leader {
         WireModel {
             name,
             points,
+            points_low: Vec::new(),
             color,
             selected,
             aci: 0,

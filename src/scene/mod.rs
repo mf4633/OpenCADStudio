@@ -8196,6 +8196,7 @@ fn tessellate_entity(
         let marker = WireModel {
             name: h.value().to_string(),
             points: vec![],
+            points_low: Vec::new(),
             color: entity_color,
             selected: sel,
             aci: 0,
@@ -8407,6 +8408,7 @@ fn tessellate_entity(
                 return vec![WireModel {
                     name: h.value().to_string(),
                     points: pts,
+                    points_low: Vec::new(),
                     color: entity_color,
                     selected: sel,
                     aci,
@@ -8444,6 +8446,7 @@ fn tessellate_entity(
                 return vec![WireModel {
                     name: h.value().to_string(),
                     points: vec![],
+                    points_low: Vec::new(),
                     color: fill_color,
                     selected: sel,
                     aci,
@@ -8552,6 +8555,7 @@ fn lod_stub_wire(
         // different elevation. 2D entities (text fallbacks) pass
         // z_min = z_max = 0 to keep the historical behaviour.
         points: vec![[ax, ay, z_min], [bx, by, z_max]],
+        points_low: Vec::new(),
         color: stored_color,
         selected,
         aci,
@@ -8607,6 +8611,7 @@ fn lod_stub_wire_3d(
     WireModel {
         name,
         points,
+        points_low: Vec::new(),
         color: stored_color,
         selected,
         aci,

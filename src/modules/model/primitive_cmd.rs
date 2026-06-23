@@ -307,6 +307,7 @@ fn wire(name: &str, points: Vec<[f32; 3]>) -> WireModel {
     WireModel {
         name: name.into(),
         points,
+        points_low: Vec::new(),
         color: WireModel::CYAN,
         selected: false,
         pattern_length: 0.0,

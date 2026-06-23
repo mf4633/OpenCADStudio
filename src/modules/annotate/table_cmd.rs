@@ -150,6 +150,7 @@ impl CadCommand for TableCommand {
                     [x, y, z - h],
                     [x, y, z],
                 ],
+                points_low: Vec::new(),
                 color: WireModel::CYAN,
                 selected: false,
                 pattern_length: 0.0,

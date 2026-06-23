@@ -1106,6 +1106,7 @@ impl Batches {
                 WireModel {
                     name: name.to_string(),
                     points: b.points,
+                    points_low: Vec::new(),
                     color,
                     selected,
                     pattern_length: b.pattern_length,

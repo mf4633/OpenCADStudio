@@ -1158,6 +1158,7 @@ fn tessellate_dimension_inner(
                 wires.push(WireModel {
                     name: name.clone(),
                     points: ext1,
+                    points_low: Vec::new(),
                     color: ext_color,
                     selected,
                     aci: 0,
@@ -1177,6 +1178,7 @@ fn tessellate_dimension_inner(
                 wires.push(WireModel {
                     name: name.clone(),
                     points: ext2,
+                    points_low: Vec::new(),
                     color: ext_color,
                     selected,
                     aci: 0,
@@ -1196,6 +1198,7 @@ fn tessellate_dimension_inner(
             wires.push(WireModel {
                 name: name.clone(),
                 points: geom.ext_lines,
+                points_low: Vec::new(),
                 color: ext_color,
                 selected,
                 aci: 0,
@@ -1216,6 +1219,7 @@ fn tessellate_dimension_inner(
     wires.push(WireModel {
         name: name.clone(),
         points: geom.dim_lines,
+        points_low: Vec::new(),
         color: dim_color,
         selected,
         aci: 0,
@@ -1247,6 +1251,7 @@ fn tessellate_dimension_inner(
                 wires.push(WireModel {
                     name: name.clone(),
                     points: vec![],
+                    points_low: Vec::new(),
                     color: fill_color,
                     selected,
                     aci: 0,

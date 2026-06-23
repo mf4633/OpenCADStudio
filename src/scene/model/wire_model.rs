@@ -34,8 +34,14 @@ pub enum TangentGeom {
 pub struct WireModel {
     /// Unique identifier — the handle value as a decimal string.
     pub name: String,
-    /// Ordered world-space positions forming a strip of quads.
+    /// Ordered world-space positions forming a strip of quads. Each entry is
+    /// the "high" half of a double-single f32 pair; [`points_low`] carries the
+    /// matching residual so the shader can reconstruct the f64 source.
     pub points: Vec<[f32; 3]>,
+    /// Low-bit residual paired index-for-index with [`points`]. Empty means
+    /// "all-zero residual" (interactive draw / preview wires whose coordinates
+    /// don't need sub-f32 precision). Tessellation from CAD f64 fills it.
+    pub points_low: Vec<[f32; 3]>,
     /// RGBA colour in [0, 1].
     pub color: [f32; 4],
     /// Whether this wire is currently selected.
@@ -94,6 +100,7 @@ impl WireModel {
         Self {
             name,
             points,
+            points_low: Vec::new(),
             color,
             selected,
             aci: 0,
@@ -216,6 +223,7 @@ impl Default for WireModel {
         Self {
             name: String::new(),
             points: Vec::new(),
+            points_low: Vec::new(),
             color: Self::WHITE,
             selected: false,
             pattern_length: 0.0,

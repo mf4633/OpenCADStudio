@@ -155,6 +155,7 @@ impl CadCommand for DimBaselineCommand {
                 [dim_line_pt.x, dim_line_pt.y, dim_line_pt.z],
                 [dim_line_pt2.x, dim_line_pt2.y, dim_line_pt2.z],
             ],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

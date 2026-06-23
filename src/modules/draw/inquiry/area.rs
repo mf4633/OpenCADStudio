@@ -66,6 +66,7 @@ impl CadCommand for AreaCommand {
         Some(WireModel {
             name: "area_preview".into(),
             points: pts,
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

@@ -94,6 +94,7 @@ impl CadCommand for AlignedDimensionCommand {
         Some(WireModel {
             name: "dimaligned_preview".into(),
             points: vec![[p1.x, p1.y, p1.z], [p2.x, p2.y, p2.z]],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,
@@ -134,6 +135,7 @@ fn preview_aligned(p1: Vec3, p2: Vec3, dim_pt: Vec3) -> WireModel {
             [d1.x, d1.y, d1.z],
             [d2.x, d2.y, d2.z],
         ],
+        points_low: Vec::new(),
         color: WireModel::CYAN,
         selected: false,
         pattern_length: 0.0,

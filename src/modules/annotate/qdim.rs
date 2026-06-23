@@ -90,6 +90,7 @@ impl CadCommand for QdimCommand {
         Some(WireModel {
             name: "qdim_preview".into(),
             points: vec![[pt.x - d * 3.0, pt.y, pt.z], [pt.x + d * 3.0, pt.y, pt.z]],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

@@ -61,6 +61,7 @@ impl CadCommand for DistCommand {
         Some(WireModel {
             name: "dist_preview".into(),
             points: vec![[p1.x, p1.y, p1.z], [pt.x, pt.y, pt.z]],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

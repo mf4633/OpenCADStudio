@@ -151,6 +151,7 @@ fn preview_wire(pts: &[Vec3]) -> WireModel {
     WireModel {
         name: "mleader_preview".into(),
         points,
+        points_low: Vec::new(),
         color: WireModel::CYAN,
         selected: false,
         pattern_length: 0.0,

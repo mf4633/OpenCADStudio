@@ -88,6 +88,7 @@ impl CadCommand for MviewCommand {
                 [c1.x, pt.y, c1.z],
                 [c1.x, c1.y, c1.z],
             ],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

@@ -613,6 +613,7 @@ fn line_wire(from: Vec3, to: Vec3) -> WireModel {
     WireModel {
         name: "rubber_band".into(),
         points: vec![[from.x, from.y, from.z], [to.x, to.y, to.z]],
+        points_low: Vec::new(),
         color: WireModel::CYAN,
         selected: false,
         pattern_length: 0.0,

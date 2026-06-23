@@ -97,6 +97,7 @@ fn preview_line(a: Vec3, b: Vec3) -> WireModel {
     WireModel {
         name: "dimdia_preview".into(),
         points: vec![[a.x, a.y, a.z], [b.x, b.y, b.z]],
+        points_low: Vec::new(),
         color: WireModel::CYAN,
         selected: false,
         pattern_length: 0.0,

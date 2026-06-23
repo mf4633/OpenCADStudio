@@ -110,6 +110,7 @@ impl CadCommand for ImageCommand {
         Some(WireModel {
             name: "image_preview".into(),
             points: vec![p0, p1, p2, p3, p0],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

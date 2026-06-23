@@ -76,6 +76,7 @@ impl CadCommand for RayCommand {
         Some(WireModel {
             name: "ray_preview".into(),
             points: vec![[base.x, base.y, base.z], [far.x, far.y, far.z]],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,
@@ -157,6 +158,7 @@ impl CadCommand for XLineCommand {
                 [far_neg.x, far_neg.y, far_neg.z],
                 [far_pos.x, far_pos.y, far_pos.z],
             ],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

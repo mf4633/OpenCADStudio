@@ -1295,6 +1295,7 @@ impl MultiLeaderTess for MultiLeader {
         wires.push(WireModel {
             name: name.clone(),
             points,
+            points_low: Vec::new(),
             color: line_color,
             selected,
             aci: 0,
@@ -1541,6 +1542,7 @@ impl MultiLeaderTess for MultiLeader {
                     wires.push(WireModel {
                         name: name.clone(),
                         points: vec![p0, p1],
+                        points_low: Vec::new(),
                         color: text_color,
                         selected,
                         aci: 0,
@@ -1581,6 +1583,7 @@ impl MultiLeaderTess for MultiLeader {
                     wires.push(WireModel {
                         name: name.clone(),
                         points: vec![],
+                        points_low: Vec::new(),
                         color: text_color,
                         selected,
                         aci: 0,
@@ -1619,6 +1622,7 @@ impl MultiLeaderTess for MultiLeader {
                     wires.push(WireModel {
                         name: name.clone(),
                         points: text_points,
+                        points_low: Vec::new(),
                         color: text_color,
                         selected,
                         aci: 0,
@@ -1676,6 +1680,7 @@ impl MultiLeaderTess for MultiLeader {
                     wires.push(WireModel {
                         name: name.clone(),
                         points: vec![],
+                        points_low: Vec::new(),
                         color: fill_color,
                         selected,
                         aci: 0,
@@ -1704,6 +1709,7 @@ impl MultiLeaderTess for MultiLeader {
                     wires.push(WireModel {
                         name,
                         points: frame_points,
+                        points_low: Vec::new(),
                         color: text_color,
                         selected,
                         aci: 0,

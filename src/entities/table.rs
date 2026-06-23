@@ -702,6 +702,7 @@ pub fn tessellate_table(
             WireModel {
                 name: name.clone(),
                 points,
+                points_low: Vec::new(),
                 color,
                 selected,
                 pattern_length: 0.0,

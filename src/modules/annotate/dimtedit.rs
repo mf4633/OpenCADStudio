@@ -106,6 +106,7 @@ impl CadCommand for DimTeditCommand {
                 [pt.x - d, pt.y, pt.z + d],
                 [pt.x - d, pt.y, pt.z - d],
             ],
+            points_low: Vec::new(),
             color: WireModel::CYAN,
             selected: false,
             pattern_length: 0.0,

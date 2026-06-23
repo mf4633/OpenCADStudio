@@ -122,6 +122,7 @@ impl CadCommand for WipeoutCommand {
                         [min.x, max.y, max.z],
                         [min.x, min.y, min.z],
                     ],
+                    points_low: Vec::new(),
                     color: WireModel::CYAN,
                     selected: false,
                     pattern_length: 0.0,
@@ -148,6 +149,7 @@ impl CadCommand for WipeoutCommand {
                 Some(WireModel {
                     name: "wipeout_poly_preview".into(),
                     points: pts,
+                    points_low: Vec::new(),
                     color: WireModel::CYAN,
                     selected: false,
                     pattern_length: 0.0,
