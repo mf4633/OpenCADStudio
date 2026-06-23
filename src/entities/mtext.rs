@@ -1,5 +1,4 @@
 use acadrust::entities::{AttachmentPoint, DrawingDirection, MText};
-use glam::Vec3;
 
 use crate::command::EntityTransform;
 use crate::entities::common::{edit_prop as edit, ro_prop as ro, square_grip, triangle_grip};
@@ -168,10 +167,10 @@ fn to_truck(t: &MText, document: &acadrust::CadDocument) -> TruckEntity {
         vertical_text: matches!(t.drawing_direction, DrawingDirection::TopToBottom),
         want_glyph_boxes: false,
     });
-    let insertion = Vec3::new(
-        t.insertion_point.x as f32,
-        t.insertion_point.y as f32,
-        t.insertion_point.z as f32,
+    let insertion = glam::DVec3::new(
+        t.insertion_point.x,
+        t.insertion_point.y,
+        t.insertion_point.z,
     );
     TruckEntity {
         object: TruckObject::Text(layout.strokes),

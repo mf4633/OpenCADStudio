@@ -1,5 +1,4 @@
 use acadrust::entities::Circle;
-use glam::Vec3;
 use truck_modeling::{builder, Point3, Wire};
 
 use crate::command::EntityTransform;
@@ -35,14 +34,10 @@ fn to_truck(circle: &Circle) -> TruckEntity {
     let p_top = pt(ay, (0.0, 0.0, 0.0), r);
     let p_bot = pt((ay.0 * -1.0, ay.1 * -1.0, ay.2 * -1.0), (0.0, 0.0, 0.0), r);
 
-    let cv = Vec3::new(cwx as f32, cwy as f32, cwz as f32);
+    let cv = glam::DVec3::new(cwx, cwy, cwz);
     let rf = r as f32;
     let q = |d: (f64, f64, f64)| {
-        Vec3::new(
-            (cwx + r * d.0) as f32,
-            (cwy + r * d.1) as f32,
-            (cwz + r * d.2) as f32,
-        )
+        glam::DVec3::new(cwx + r * d.0, cwy + r * d.1, cwz + r * d.2)
     };
     let snap_pts = vec![
         (cv, SnapHint::Center),

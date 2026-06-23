@@ -1,7 +1,6 @@
 // acadrust -> truck topology conversion layer.
 
 use acadrust::{CadDocument, EntityType};
-use glam::Vec3;
 use truck_modeling::{Edge, Solid, Vertex, Wire};
 
 use crate::entities::traits::EntityTypeOps;
@@ -40,7 +39,7 @@ pub enum TruckObject {
 
 pub struct TruckEntity {
     pub object: TruckObject,
-    pub snap_pts: Vec<(Vec3, SnapHint)>,
+    pub snap_pts: Vec<(glam::DVec3, SnapHint)>,
     pub tangent_geoms: Vec<TangentGeom>,
     /// Polyline vertex positions in WCS f64; converted to offset-relative f32
     /// at the wire-model boundary.

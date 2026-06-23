@@ -69,10 +69,10 @@ impl TruckConvertible for Face3D {
         Some(TruckEntity {
             object: TruckObject::Lines(pts),
             snap_pts: vec![
-                (Vec3::from(p0f), SnapHint::Node),
-                (Vec3::from(p1f), SnapHint::Node),
-                (Vec3::from(p2f), SnapHint::Node),
-                (Vec3::from(p3f), SnapHint::Node),
+                (Vec3::from(p0f).as_dvec3(), SnapHint::Node),
+                (Vec3::from(p1f).as_dvec3(), SnapHint::Node),
+                (Vec3::from(p2f).as_dvec3(), SnapHint::Node),
+                (Vec3::from(p3f).as_dvec3(), SnapHint::Node),
             ],
             tangent_geoms: vec![],
             key_vertices: vec![p0, p1, p2, p3],
@@ -552,15 +552,10 @@ impl TruckConvertible for Mesh {
             }
         }
 
-        let snap_pts: Vec<(Vec3, SnapHint)> = self
+        let snap_pts: Vec<(glam::DVec3, SnapHint)> = self
             .vertices
             .iter()
-            .map(|v| {
-                (
-                    Vec3::new(v.x as f32, v.y as f32, v.z as f32),
-                    SnapHint::Node,
-                )
-            })
+            .map(|v| (glam::DVec3::new(v.x, v.y, v.z), SnapHint::Node))
             .collect();
         let key_vertices: Vec<[f64; 3]> = self.vertices.iter().map(|v| [v.x, v.y, v.z]).collect();
 

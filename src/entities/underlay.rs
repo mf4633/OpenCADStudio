@@ -5,7 +5,6 @@
 // Props:  position, scales, rotation, contrast, fade, flags.
 
 use acadrust::entities::{Underlay, UnderlayDisplayFlags};
-use glam::Vec3;
 
 use crate::command::EntityTransform;
 use crate::entities::common::{center_grip, edit_prop as edit, ro_prop as ro, square_grip};
@@ -41,7 +40,7 @@ fn cross_wire(origin: [f64; 3], size: f64) -> Vec<[f64; 3]> {
 impl TruckConvertible for Underlay {
     fn to_truck(&self, _document: &acadrust::CadDocument) -> Option<TruckEntity> {
         let origin = v3(&self.insertion_point);
-        let origin_f32 = v3f32(&self.insertion_point);
+        let _origin_f32 = v3f32(&self.insertion_point);
 
         if !self.clip_boundary_vertices.is_empty() {
             // Draw clip boundary polygon + close it.
@@ -55,7 +54,7 @@ impl TruckConvertible for Underlay {
             let key: Vec<[f64; 3]> = pts.clone();
             Some(TruckEntity {
                 object: TruckObject::Lines(pts),
-                snap_pts: vec![(Vec3::from(origin_f32), SnapHint::Node)],
+                snap_pts: vec![(glam::DVec3::new(self.insertion_point.x, self.insertion_point.y, self.insertion_point.z), SnapHint::Node)],
                 tangent_geoms: vec![],
                 key_vertices: key,
                 fill_tris: vec![],
@@ -65,7 +64,7 @@ impl TruckConvertible for Underlay {
             let pts = cross_wire(origin, 1.0);
             Some(TruckEntity {
                 object: TruckObject::Lines(pts),
-                snap_pts: vec![(Vec3::from(origin_f32), SnapHint::Node)],
+                snap_pts: vec![(glam::DVec3::new(self.insertion_point.x, self.insertion_point.y, self.insertion_point.z), SnapHint::Node)],
                 tangent_geoms: vec![],
                 key_vertices: vec![origin],
                 fill_tris: vec![],

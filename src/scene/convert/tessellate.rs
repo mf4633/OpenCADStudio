@@ -863,17 +863,12 @@ pub(crate) fn add_polyline(points: &mut Vec<[f32; 3]>, polyline: &[Vec3]) {
 }
 
 pub(crate) fn offset_snap_pts(
-    pts: Vec<(Vec3, SnapHint)>,
+    pts: Vec<(glam::DVec3, SnapHint)>,
     off: [f64; 3],
 ) -> Vec<(glam::DVec3, SnapHint)> {
     let [ox, oy, oz] = off;
     pts.into_iter()
-        .map(|(p, h)| {
-            (
-                glam::DVec3::new(p.x as f64 - ox, p.y as f64 - oy, p.z as f64 - oz),
-                h,
-            )
-        })
+        .map(|(p, h)| (glam::DVec3::new(p.x - ox, p.y - oy, p.z - oz), h))
         .collect()
 }
 

@@ -1,5 +1,4 @@
 use acadrust::entities::MLine;
-use glam::Vec3;
 
 use crate::command::EntityTransform;
 use crate::entities::common::{edit_prop as edit, ro_prop as ro, square_grip};
@@ -98,11 +97,7 @@ impl TruckConvertible for MLine {
             .iter()
             .map(|v| {
                 (
-                    Vec3::new(
-                        v.position.x as f32,
-                        v.position.y as f32,
-                        v.position.z as f32,
-                    ),
+                    glam::DVec3::new(v.position.x, v.position.y, v.position.z),
                     SnapHint::Node,
                 )
             })

@@ -1,5 +1,4 @@
 use acadrust::entities::Ellipse;
-use glam::Vec3;
 use truck_modeling::{builder, BSplineCurve, Curve, Edge, KnotVec, Point3, Wire};
 
 use crate::command::EntityTransform;
@@ -41,7 +40,7 @@ fn to_truck(ell: &Ellipse) -> TruckEntity {
     // Minor axis direction: WCS_normal × u (both unit vectors, always perpendicular).
     let wcs_normal = glam::Vec3::new(nx as f32, ny as f32, nz as f32);
     let v_axis = wcs_normal.cross(u);
-    let center_v3 = Vec3::new(cwx as f32, cwy as f32, cwz as f32);
+    let center_v3 = glam::DVec3::new(cwx, cwy, cwz);
     let is_closed = (t1 - t0 - TAU).abs() < 1e-6;
 
     if is_closed {
@@ -81,10 +80,10 @@ fn to_truck(ell: &Ellipse) -> TruckEntity {
         let wire: Wire = [edge_upper, edge_lower].into_iter().collect();
         // Quadrant points at ±major and ±minor axis endpoints in WCS.
         let q = |lx: f64, lz: f64| {
-            Vec3::new(
-                (cwx + lx * u.x as f64 + lz * v_axis.x as f64) as f32,
-                (cwy + lx * u.y as f64 + lz * v_axis.y as f64) as f32,
-                (cwz + lx * u.z as f64 + lz * v_axis.z as f64) as f32,
+            glam::DVec3::new(
+                cwx + lx * u.x as f64 + lz * v_axis.x as f64,
+                cwy + lx * u.y as f64 + lz * v_axis.y as f64,
+                cwz + lx * u.z as f64 + lz * v_axis.z as f64,
             )
         };
         let snap_pts = vec![

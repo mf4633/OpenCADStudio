@@ -1,6 +1,5 @@
 use acadrust::entities::Point;
 use acadrust::EntityType;
-use glam::Vec3;
 use truck_modeling::{builder, Point3};
 
 use crate::command::EntityTransform;
@@ -36,7 +35,7 @@ fn point_truck(pt: &Point, pdmode: i16, s: f64) -> TruckEntity {
         (pt.location.x, pt.location.y, pt.location.z),
         normal,
     );
-    let snap = Vec3::new(wx as f32, wy as f32, wz as f32);
+    let snap = glam::DVec3::new(wx, wy, wz);
     if pdmode == 0 {
         // Default: a single vertex (driver handles the dot pixel).
         let p = Point3::new(wx, wy, wz);

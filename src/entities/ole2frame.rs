@@ -1,5 +1,4 @@
 use acadrust::entities::{Ole2Frame, OleObjectType};
-use glam::Vec3;
 
 use crate::command::EntityTransform;
 use crate::entities::common::{center_grip, edit_prop as edit, ro_prop as ro, square_grip};
@@ -45,7 +44,7 @@ fn to_truck(ole: &Ole2Frame) -> TruckEntity {
         [x1, y0, z],
         [x0, y1, z],
     ];
-    let center = Vec3::new(cx as f32, cy as f32, z as f32);
+    let center = glam::DVec3::new(cx, cy, z);
     TruckEntity {
         object: TruckObject::Lines(pts),
         snap_pts: vec![(center, SnapHint::Center)],

@@ -3,7 +3,6 @@ use acadrust::entities::attribute_definition::{
 };
 use acadrust::entities::{AttributeDefinition, AttributeEntity};
 use acadrust::types::Vector3;
-use glam::Vec3;
 
 use crate::command::EntityTransform;
 use crate::entities::common::{edit_prop as edit, parse_f64, ro_prop as ro, square_grip};
@@ -111,7 +110,7 @@ fn build_attr_truck(input: AttrTextInputs<'_>, document: &acadrust::CadDocument)
         ),
         normal,
     );
-    let snap_pt = Vec3::new(wsx as f32, wsy as f32, wsz as f32);
+    let snap_pt = glam::DVec3::new(wsx, wsy, wsz);
 
     let resolved = resolve_text_style(input.text_style, document);
 

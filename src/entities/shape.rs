@@ -6,7 +6,6 @@
 // gives a rough indication of the glyph orientation.
 
 use acadrust::entities::Shape;
-use glam::Vec3;
 
 use crate::command::EntityTransform;
 use crate::entities::common::{edit_prop as edit, ro_prop as ro, square_grip};
@@ -63,7 +62,7 @@ impl TruckConvertible for Shape {
         let oz = self.insertion_point.z;
         let size = self.size.abs().max(0.5);
 
-        let snap_pt = Vec3::new(ox as f32, oy as f32, oz as f32);
+        let snap_pt = glam::DVec3::new(ox, oy, oz);
         let pts = shape_marker(
             ox,
             oy,

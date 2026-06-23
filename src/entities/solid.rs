@@ -5,7 +5,6 @@
 // Grips:     4 corner grip points.
 
 use acadrust::entities::Solid;
-use glam::Vec3;
 
 use crate::command::EntityTransform;
 use crate::entities::common::{edit_prop as edit, square_grip};
@@ -20,10 +19,6 @@ fn v3(v: &acadrust::types::Vector3) -> [f64; 3] {
 
 fn dvec3(v: &acadrust::types::Vector3) -> glam::DVec3 {
     glam::DVec3::new(v.x, v.y, v.z)
-}
-
-fn v3f32(v: &acadrust::types::Vector3) -> [f32; 3] {
-    [v.x as f32, v.y as f32, v.z as f32]
 }
 
 impl TruckConvertible for Solid {
@@ -50,11 +45,12 @@ impl TruckConvertible for Solid {
             p0,
         ];
 
+        let dv = |c: &acadrust::types::Vector3| glam::DVec3::new(c.x, c.y, c.z);
         let snap = vec![
-            (Vec3::from(v3f32(&self.first_corner)), SnapHint::Node),
-            (Vec3::from(v3f32(&self.second_corner)), SnapHint::Node),
-            (Vec3::from(v3f32(&self.third_corner)), SnapHint::Node),
-            (Vec3::from(v3f32(&self.fourth_corner)), SnapHint::Node),
+            (dv(&self.first_corner), SnapHint::Node),
+            (dv(&self.second_corner), SnapHint::Node),
+            (dv(&self.third_corner), SnapHint::Node),
+            (dv(&self.fourth_corner), SnapHint::Node),
         ];
 
         Some(TruckEntity {

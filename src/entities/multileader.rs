@@ -77,17 +77,10 @@ fn to_truck(ml: &MultiLeader, document: &acadrust::CadDocument) -> Option<TruckE
     let mut points: Vec<[f64; 3]> = Vec::new();
     let mut tangents: Vec<TangentGeom> = Vec::new();
     let mut key_verts: Vec<[f64; 3]> = Vec::new();
-    // This builds a TruckEntity (snap_pts in Vec3); tessellate's
-    // offset_snap_pts widens it to the f64 WireModel buffer afterwards.
-    let mut snap_pts: Vec<(Vec3, SnapHint)> = Vec::new();
+    let mut snap_pts: Vec<(glam::DVec3, SnapHint)> = Vec::new();
     let mut first = true;
 
-    let node = |arr: [f64; 3]| {
-        (
-            Vec3::new(arr[0] as f32, arr[1] as f32, arr[2] as f32),
-            SnapHint::Node,
-        )
-    };
+    let node = |arr: [f64; 3]| (glam::DVec3::new(arr[0], arr[1], arr[2]), SnapHint::Node);
 
     // Text-side geometry, recomputed every frame so dragging the arrow or the
     // text re-mirrors the whole layout. The text block is centred on its grip

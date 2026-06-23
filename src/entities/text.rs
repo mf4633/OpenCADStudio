@@ -1,5 +1,4 @@
 use acadrust::entities::{Text, TextHorizontalAlignment as HA, TextVerticalAlignment as VA};
-use glam::Vec3;
 
 use crate::command::EntityTransform;
 use crate::entities::common::{edit_prop as edit, parse_f64, square_grip};
@@ -58,7 +57,7 @@ fn to_truck(t: &Text, document: &acadrust::CadDocument) -> TruckEntity {
         ),
         normal,
     );
-    let snap_pt = Vec3::new(wsx as f32, wsy as f32, wsz as f32);
+    let snap_pt = glam::DVec3::new(wsx, wsy, wsz);
     let resolved_style = resolve_text_style(&t.style, document);
     let font_name = resolved_style.font_name;
     // AutoCAD text geometry rule: the entity stores the FINAL width factor /

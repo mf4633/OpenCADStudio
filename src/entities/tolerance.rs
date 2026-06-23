@@ -1,5 +1,4 @@
 use acadrust::entities::Tolerance;
-use glam::Vec3;
 
 use crate::command::EntityTransform;
 use crate::entities::common::{edit_prop as edit, ro_prop as ro, square_grip};
@@ -234,10 +233,10 @@ impl TruckConvertible for Tolerance {
             return None;
         }
 
-        let snap_pt = Vec3::new(
-            self.insertion_point.x as f32,
-            self.insertion_point.y as f32,
-            self.insertion_point.z as f32,
+        let snap_pt = glam::DVec3::new(
+            self.insertion_point.x,
+            self.insertion_point.y,
+            self.insertion_point.z,
         );
 
         // Build the feature-control frame in local space; origin stored as f64.

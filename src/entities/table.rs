@@ -323,7 +323,7 @@ impl TruckConvertible for Table {
             .collect();
         Some(TruckEntity {
             object: TruckObject::Lines(pts_f64),
-            snap_pts: vec![(v3(&self.insertion_point), SnapHint::Insertion)],
+            snap_pts: vec![(glam::DVec3::new(self.insertion_point.x, self.insertion_point.y, self.insertion_point.z), SnapHint::Insertion)],
             tangent_geoms: vec![],
             key_vertices: vec![],
             fill_tris: vec![],

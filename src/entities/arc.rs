@@ -1,5 +1,4 @@
 use acadrust::entities::Arc;
-use glam::Vec3;
 use truck_modeling::{builder, Point3};
 
 use crate::command::EntityTransform;
@@ -39,11 +38,11 @@ fn to_truck(arc: &Arc) -> TruckEntity {
         )
     };
 
-    let cv = Vec3::new(cwx as f32, cwy as f32, cwz as f32);
+    let cv = glam::DVec3::new(cwx, cwy, cwz);
     // Arc-length centre — one well-defined midpoint snap. Circles and
     // ellipses (closed curves) deliberately don't emit this; see #34.
     let mid_pt_3 = arc_pt(mid_a);
-    let mv = Vec3::new(mid_pt_3.x as f32, mid_pt_3.y as f32, mid_pt_3.z as f32);
+    let mv = glam::DVec3::new(mid_pt_3.x, mid_pt_3.y, mid_pt_3.z);
     let tangent = TangentGeom::Circle {
         center: [cwx as f32, cwy as f32, cwz as f32],
         radius: r as f32,
