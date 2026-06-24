@@ -232,28 +232,10 @@ impl Camera {
     /// Project a screen point onto an arbitrary world-space plane.
     ///
     /// The plane is defined by `plane_normal` (unit vector) and a `plane_point`
-    /// that lies on it.  Returns the intersection of the view ray with the plane;
-    /// falls back to `plane_point` when the ray is nearly parallel to the plane.
+    /// that lies on it. Returns the ray–plane intersection (falling back to
+    /// `plane_point` when nearly parallel), eye-relative in f64 so the cursor
+    /// stays precise at UTM-scale coordinates.
     pub fn pick_on_plane(
-        &self,
-        screen: Point,
-        bounds: Rectangle,
-        plane_normal: Vec3,
-        plane_point: Vec3,
-    ) -> Vec3 {
-        // Delegate to the eye-relative f64 unproject so the cursor stays
-        // precise at UTM-scale coordinates (the old full view_proj.inverse()
-        // cancelled catastrophically in f32).
-        self.unproject_on_plane_f64(screen, bounds, plane_normal, plane_point.as_dvec3())
-            .as_vec3()
-    }
-
-    pub fn pick_on_target_plane(&self, screen: Point, bounds: Rectangle) -> Vec3 {
-        self.pick_on_target_plane_f64(screen, bounds).as_vec3()
-    }
-
-    /// f64 variant of [`pick_on_plane`] — keeps the cursor precise at UTM-scale.
-    pub fn pick_on_plane_f64(
         &self,
         screen: Point,
         bounds: Rectangle,
@@ -263,8 +245,8 @@ impl Camera {
         self.unproject_on_plane_f64(screen, bounds, plane_normal, plane_point)
     }
 
-    /// f64 variant of [`pick_on_target_plane`].
-    pub fn pick_on_target_plane_f64(&self, screen: Point, bounds: Rectangle) -> glam::DVec3 {
+    /// Project a screen point onto the plane through the orbit target.
+    pub fn pick_on_target_plane(&self, screen: Point, bounds: Rectangle) -> glam::DVec3 {
         let forward = (self.target.as_vec3() - self.eye()).normalize_or(Vec3::NEG_Z);
         self.unproject_on_plane_f64(screen, bounds, forward, self.target)
     }

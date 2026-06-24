@@ -3483,49 +3483,49 @@ impl Scene {
             let scale_d = scale as f64;
             let pcx_d = pcx as f64;
             let pcy_d = pcy as f64;
-            let [wo_x, wo_y, wo_z] = [0.0_f64; 3];
+            // Project one ABSOLUTE-WCS model point (f64) onto the paper sheet.
+            // Shared by the polyline points, snap points and key vertices so the
+            // hit-test / snap geometry lands in the same paper frame the wire is
+            // drawn in — otherwise snaps and the click-AABB stay in model (UTM)
+            // space and the cursor never reaches them.
+            let proj_abs = |ax: f64, ay: f64, az: f64| -> [f32; 3] {
+                let mp_x = ax - display_center_x;
+                let mp_y = ay - display_center_y;
+                let mp_z = az - display_center_z;
+                let u = mp_x * view_right_d.0 + mp_y * view_right_d.1 + mp_z * view_right_d.2;
+                let v = mp_x * view_up_d.0 + mp_y * view_up_d.1 + mp_z * view_up_d.2;
+                if use_perspective {
+                    let d_vd = mp_x * view_fwd_d.0 + mp_y * view_fwd_d.1 + mp_z * view_fwd_d.2;
+                    let fwd = camera_dist_d - d_vd;
+                    if fwd <= 0.001 {
+                        return [f32::NAN; 3];
+                    }
+                    let factor = camera_dist_d / fwd;
+                    [
+                        (pcx_d + u * factor * scale_d) as f32,
+                        (pcy_d + v * factor * scale_d) as f32,
+                        pcz,
+                    ]
+                } else {
+                    [(pcx_d + u * scale_d) as f32, (pcy_d + v * scale_d) as f32, pcz]
+                }
+            };
+            let in_vp = |x: f32, y: f32| x >= vp_x0 && x <= vp_x1 && y >= vp_y0 && y <= vp_y1;
 
             for wire in model_wires.iter() {
                 let projected_pts: Vec<[f32; 3]> = wire
                     .points
                     .iter()
-                    .map(|&[mx, my, mz]| {
+                    .enumerate()
+                    .map(|(pi, &[mx, my, mz])| {
                         if mx.is_nan() || my.is_nan() || mz.is_nan() {
                             return [f32::NAN; 3];
                         }
-                        // wire stored offset-rel; reconstruct WCS in f64
-                        // then subtract display center in WCS → small
-                        // f64 mp_proj with full precision.
-                        let mp_x = (mx as f64 + wo_x) - display_center_x;
-                        let mp_y = (my as f64 + wo_y) - display_center_y;
-                        let mp_z = (mz as f64 + wo_z) - display_center_z;
-                        let u = mp_x * view_right_d.0
-                            + mp_y * view_right_d.1
-                            + mp_z * view_right_d.2;
-                        let v = mp_x * view_up_d.0
-                            + mp_y * view_up_d.1
-                            + mp_z * view_up_d.2;
-                        if use_perspective {
-                            let d_vd = mp_x * view_fwd_d.0
-                                + mp_y * view_fwd_d.1
-                                + mp_z * view_fwd_d.2;
-                            let fwd = camera_dist_d - d_vd;
-                            if fwd <= 0.001 {
-                                return [f32::NAN; 3];
-                            }
-                            let factor = camera_dist_d / fwd;
-                            [
-                                (pcx_d + u * factor * scale_d) as f32,
-                                (pcy_d + v * factor * scale_d) as f32,
-                                pcz,
-                            ]
-                        } else {
-                            [
-                                (pcx_d + u * scale_d) as f32,
-                                (pcy_d + v * scale_d) as f32,
-                                pcz,
-                            ]
-                        }
+                        // Reconstruct absolute WCS from the double-single high
+                        // (`points`) + low (`points_low`) pair — the high f32
+                        // alone is ~0.5 m off at UTM scale.
+                        let lo = wire.points_low.get(pi).copied().unwrap_or([0.0; 3]);
+                        proj_abs(mx as f64 + lo[0] as f64, my as f64 + lo[1] as f64, mz as f64 + lo[2] as f64)
                     })
                     .collect();
 
@@ -3562,10 +3562,63 @@ impl Scene {
                     continue;
                 }
 
+                // Paper-space AABB of the clipped polyline — the cloned model
+                // (UTM) AABB would make click_hit's screen-projected pre-reject
+                // discard the wire (box selection has no pre-reject, which is why
+                // it kept working while picking didn't).
+                let mut pmnx = f32::INFINITY;
+                let mut pmny = f32::INFINITY;
+                let mut pmxx = f32::NEG_INFINITY;
+                let mut pmxy = f32::NEG_INFINITY;
+                for &[x, y, _] in clipped.iter().filter(|p| p[0].is_finite()) {
+                    pmnx = pmnx.min(x);
+                    pmny = pmny.min(y);
+                    pmxx = pmxx.max(x);
+                    pmxy = pmxy.max(y);
+                }
+
+                // Project snap points + key vertices into the same paper frame,
+                // keeping only those inside the viewport rect, so endpoint /
+                // midpoint / centre snaps land on the visible sheet geometry
+                // instead of the model's UTM coordinates.
+                let snap_pts: Vec<(glam::DVec3, model::wire_model::SnapHint)> = wire
+                    .snap_pts
+                    .iter()
+                    .filter_map(|(w, h)| {
+                        let p = proj_abs(w.x, w.y, w.z);
+                        (p[0].is_finite() && in_vp(p[0], p[1]))
+                            .then(|| (glam::DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64), *h))
+                    })
+                    .collect();
+                let key_vertices: Vec<[f64; 3]> = wire
+                    .key_vertices
+                    .iter()
+                    .filter_map(|&[kx, ky, kz]| {
+                        let p = proj_abs(kx, ky, kz);
+                        (p[0].is_finite() && in_vp(p[0], p[1]))
+                            .then(|| [p[0] as f64, p[1] as f64, p[2] as f64])
+                    })
+                    .collect();
+
                 let adapted = view::render::adapt_to_bg(wire.color, self.paper_bg_color);
                 let [r, g, b, a] = adapted;
                 let mut out = wire.clone();
                 out.points = clipped;
+                // Paper coordinates are small sheet units — no relative-to-eye
+                // residual is needed, and keeping the model wire's points_low
+                // here would add a model-scale offset to the paper points.
+                out.points_low = Vec::new();
+                out.snap_pts = snap_pts;
+                out.key_vertices = key_vertices;
+                // Tangent geometry is in model space and can't be trivially
+                // re-expressed in paper coords — drop it (no tangent snap on
+                // projected viewport content) rather than snap to UTM.
+                out.tangent_geoms = Vec::new();
+                out.aabb = if pmnx.is_finite() {
+                    [pmnx, pmny, pmxx, pmxy]
+                } else {
+                    WireModel::UNBOUNDED_AABB
+                };
                 out.color = [r * 0.80, g * 0.80, b * 0.80, a * 0.85];
                 out.line_weight_px = wire.line_weight_px;
                 // Wire's pattern was sized for model-space coords during
@@ -3593,12 +3646,8 @@ impl Scene {
     /// Convert a **paper-space** world coordinate to **model-space** using the
     /// geometry of the currently active viewport.  Returns the input unchanged
     /// when there is no active viewport.
-    pub fn paper_to_model(&self, paper_pt: glam::Vec3) -> glam::Vec3 {
-        self.paper_to_model_f64(paper_pt.as_dvec3()).as_vec3()
-    }
-
-    /// f64 variant of [`paper_to_model`] — preserves UTM-scale precision.
-    pub fn paper_to_model_f64(&self, paper_pt: glam::DVec3) -> glam::DVec3 {
+    /// Convert a paper-space point to model space (precise at UTM scale).
+    pub fn paper_to_model(&self, paper_pt: glam::DVec3) -> glam::DVec3 {
         let vp_handle = match self.active_viewport {
             Some(h) => h,
             None => return paper_pt,
@@ -3607,6 +3656,10 @@ impl Scene {
             Some(acadrust::EntityType::Viewport(vp)) => vp,
             _ => return paper_pt,
         };
+        // Uses the viewport's own `view_target` — kept valid by
+        // `normalize_active_viewport_view` on entry, which folds a stale UTM
+        // saved view onto the auto-fit centre so the display, pan/zoom and this
+        // inverse all agree. Cheap (no per-call camera rebuild).
         let scale = vp_effective_scale(vp.custom_scale, vp.view_height, vp.height);
         if scale.abs() < 1e-9 {
             return paper_pt;
@@ -3620,6 +3673,54 @@ impl Scene {
             (paper_pt.y - pcy) / scale + ty,
             paper_pt.z,
         )
+    }
+
+    /// Inverse of [`paper_to_model`]: map a model-space point to the paper
+    /// sheet through the active viewport. Returns the input unchanged when
+    /// there is no active viewport. Used to place overlays (dynamic-input
+    /// anchors, guides) that are stored in model coords while editing inside a
+    /// viewport — projecting the raw UTM model point with the paper camera puts
+    /// them millions of pixels away.
+    pub fn model_to_paper(&self, model_pt: glam::DVec3) -> glam::DVec3 {
+        let vp_handle = match self.active_viewport {
+            Some(h) => h,
+            None => return model_pt,
+        };
+        let vp = match self.document.get_entity(vp_handle) {
+            Some(acadrust::EntityType::Viewport(vp)) => vp,
+            _ => return model_pt,
+        };
+        let scale = vp_effective_scale(vp.custom_scale, vp.view_height, vp.height);
+        glam::DVec3::new(
+            (model_pt.x - vp.view_target.x) * scale + vp.center.x,
+            (model_pt.y - vp.view_target.y) * scale + vp.center.y,
+            model_pt.z,
+        )
+    }
+
+    /// Fold the active viewport's saved view onto the effective camera (the
+    /// auto-fit centre for stale UTM views) and persist it into `view_target` /
+    /// `view_height`. Called on entering MSPACE so pan/zoom, paper↔model and the
+    /// rendered content all share one valid view — otherwise a stale `(0,0,0)`
+    /// target left the camera auto-fitting to the model centre while the cursor
+    /// math used the origin, and pan toggled the two (jitter).
+    pub fn normalize_active_viewport_view(&mut self) {
+        let Some(vp_handle) = self.active_viewport else {
+            return;
+        };
+        let Some(cam) = self.camera_for_viewport(vp_handle) else {
+            return;
+        };
+        let eff_h = cam.ortho_size() as f64 * 2.0;
+        if let Some(acadrust::EntityType::Viewport(vp)) = self.document.get_entity_mut(vp_handle) {
+            vp.view_target.x = cam.target.x;
+            vp.view_target.y = cam.target.y;
+            vp.view_center.x = 0.0;
+            vp.view_center.y = 0.0;
+            if eff_h > 1e-9 {
+                vp.view_height = eff_h;
+            }
+        }
     }
 
     /// Pan the active viewport's model-space view by `(screen_dx, screen_dy)` pixels.
