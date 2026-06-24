@@ -75,28 +75,12 @@ impl CadCommand for LineCommand {
 
     fn on_mouse_move(&mut self, pt: DVec3) -> Option<WireModel> {
         let last = self.last?;
-        Some(WireModel {
-            name: "rubber_band".to_string(),
-            points: vec![
-                [last.x as f32, last.y as f32, last.z as f32],
-                [pt.x as f32, pt.y as f32, pt.z as f32],
-            ],
-            points_low: Vec::new(),
-            color: WireModel::CYAN,
-            selected: false,
-            pattern_length: 0.0,
-            pattern: [0.0; 8],
-            line_weight_px: 1.0,
-            snap_pts: vec![],
-            tangent_geoms: vec![],
-            aci: 0,
-            key_vertices: vec![],
-            aabb: WireModel::UNBOUNDED_AABB,
-            plinegen: true,
-            vp_scissor: None,
-            fill_tris: vec![],
-            fill_tris_low: Vec::new(),
-        })
+        Some(WireModel::solid_f64(
+            "rubber_band".to_string(),
+            vec![[last.x, last.y, last.z], [pt.x, pt.y, pt.z]],
+            WireModel::CYAN,
+            false,
+        ))
     }
 }
 

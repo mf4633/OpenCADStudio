@@ -94,21 +94,18 @@ fn make_pline(xy_pairs: &[[f64; 2]]) -> EntityType {
     })
 }
 
-fn wire_loop(pts: Vec<[f32; 3]>) -> WireModel {
+fn wire_loop(pts: Vec<[f64; 3]>) -> WireModel {
     let mut p = pts;
     if let Some(&first) = p.first() {
         p.push(first);
     }
-    WireModel::solid("rubber_band".into(), p, WireModel::CYAN, false)
+    WireModel::solid_f64("rubber_band".into(), p, WireModel::CYAN, false)
 }
 
 fn wire_seg(a: DVec3, b: DVec3) -> WireModel {
-    WireModel::solid(
+    WireModel::solid_f64(
         "rubber_band".into(),
-        vec![
-            [a.x as f32, a.y as f32, a.z as f32],
-            [b.x as f32, b.y as f32, b.z as f32],
-        ],
+        vec![[a.x, a.y, a.z], [b.x, b.y, b.z]],
         WireModel::CYAN,
         false,
     )
@@ -129,13 +126,13 @@ fn poly_verts_xy(center: DVec3, vertex_r: f64, sides: u32, start_angle: f64) -> 
 }
 
 fn poly_wire(center: DVec3, vertex_r: f64, sides: u32, start_angle: f64) -> WireModel {
-    let pts: Vec<[f32; 3]> = (0..sides)
+    let pts: Vec<[f64; 3]> = (0..sides)
         .map(|i| {
             let a = start_angle + (i as f64) * TAU / sides as f64;
             [
-                (center.x + vertex_r * a.cos()) as f32,
-                (center.y + vertex_r * a.sin()) as f32,
-                center.z as f32,
+                center.x + vertex_r * a.cos(),
+                center.y + vertex_r * a.sin(),
+                center.z,
             ]
         })
         .collect();
@@ -200,10 +197,10 @@ impl CadCommand for RectCommand {
         let a = self.a?;
         let c = ucs_box_corners(a, pt, self.ucs);
         Some(wire_loop(vec![
-            [c[0].x as f32, c[0].y as f32, c[0].z as f32],
-            [c[1].x as f32, c[1].y as f32, c[1].z as f32],
-            [c[2].x as f32, c[2].y as f32, c[2].z as f32],
-            [c[3].x as f32, c[3].y as f32, c[3].z as f32],
+            [c[0].x, c[0].y, c[0].z],
+            [c[1].x, c[1].y, c[1].z],
+            [c[2].x, c[2].y, c[2].z],
+            [c[3].x, c[3].y, c[3].z],
         ]))
     }
     fn dyn_spec(&self) -> Option<crate::command::DynSpec> {
@@ -300,10 +297,10 @@ impl CadCommand for RectRotCommand {
                 let c = b + perp * h;
                 let d = a + perp * h;
                 Some(wire_loop(vec![
-                    [a.x as f32, a.y as f32, a.z as f32],
-                    [b.x as f32, b.y as f32, b.z as f32],
-                    [c.x as f32, c.y as f32, c.z as f32],
-                    [d.x as f32, d.y as f32, d.z as f32],
+                    [a.x, a.y, a.z],
+                    [b.x, b.y, b.z],
+                    [c.x, c.y, c.z],
+                    [d.x, d.y, d.z],
                 ]))
             }
             _ => None,
@@ -390,10 +387,10 @@ impl CadCommand for RectCenCommand {
         let c = self.center?;
         let q = ucs_box_around_center(c, pt, self.ucs);
         Some(wire_loop(vec![
-            [q[0].x as f32, q[0].y as f32, q[0].z as f32],
-            [q[1].x as f32, q[1].y as f32, q[1].z as f32],
-            [q[2].x as f32, q[2].y as f32, q[2].z as f32],
-            [q[3].x as f32, q[3].y as f32, q[3].z as f32],
+            [q[0].x, q[0].y, q[0].z],
+            [q[1].x, q[1].y, q[1].z],
+            [q[2].x, q[2].y, q[2].z],
+            [q[3].x, q[3].y, q[3].z],
         ]))
     }
     fn dyn_spec(&self) -> Option<crate::command::DynSpec> {

@@ -2648,7 +2648,7 @@ impl OpenCADStudio {
                     self.snapper.from_point = None;
                     let (go, gr) = self.tabs[i].ucs_grid_basis();
                     let snap_hit =
-                        self.snapper.snap(raw.as_vec3(), p, &all_wires[..], view_rot, eye, bounds, go, gr);
+                        self.snapper.snap(raw, p, &all_wires[..], view_rot, eye, bounds, go, gr);
                     let mut snapped = snap_hit.map(|s| s.world).unwrap_or(raw);
                     self.tabs[i].snap_result = snap_hit;
                     if let Some(s) = self.tabs[i].snap_result.as_mut() {
@@ -2827,7 +2827,7 @@ impl OpenCADStudio {
                         let (go, gr) = self.tabs[i].ucs_grid_basis();
                         self.snapper.from_point = self.last_point;
                         self.snapper
-                            .snap(cursor_world.as_vec3(), p, &all_wires[..], view_rot, eye, bounds, go, gr)
+                            .snap(cursor_world, p, &all_wires[..], view_rot, eye, bounds, go, gr)
                     };
 
                     // Object Snap Tracking: update dwell, then align the cursor
@@ -3464,7 +3464,7 @@ impl OpenCADStudio {
                         } else {
                             let (go, gr) = self.tabs[i].ucs_grid_basis();
                             self.snapper.from_point = self.last_point;
-                            self.snapper.snap(raw.as_vec3(), p, &all_wires[..], view_rot, eye, bounds, go, gr)
+                            self.snapper.snap(raw, p, &all_wires[..], view_rot, eye, bounds, go, gr)
                         };
                         // snap.world is in paper-space (projected wire coords in MSPACE);
                         // convert to model-space so commands receive consistent coordinates.

@@ -79,17 +79,17 @@ fn arc_preview(center: DVec3, radius: f64, start_angle: f64, end_angle: f64) -> 
     }
     let span = (ea - start_angle).min(TAU);
     let segs = ((span / TAU) * 64.0).ceil().max(4.0) as u32;
-    let pts: Vec<[f32; 3]> = (0..=segs)
+    let pts: Vec<[f64; 3]> = (0..=segs)
         .map(|i| {
             let a = start_angle + span * (i as f64 / segs as f64);
             [
-                (center.x + radius * a.cos()) as f32,
-                (center.y + radius * a.sin()) as f32,
-                center.z as f32,
+                center.x + radius * a.cos(),
+                center.y + radius * a.sin(),
+                center.z,
             ]
         })
         .collect();
-    WireModel::solid("rubber_band".into(), pts, WireModel::CYAN, false)
+    WireModel::solid_f64("rubber_band".into(), pts, WireModel::CYAN, false)
 }
 
 fn make_arc(center: DVec3, radius: f64, start_angle: f64, end_angle: f64) -> EntityType {
@@ -116,12 +116,9 @@ fn rot_delta(center: DVec3, prev: DVec3, curr: DVec3) -> f64 {
 const DIR_TOL: f64 = 0.1745; // ~10°
 
 fn line_wire(a: DVec3, b: DVec3) -> WireModel {
-    WireModel::solid(
+    WireModel::solid_f64(
         "rubber_band".into(),
-        vec![
-            [a.x as f32, a.y as f32, a.z as f32],
-            [b.x as f32, b.y as f32, b.z as f32],
-        ],
+        vec![[a.x, a.y, a.z], [b.x, b.y, b.z]],
         WireModel::CYAN,
         false,
     )
@@ -386,13 +383,9 @@ impl CadCommand for Arc3PCommand {
                     };
                     Some(arc_preview(center, radius, sa, ea))
                 } else {
-                    Some(WireModel::solid(
+                    Some(WireModel::solid_f64(
                         "rubber_band".into(),
-                        vec![
-                            [p1.x as f32, p1.y as f32, p1.z as f32],
-                            [p2.x as f32, p2.y as f32, p2.z as f32],
-                            [pt.x as f32, pt.y as f32, pt.z as f32],
-                        ],
+                        vec![[p1.x, p1.y, p1.z], [p2.x, p2.y, p2.z], [pt.x, pt.y, pt.z]],
                         WireModel::CYAN,
                         false,
                     ))

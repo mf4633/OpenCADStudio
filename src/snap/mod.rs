@@ -433,7 +433,7 @@ impl Snapper {
         };
         // Tangent-only: Grid is disabled here, so the grid basis is irrelevant.
         tmp.snap(
-            cursor_world,
+            cursor_world.as_dvec3(),
             cursor_screen,
             wires,
             view_rot,
@@ -447,7 +447,7 @@ impl Snapper {
     /// Find the best snap candidate near the cursor.
     pub fn snap(
         &self,
-        cursor_world: Vec3,
+        cursor_world: glam::DVec3,
         cursor_screen: Point,
         wires: &[WireModel],
         view_rot: Mat4,
@@ -492,11 +492,23 @@ impl Snapper {
         // UNBOUNDED_AABB (±infinity) passes through automatically without a
         // special-case branch because the arithmetic is exact for infinities.
         let wire_in_range = |wire: &WireModel| -> bool {
-            let r = world_snap_r;
-            cursor_world.x + r >= wire.aabb[0]
-                && cursor_world.x - r <= wire.aabb[2]
-                && cursor_world.y + r >= wire.aabb[1]
-                && cursor_world.y - r <= wire.aabb[3]
+            // The AABB is stored in f32, so at UTM-scale coordinates each bound
+            // is quantized by up to ~1 ulp (≈ coord × 2⁻²³ ≈ 0.7 m at 5.7e6).
+            // When zoomed in hard the snap radius shrinks below that, so the
+            // raw f32 bound can wrongly exclude a wire the cursor is on. Pad the
+            // test by the bound's own quantization so the cull never rejects a
+            // genuinely in-range wire (it only ever over-includes, which the
+            // per-vertex screen test below then rejects precisely).
+            let mag = wire
+                .aabb
+                .iter()
+                .fold(0.0f32, |m, c| m.max(c.abs()));
+            let pad = (mag * f32::EPSILON * 2.0) as f64;
+            let r = world_snap_r as f64 + pad;
+            cursor_world.x + r >= wire.aabb[0] as f64
+                && cursor_world.x - r <= wire.aabb[2] as f64
+                && cursor_world.y + r >= wire.aabb[1] as f64
+                && cursor_world.y - r <= wire.aabb[3] as f64
         };
 
         let mut try_pt = |world: glam::DVec3, snap_type: SnapType| {
@@ -579,10 +591,10 @@ impl Snapper {
                 }
                 if !wire.key_vertices.is_empty() {
                     for seg in wire.key_vertices.windows(2) {
-                        let a = Vec3::new(seg[0][0] as f32, seg[0][1] as f32, seg[0][2] as f32);
-                        let b = Vec3::new(seg[1][0] as f32, seg[1][1] as f32, seg[1][2] as f32);
+                        let a = glam::DVec3::new(seg[0][0], seg[0][1], seg[0][2]);
+                        let b = glam::DVec3::new(seg[1][0], seg[1][1], seg[1][2]);
                         if a.distance_squared(b) > 1e-12 {
-                            try_pt(((a + b) * 0.5).as_dvec3(), SnapType::Midpoint);
+                            try_pt((a + b) * 0.5, SnapType::Midpoint);
                         }
                     }
                 }
@@ -595,10 +607,9 @@ impl Snapper {
                 if !wire_in_range(wire) {
                     continue;
                 }
-                for seg in wire.points.windows(2) {
-                    let p =
-                        nearest_on_segment(cursor_world, Vec3::from(seg[0]), Vec3::from(seg[1]));
-                    try_pt(p.as_dvec3(), SnapType::Nearest);
+                for i in 0..wire.points.len().saturating_sub(1) {
+                    let p = nearest_on_segment(cursor_world, wp_f64(wire, i), wp_f64(wire, i + 1));
+                    try_pt(p, SnapType::Nearest);
                 }
             }
         }
@@ -611,14 +622,14 @@ impl Snapper {
         // on its screen distance to the cursor like every other snap, so it
         // offers when the cursor is near the perpendicular foot. (#118)
         if self.is_on(SnapType::Perpendicular) {
-            let q = self.from_point.unwrap_or(cursor_world);
+            let q = self.from_point.map(|v| v.as_dvec3()).unwrap_or(cursor_world);
             for wire in wires {
                 if !wire_in_range(wire) {
                     continue;
                 }
-                for seg in wire.points.windows(2) {
-                    if let Some(foot) = perp_foot(q, Vec3::from(seg[0]), Vec3::from(seg[1])) {
-                        try_pt(foot.as_dvec3(), SnapType::Perpendicular);
+                for i in 0..wire.points.len().saturating_sub(1) {
+                    if let Some(foot) = perp_foot(q, wp_f64(wire, i), wp_f64(wire, i + 1)) {
+                        try_pt(foot, SnapType::Perpendicular);
                     }
                 }
             }
@@ -634,17 +645,17 @@ impl Snapper {
                     if !wire_in_range(&wires[j]) {
                         continue;
                     }
-                    for seg_a in wires[i].points.windows(2) {
+                    for ai in 0..wires[i].points.len().saturating_sub(1) {
                         // S: pre-convert outside inner loop
-                        let a0 = Vec3::from(seg_a[0]);
-                        let a1 = Vec3::from(seg_a[1]);
+                        let a0 = wp_f64(&wires[i], ai);
+                        let a1 = wp_f64(&wires[i], ai + 1);
                         let a_min_x = a0.x.min(a1.x);
                         let a_max_x = a0.x.max(a1.x);
                         let a_min_y = a0.y.min(a1.y);
                         let a_max_y = a0.y.max(a1.y);
-                        for seg_b in wires[j].points.windows(2) {
-                            let b0 = Vec3::from(seg_b[0]);
-                            let b1 = Vec3::from(seg_b[1]);
+                        for bi in 0..wires[j].points.len().saturating_sub(1) {
+                            let b0 = wp_f64(&wires[j], bi);
+                            let b1 = wp_f64(&wires[j], bi + 1);
                             // O: tight per-segment AABB overlap cull
                             if a_max_x < b0.x.min(b1.x)
                                 || a_min_x > b0.x.max(b1.x)
@@ -654,7 +665,7 @@ impl Snapper {
                                 continue;
                             }
                             if let Some(pt) = seg_intersect_xy(a0, a1, b0, b1) {
-                                try_pt(pt.as_dvec3(), SnapType::Intersection);
+                                try_pt(pt, SnapType::Intersection);
                             }
                         }
                     }
@@ -671,8 +682,8 @@ impl Snapper {
                 }
                 // Extend beyond the first point.
                 {
-                    let p0 = Vec3::from(wire.points[0]);
-                    let p1 = Vec3::from(wire.points[1]);
+                    let p0 = wp_f64(wire, 0);
+                    let p1 = wp_f64(wire, 1);
                     if let Some(ext) = extension_snap(
                         cursor_world,
                         p0,
@@ -682,13 +693,13 @@ impl Snapper {
                         bounds,
                         self.osnap_radius_px,
                     ) {
-                        try_pt(ext.as_dvec3(), SnapType::Extension);
+                        try_pt(ext, SnapType::Extension);
                     }
                 }
                 // Extend beyond the last point.
                 {
-                    let p_last = Vec3::from(wire.points[n - 1]);
-                    let p_prev = Vec3::from(wire.points[n - 2]);
+                    let p_last = wp_f64(wire, n - 1);
+                    let p_prev = wp_f64(wire, n - 2);
                     if let Some(ext) = extension_snap(
                         cursor_world,
                         p_last,
@@ -698,7 +709,7 @@ impl Snapper {
                         bounds,
                         self.osnap_radius_px,
                     ) {
-                        try_pt(ext.as_dvec3(), SnapType::Extension);
+                        try_pt(ext, SnapType::Extension);
                     }
                 }
             }
@@ -714,9 +725,8 @@ impl Snapper {
                         return None;
                     }
                     Some(
-                        w.points
-                            .iter()
-                            .map(|&p| world_to_screen(glam::DVec3::new(p[0] as f64, p[1] as f64, p[2] as f64), view_rot, eye, bounds))
+                        (0..w.points.len())
+                            .map(|i| world_to_screen(wp_f64(w, i), view_rot, eye, bounds))
                             .collect::<Vec<_>>(),
                     )
                 })
@@ -730,16 +740,16 @@ impl Snapper {
                     let Some(ref sj) = screen_pts[j] else {
                         continue;
                     };
-                    for (ai, seg_a) in wires[i].points.windows(2).enumerate() {
+                    for ai in 0..wires[i].points.len().saturating_sub(1) {
                         let sa0 = si[ai];
                         let sa1 = si[ai + 1];
-                        for (bi, _) in wires[j].points.windows(2).enumerate() {
+                        for bi in 0..wires[j].points.len().saturating_sub(1) {
                             let sb0 = sj[bi];
                             let sb1 = sj[bi + 1];
                             if let Some((ta, _)) = seg_intersect_2d(sa0, sa1, sb0, sb1) {
-                                let wa0 = Vec3::from(seg_a[0]);
-                                let wa1 = Vec3::from(seg_a[1]);
-                                try_pt((wa0 + ta * (wa1 - wa0)).as_dvec3(), SnapType::ApparentIntersection);
+                                let wa0 = wp_f64(&wires[i], ai);
+                                let wa1 = wp_f64(&wires[i], ai + 1);
+                                try_pt(wa0 + ta as f64 * (wa1 - wa0), SnapType::ApparentIntersection);
                             }
                         }
                     }
@@ -749,16 +759,17 @@ impl Snapper {
 
         // ── Grid ───────────────────────────────────────────────────────────
         if self.is_on(SnapType::Grid) {
-            let s = self.grid_spacing;
+            let s = self.grid_spacing as f64;
             // Round in the UCS grid frame, then map back to world.
-            let ax = grid_rot.transform_vector3(Vec3::X);
-            let ay = grid_rot.transform_vector3(Vec3::Y);
-            let az = grid_rot.transform_vector3(Vec3::Z);
-            let rel = cursor_world - grid_origin;
+            let ax = grid_rot.transform_vector3(Vec3::X).as_dvec3();
+            let ay = grid_rot.transform_vector3(Vec3::Y).as_dvec3();
+            let az = grid_rot.transform_vector3(Vec3::Z).as_dvec3();
+            let origin = grid_origin.as_dvec3();
+            let rel = cursor_world - origin;
             let ux = (rel.dot(ax) / s).round() * s;
             let uy = (rel.dot(ay) / s).round() * s;
             let uz = (rel.dot(az) / s).round() * s;
-            try_pt((grid_origin + ax * ux + ay * uy + az * uz).as_dvec3(), SnapType::Grid);
+            try_pt(origin + ax * ux + ay * uy + az * uz, SnapType::Grid);
         }
 
         // ── Tangent ────────────────────────────────────────────────────────
@@ -861,8 +872,23 @@ fn snap_priority(t: SnapType) -> u8 {
 
 // ── Geometric helpers ─────────────────────────────────────────────────────
 
+/// Reconstruct the absolute f64 position of wire vertex `i` from its
+/// double-single high/low pair. At UTM-scale coordinates the `points` (high)
+/// f32 alone is ~0.5 m off; adding the low residual restores f64 precision so
+/// computed snaps (nearest/perp/intersection/extension) land on the geometry.
+#[inline]
+fn wp_f64(wire: &WireModel, i: usize) -> glam::DVec3 {
+    let h = wire.points[i];
+    let l = wire.points_low.get(i).copied().unwrap_or([0.0; 3]);
+    glam::DVec3::new(
+        h[0] as f64 + l[0] as f64,
+        h[1] as f64 + l[1] as f64,
+        h[2] as f64 + l[2] as f64,
+    )
+}
+
 /// Closest point on segment [p0, p1] to `query`.
-fn nearest_on_segment(query: Vec3, p0: Vec3, p1: Vec3) -> Vec3 {
+fn nearest_on_segment(query: glam::DVec3, p0: glam::DVec3, p1: glam::DVec3) -> glam::DVec3 {
     let d = p1 - p0;
     let len2 = d.x * d.x + d.y * d.y;
     if len2 < 1e-12 {
@@ -870,12 +896,12 @@ fn nearest_on_segment(query: Vec3, p0: Vec3, p1: Vec3) -> Vec3 {
     }
     let t = ((query.x - p0.x) * d.x + (query.y - p0.y) * d.y) / len2;
     let t = t.clamp(0.0, 1.0);
-    Vec3::new(p0.x + t * d.x, p0.y + t * d.y, p0.z + t * d.z)
+    glam::DVec3::new(p0.x + t * d.x, p0.y + t * d.y, p0.z + t * d.z)
 }
 
 /// Foot of perpendicular from `query` to the line through [p0, p1] (XY plane, unclamped).
 /// Returns `None` if the segment is degenerate.
-fn perp_foot(query: Vec3, p0: Vec3, p1: Vec3) -> Option<Vec3> {
+fn perp_foot(query: glam::DVec3, p0: glam::DVec3, p1: glam::DVec3) -> Option<glam::DVec3> {
     let d = p1 - p0;
     let len2 = d.x * d.x + d.y * d.y;
     if len2 < 1e-12 {
@@ -886,11 +912,11 @@ fn perp_foot(query: Vec3, p0: Vec3, p1: Vec3) -> Option<Vec3> {
     if t < -1.0 || t > 2.0 {
         return None;
     }
-    Some(Vec3::new(p0.x + t * d.x, p0.y + t * d.y, p0.z + t * d.z))
+    Some(glam::DVec3::new(p0.x + t * d.x, p0.y + t * d.y, p0.z + t * d.z))
 }
 
 /// XY-plane segment-segment intersection.  Returns `None` if parallel or outside.
-fn seg_intersect_xy(a0: Vec3, a1: Vec3, b0: Vec3, b1: Vec3) -> Option<Vec3> {
+fn seg_intersect_xy(a0: glam::DVec3, a1: glam::DVec3, b0: glam::DVec3, b1: glam::DVec3) -> Option<glam::DVec3> {
     let d1x = a1.x - a0.x;
     let d1y = a1.y - a0.y;
     let d2x = b1.x - b0.x;
@@ -906,7 +932,7 @@ fn seg_intersect_xy(a0: Vec3, a1: Vec3, b0: Vec3, b1: Vec3) -> Option<Vec3> {
     if t < 0.0 || t > 1.0 || s < 0.0 || s > 1.0 {
         return None;
     }
-    Some(Vec3::new(a0.x + t * d1x, a0.y + t * d1y, 0.0))
+    Some(glam::DVec3::new(a0.x + t * d1x, a0.y + t * d1y, 0.0))
 }
 
 /// Intersection of two infinite lines in the XY plane, each given by an origin
@@ -945,14 +971,14 @@ fn seg_intersect_2d(a0: Point, a1: Point, b0: Point, b1: Point) -> Option<(f32, 
 /// Snap to the extension of a ray beyond `origin` in `dir` direction.
 /// Returns `None` if the cursor is not near the extension line.
 fn extension_snap(
-    cursor_world: Vec3,
-    origin: Vec3,
-    dir: Vec3,
+    cursor_world: glam::DVec3,
+    origin: glam::DVec3,
+    dir: glam::DVec3,
     view_rot: Mat4,
         eye: glam::DVec3,
     bounds: Rectangle,
     radius_px: f32,
-) -> Option<Vec3> {
+) -> Option<glam::DVec3> {
     let len2 = dir.x * dir.x + dir.y * dir.y;
     if len2 < 1e-12 {
         return None;
@@ -961,9 +987,9 @@ fn extension_snap(
     if t < 0.05 {
         return None;
     } // only beyond the endpoint
-    let world_pt = Vec3::new(origin.x + t * dir.x, origin.y + t * dir.y, origin.z);
-    let screen_pt = world_to_screen(world_pt.as_dvec3(), view_rot, eye, bounds);
-    let cursor_screen = world_to_screen(cursor_world.as_dvec3(), view_rot, eye, bounds);
+    let world_pt = glam::DVec3::new(origin.x + t * dir.x, origin.y + t * dir.y, origin.z);
+    let screen_pt = world_to_screen(world_pt, view_rot, eye, bounds);
+    let cursor_screen = world_to_screen(cursor_world, view_rot, eye, bounds);
     if dist2(screen_pt, cursor_screen) > radius_px * radius_px {
         return None;
     }

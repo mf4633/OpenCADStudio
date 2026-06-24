@@ -66,14 +66,14 @@ fn ellipse_wire(
     let segs = 64u32;
     // Unwrap t_end so the arc goes counter-clockwise.
     let t_e = if t_end <= t_start { t_end + TAU } else { t_end };
-    let pts: Vec<[f32; 3]> = (0..=segs)
+    let pts: Vec<[f64; 3]> = (0..=segs)
         .map(|i| {
             let t = t_start + (t_e - t_start) * (i as f64 / segs as f64);
             let p = center + t.cos() * r_major * major_dir + t.sin() * r_major * ratio * v;
-            [p.x as f32, p.y as f32, p.z as f32]
+            [p.x, p.y, p.z]
         })
         .collect();
-    WireModel::solid("rubber_band".into(), pts, WireModel::CYAN, false)
+    WireModel::solid_f64("rubber_band".into(), pts, WireModel::CYAN, false)
 }
 
 /// Convert a world point to the parametric angle on the ellipse.
@@ -610,28 +610,12 @@ fn angle_from_point(center: DVec3, major: DVec3, ratio: f64, pt: DVec3) -> f64 {
 }
 
 fn line_wire(from: DVec3, to: DVec3) -> WireModel {
-    WireModel {
-        name: "rubber_band".into(),
-        points: vec![
-            [from.x as f32, from.y as f32, from.z as f32],
-            [to.x as f32, to.y as f32, to.z as f32],
-        ],
-        points_low: Vec::new(),
-        color: WireModel::CYAN,
-        selected: false,
-        pattern_length: 0.0,
-        pattern: [0.0; 8],
-        line_weight_px: 1.0,
-        snap_pts: vec![],
-        tangent_geoms: vec![],
-        aci: 0,
-        key_vertices: vec![],
-        aabb: WireModel::UNBOUNDED_AABB,
-        plinegen: true,
-        vp_scissor: None,
-        fill_tris: vec![],
-        fill_tris_low: Vec::new(),
-    }
+    WireModel::solid_f64(
+        "rubber_band".into(),
+        vec![[from.x, from.y, from.z], [to.x, to.y, to.z]],
+        WireModel::CYAN,
+        false,
+    )
 }
 
 

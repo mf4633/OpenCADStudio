@@ -98,6 +98,34 @@ impl WireModel {
         f32::INFINITY,
     ];
 
+    /// Double-single split: `high + low ≈ v` to ~f64 precision in two f32s.
+    /// Matches the renderer's relative-to-eye reconstruction.
+    #[inline]
+    pub fn split_ds(v: f64) -> (f32, f32) {
+        let high = v as f32;
+        (high, (v - high as f64) as f32)
+    }
+
+    /// Create a solid preview wire from f64 points, filling the double-single
+    /// `points_low` buffer so the line stays precise at UTM-scale coordinates.
+    /// Rubber-band previews built straight from f32 absolute points jitter
+    /// ~0.5 m at UTM because the wire pass is relative-to-eye and expects the
+    /// low residual; this keeps the preview glued to the cursor.
+    pub fn solid_f64(name: String, points: Vec<[f64; 3]>, color: [f32; 4], selected: bool) -> Self {
+        let mut hi = Vec::with_capacity(points.len());
+        let mut lo = Vec::with_capacity(points.len());
+        for [x, y, z] in points {
+            let (hx, lx) = Self::split_ds(x);
+            let (hy, ly) = Self::split_ds(y);
+            let (hz, lz) = Self::split_ds(z);
+            hi.push([hx, hy, hz]);
+            lo.push([lx, ly, lz]);
+        }
+        let mut w = Self::solid(name, hi, color, selected);
+        w.points_low = lo;
+        w
+    }
+
     /// Create a solid wire (no dash pattern, 1px weight).
     pub fn solid(name: String, points: Vec<[f32; 3]>, color: [f32; 4], selected: bool) -> Self {
         Self {

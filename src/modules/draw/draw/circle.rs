@@ -60,20 +60,20 @@ pub const ICON: IconKind = ICON_CR;
 
 fn circle_wire(center: DVec3, radius: f64) -> WireModel {
     let segs = 64u32;
-    let mut pts: Vec<[f32; 3]> = (0..=segs)
+    let mut pts: Vec<[f64; 3]> = (0..=segs)
         .map(|i| {
             let a = (i as f64) * TAU / segs as f64;
             [
-                (center.x + radius * a.cos()) as f32,
-                (center.y + radius * a.sin()) as f32,
-                center.z as f32,
+                center.x + radius * a.cos(),
+                center.y + radius * a.sin(),
+                center.z,
             ]
         })
         .collect();
     if let Some(first) = pts.first().cloned() {
         pts.push(first);
     }
-    WireModel::solid("rubber_band".into(), pts, WireModel::CYAN, false)
+    WireModel::solid_f64("rubber_band".into(), pts, WireModel::CYAN, false)
 }
 
 fn make_circle(center: DVec3, radius: f64) -> EntityType {
@@ -404,13 +404,9 @@ impl CadCommand for Circle3PCommand {
                 if let Some((center, radius)) = circumcircle(a, b, pt) {
                     Some(circle_wire(center, radius))
                 } else {
-                    Some(WireModel::solid(
+                    Some(WireModel::solid_f64(
                         "rubber_band".into(),
-                        vec![
-                            [a.x as f32, a.y as f32, a.z as f32],
-                            [b.x as f32, b.y as f32, b.z as f32],
-                            [pt.x as f32, pt.y as f32, pt.z as f32],
-                        ],
+                        vec![[a.x, a.y, a.z], [b.x, b.y, b.z], [pt.x, pt.y, pt.z]],
                         WireModel::CYAN,
                         false,
                     ))
