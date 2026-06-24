@@ -82,6 +82,12 @@ pub struct NestedRef {
     pub lt_is_byblock: bool,
     pub lw_is_byblock: bool,
     pub instance_offsets: Vec<[f64; 3]>,
+    /// XCLIP boundary for this nested insert, in the parent defn's local frame
+    /// (`None` = unclipped). Baked at build time because the clip's spatial
+    /// filter lives in `doc.objects`, which isn't reachable at expand time; on
+    /// expansion it is mapped to world by the accumulated transform and the
+    /// nested wires are clipped to it.
+    pub clip_poly: Option<Vec<[f64; 2]>>,
 }
 
 #[derive(Clone, Debug)]
@@ -413,6 +419,12 @@ fn build_nested_ref(
         crate::scene::view::render::render_style_for(doc, &EntityType::Insert(nested_ins.clone()));
     let _ = bg_color;
 
+    // Bake the XCLIP boundary (parent-defn-local) so the nested insert keeps
+    // its clip when the parent block is expanded — the spatial filter object
+    // isn't reachable at expand time.
+    let clip_poly = crate::scene::pick::xclip::insert_spatial_filter(doc, nested_ins)
+        .map(|sf| crate::scene::pick::xclip::world_clip_polygon_f64(sf, nested_ins, [0.0; 3]));
+
     NestedRef {
         block_name: nested_ins.block_name.clone(),
         xform: nested_ins.get_transform(),
@@ -424,6 +436,7 @@ fn build_nested_ref(
         lt_is_byblock: nested_ins.common.linetype.eq_ignore_ascii_case("byblock"),
         lw_is_byblock: matches!(nested_ins.common.line_weight, LineWeight::ByBlock),
         instance_offsets: array_offsets(nested_ins),
+        clip_poly,
     }
 }
 
@@ -1063,6 +1076,11 @@ struct Batches {
     by_style: HashMap<StyleKey, BatchEntry>,
     /// Batches that overflowed `MAX_POINTS_PER_BATCH` and have been closed.
     closed: Vec<BatchEntry>,
+    /// Already-finalized wires that bypass the point batcher — currently the
+    /// clipped output of an XCLIP'd nested insert, which is produced as whole
+    /// WireModels by `clip_wires`. Appended verbatim at `finalize` (only their
+    /// name/selected flag are stamped to match the host insert).
+    extra_wires: Vec<WireModel>,
 }
 
 impl BatchEntry {
@@ -1098,7 +1116,9 @@ impl BatchEntry {
 
 impl Batches {
     fn finalize(self, name: &str, selected: bool, bg_color: [f32; 4]) -> Vec<WireModel> {
-        self.closed
+        let extra = self.extra_wires;
+        let mut out: Vec<WireModel> = self
+            .closed
             .into_iter()
             .chain(self.by_style.into_values())
             .map(|b| {
@@ -1133,7 +1153,15 @@ impl Batches {
                     fill_tris_low: Vec::new(),
                 }
             })
-            .collect()
+            .collect();
+        // Clipped nested-insert wires are already whole WireModels; stamp the
+        // host insert's name/selected so picking maps them back correctly.
+        for mut w in extra {
+            w.name = name.to_string();
+            w.selected = selected;
+            out.push(w);
+        }
+        out
     }
 }
 
@@ -1302,23 +1330,46 @@ fn expand_defn(
                     bg_color: ctx.bg_color,
                 };
                 visited.push(nref.block_name.clone());
-                for offset in &nref.instance_offsets {
-                    let composed = if offset == &[0.0; 3] {
-                        nref.xform.then(accum_xform)
-                    } else {
-                        let translation = Transform::from_translation(Vector3::new(
-                            offset[0], offset[1], offset[2],
-                        ));
-                        translation.then(&nref.xform).then(accum_xform)
-                    };
-                    expand_defn(
-                        nested_defn,
-                        &composed,
-                        &inner_ctx,
-                        out,
-                        visited,
-                        depth + 1,
-                    );
+                if let Some(cp) = &nref.clip_poly {
+                    // XCLIP'd nested insert: expand into an isolated batch set,
+                    // finalize to whole wires, clip them to the boundary mapped
+                    // into world by the accumulated transform, then carry the
+                    // clipped wires out via `extra_wires`. Single instance only —
+                    // an array of clipped nested inserts is vanishingly rare, so
+                    // the array case is not handled (boundary placement per
+                    // instance would differ).
+                    let composed = nref.xform.then(accum_xform);
+                    let mut sub = Batches::default();
+                    expand_defn(nested_defn, &composed, &inner_ctx, &mut sub, visited, depth + 1);
+                    let mut wires = sub.finalize("", ctx.selected, ctx.bg_color);
+                    let world_poly: Vec<[f64; 2]> = cp
+                        .iter()
+                        .map(|&[x, y]| {
+                            let w = accum_xform.apply(Vector3::new(x, y, 0.0));
+                            [w.x, w.y]
+                        })
+                        .collect();
+                    crate::scene::pick::xclip::clip_wires(&mut wires, &world_poly);
+                    out.extra_wires.append(&mut wires);
+                } else {
+                    for offset in &nref.instance_offsets {
+                        let composed = if offset == &[0.0; 3] {
+                            nref.xform.then(accum_xform)
+                        } else {
+                            let translation = Transform::from_translation(Vector3::new(
+                                offset[0], offset[1], offset[2],
+                            ));
+                            translation.then(&nref.xform).then(accum_xform)
+                        };
+                        expand_defn(
+                            nested_defn,
+                            &composed,
+                            &inner_ctx,
+                            out,
+                            visited,
+                            depth + 1,
+                        );
+                    }
                 }
                 visited.pop();
             }

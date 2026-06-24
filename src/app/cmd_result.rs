@@ -620,36 +620,12 @@ impl OpenCADStudio {
                         base_pt - self.clipboard_centroid.as_dvec3() + wo_corr;
                     let translate = crate::command::EntityTransform::Translate(delta);
                     self.push_undo_snapshot(i, "PASTECLIP");
-                    // Recreate any layer / linetype / style the copied entities
-                    // need but this drawing lacks (cross-drawing paste). (#129)
-                    self.merge_clipboard_deps(i);
-                    // …and any block definition the pasted INSERTs reference,
-                    // else a block reference renders empty. (#135)
-                    self.merge_clipboard_blocks(i);
                     let count = self.clipboard.len();
-                    // Index-aligned with `clipboard` (NULL = add failed) so the
-                    // captured extension-dictionary subtrees can be matched back
-                    // to their pasted entity by index.
-                    let by_index: Vec<Handle> = self
-                        .clipboard
-                        .clone()
-                        .into_iter()
-                        .map(|mut entity| {
-                            crate::scene::view::dispatch::apply_transform(&mut entity, &translate);
-                            self.tabs[i].scene.add_entity_clone(entity)
-                        })
-                        .collect();
-                    // Recreate each pasted entity's xdictionary graph (XCLIP
-                    // spatial filters etc.) in this document. (#xclip-paste)
-                    self.merge_clipboard_ext_objects(i, &by_index);
+                    let by_index = self.finalize_paste(i, Some(translate));
                     self.tabs[i].scene.deselect_all();
                     for h in by_index.iter().copied().filter(|h| !h.is_null()) {
                         self.tabs[i].scene.select_entity(h, false);
                     }
-                    // Tessellate any pasted ACIS solids — top-level ones and
-                    // those inside a recreated block definition — so they
-                    // render instead of staying invisible. (#135)
-                    self.tabs[i].scene.populate_meshes_from_document();
                     self.tabs[i].dirty = true;
                     // Surface any layers the paste brought in (cross-drawing)
                     // in the layer manager and the layer dropdown.
@@ -1872,6 +1848,36 @@ impl OpenCADStudio {
         }
     }
 
+    /// Shared paste finalize for every paste path (PASTECLIP, PASTEORIG):
+    /// recreate the clipboard's dependency records and block definitions, add
+    /// each entity with fresh handles (optionally transformed), recreate each
+    /// entity's xdictionary graph (XCLIP filters etc.), and tessellate pasted
+    /// solids. Returns the new handles, index-aligned with the clipboard
+    /// (NULL where an add failed). Keeping this in one place means a new
+    /// cross-drawing concern is wired once, not re-implemented per command.
+    pub(super) fn finalize_paste(
+        &mut self,
+        i: usize,
+        translate: Option<crate::command::EntityTransform>,
+    ) -> Vec<Handle> {
+        self.merge_clipboard_deps(i);
+        self.merge_clipboard_blocks(i);
+        let by_index: Vec<Handle> = self
+            .clipboard
+            .clone()
+            .into_iter()
+            .map(|mut entity| {
+                if let Some(t) = &translate {
+                    crate::scene::view::dispatch::apply_transform(&mut entity, t);
+                }
+                self.tabs[i].scene.add_entity_clone(entity)
+            })
+            .collect();
+        self.merge_clipboard_ext_objects(i, &by_index);
+        self.tabs[i].scene.populate_meshes_from_document();
+        by_index
+    }
+
     /// Recreate the extension-dictionary object graph (XCLIP spatial filters,
     /// attached XRecords, …) captured for each copied entity, cloning every
     /// object into this document with fresh handles, remapping all internal
@@ -1879,37 +1885,19 @@ impl OpenCADStudio {
     /// the new root. `by_index` is the paste's new entity handles, aligned with
     /// the clipboard order (NULL where the add failed). No-op without captures.
     pub(super) fn merge_clipboard_ext_objects(&mut self, i: usize, by_index: &[Handle]) {
-        use std::collections::HashMap;
         if self.clipboard_deps.ext_objects.is_empty() {
             return;
         }
         let captures = self.clipboard_deps.ext_objects.clone();
         let doc = &mut self.tabs[i].scene.document;
-        for cap in captures {
+        for cap in &captures {
             let Some(&new_entity) = by_index.get(cap.entity_index) else {
                 continue;
             };
             if new_entity.is_null() {
                 continue;
             }
-            // old handle → fresh handle for the whole subtree, plus the entity
-            // itself so an object owned by the entity remaps onto the new copy.
-            let mut remap: HashMap<Handle, Handle> = HashMap::new();
-            remap.insert(cap.src_entity_handle, new_entity);
-            for (old, _) in &cap.objects {
-                // `allocate_handle` advances the counter; `next_handle()` only
-                // peeks, so reusing it here would hand every object the same
-                // handle and they'd overwrite each other in `doc.objects`.
-                remap.insert(*old, doc.allocate_handle());
-            }
-            for (old, obj) in &cap.objects {
-                let mut obj = obj.clone();
-                let new_h = remap[old];
-                remap_object(&mut obj, new_h, &remap);
-                doc.objects.insert(new_h, obj);
-            }
-            // Point the pasted entity at the cloned root dictionary.
-            if let Some(new_root) = remap.get(&cap.root).copied() {
+            if let Some(new_root) = recreate_ext_subtree(doc, cap, Some(new_entity)) {
                 if let Some(e) = doc.get_entity_mut(new_entity) {
                     e.common_mut().xdictionary_handle = Some(new_root);
                 }
@@ -1918,6 +1906,30 @@ impl OpenCADStudio {
         // The wires were tessellated before the filters existed; force a rebuild
         // so the clip is applied to the freshly-pasted, now-filtered inserts.
         self.tabs[i].scene.bump_geometry();
+    }
+
+    /// Recreate the captured xdictionary subtrees in this document (fresh
+    /// handles, remapped references) WITHOUT an added host entity, returning
+    /// `entity_index → new xdictionary root`. Used by PASTEBLOCK, which folds
+    /// the clipboard into a new block definition: the caller stamps each new
+    /// root onto the matching entity's `xdictionary_handle` before defining the
+    /// block, so the block's nested insert keeps its XCLIP filter.
+    pub(super) fn recreate_clipboard_ext_roots(
+        &mut self,
+        i: usize,
+    ) -> std::collections::HashMap<usize, Handle> {
+        let mut out = std::collections::HashMap::new();
+        if self.clipboard_deps.ext_objects.is_empty() {
+            return out;
+        }
+        let captures = self.clipboard_deps.ext_objects.clone();
+        let doc = &mut self.tabs[i].scene.document;
+        for cap in &captures {
+            if let Some(new_root) = recreate_ext_subtree(doc, cap, None) {
+                out.insert(cap.entity_index, new_root);
+            }
+        }
+        out
     }
 
     fn restore_pre_cmd_tangent(&mut self) {
@@ -1932,6 +1944,33 @@ impl OpenCADStudio {
             self.polar_mode = false;
         }
     }
+}
+
+/// Clone one captured xdictionary subtree into `doc` with fresh handles,
+/// remapping every internal reference (and the owning entity, when known),
+/// returning the new root handle. `allocate_handle` advances the document's
+/// handle counter — `next_handle()` only peeks, so reusing it would hand every
+/// object the same handle and collapse the dictionary chain.
+fn recreate_ext_subtree(
+    doc: &mut acadrust::CadDocument,
+    cap: &crate::app::ClipExtObjects,
+    entity_handle: Option<Handle>,
+) -> Option<Handle> {
+    use std::collections::HashMap;
+    let mut remap: HashMap<Handle, Handle> = HashMap::new();
+    if let Some(eh) = entity_handle {
+        remap.insert(cap.src_entity_handle, eh);
+    }
+    for (old, _) in &cap.objects {
+        remap.insert(*old, doc.allocate_handle());
+    }
+    for (old, obj) in &cap.objects {
+        let mut obj = obj.clone();
+        let new_h = remap[old];
+        remap_object(&mut obj, new_h, &remap);
+        doc.objects.insert(new_h, obj);
+    }
+    remap.get(&cap.root).copied()
 }
 
 /// Rewrite a cloned extension-dictionary object onto fresh handles: set its own
