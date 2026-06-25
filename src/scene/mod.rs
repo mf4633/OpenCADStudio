@@ -1685,8 +1685,8 @@ impl Scene {
     /// viewport_factor)`. The annotation multiplier sizes model-space
     /// text/dims (50.0 for "1:50"); the viewport factor is the paper/drawing
     /// ratio (0.02 for "1:50"). Sorted smallest ratio first (1:100 … 1:1 …
-    /// 10:1). Empty when the drawing carries no scale list — the caller
-    /// substitutes its built-in defaults.
+    /// 10:1). Falls back to a standard ratio set when the drawing carries no
+    /// scale list of its own, so the scale picker is always usable. (#154)
     pub fn scale_list(&self) -> Vec<(String, f32, f64)> {
         let mut list: Vec<(String, f32, f64)> = self
             .document
@@ -1708,6 +1708,31 @@ impl Scene {
             })
             .collect();
         list.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        if list.is_empty() {
+            // Many drawings (and minimal DXF/DWG exports) carry no
+            // ACAD_SCALELIST Scale objects at all. Without a fallback the
+            // annotation / viewport scale picker would be empty and so appear
+            // broken. Substitute the standard ratio set — file scales still
+            // win whenever the drawing actually defines any. (#154)
+            const DEFAULT_SCALES: &[(&str, f64)] = &[
+                ("1:500", 0.002),
+                ("1:200", 0.005),
+                ("1:100", 0.01),
+                ("1:50", 0.02),
+                ("1:20", 0.05),
+                ("1:10", 0.1),
+                ("1:5", 0.2),
+                ("1:2", 0.5),
+                ("1:1", 1.0),
+                ("2:1", 2.0),
+                ("5:1", 5.0),
+                ("10:1", 10.0),
+            ];
+            list = DEFAULT_SCALES
+                .iter()
+                .map(|&(label, vp)| (label.to_string(), (1.0 / vp) as f32, vp))
+                .collect();
+        }
         list
     }
 
