@@ -32,6 +32,11 @@ pub struct Pipeline {
     /// Same shader as wire_pipeline but depth_compare=Greater, depth_write_enabled=false.
     /// Used to draw ghost copies of selected wires through occluding geometry.
     wire_xray_pipeline: wgpu::RenderPipeline,
+    /// Layout for the per-wire `WireConst` storage buffer (group 1 of the wire /
+    /// xray pipelines). `Some` on native; `None` on web (fat instance, no
+    /// storage). Passed to `WireGpu::from_run` / `from_batch` so they can build
+    /// each batch's per-wire bind group.
+    wire_const_bgl: Option<wgpu::BindGroupLayout>,
     hatch_pipeline: wgpu::RenderPipeline,
     /// Phase 4-B — single-draw batched hatch pipeline. Per-instance
     /// data lives in storage buffers; one draw call covers every
@@ -181,9 +186,19 @@ impl Pipeline {
         });
 
         // ── Wire pipeline ──────────────────────────────────────────────────
+        // Native: per-wire constants live in a storage buffer (group 1), so the
+        // slim instance only carries per-segment data. WebGL2 has no
+        // vertex-stage storage buffers, so the wasm build keeps the fat instance
+        // and a single bind group.
+        #[cfg(not(target_arch = "wasm32"))]
+        let wire_const_bgl = wire_gpu::WireConst::bind_group_layout(device);
+        #[cfg(not(target_arch = "wasm32"))]
+        let wire_bgls: &[&wgpu::BindGroupLayout] = &[&frame_bgl, &wire_const_bgl];
+        #[cfg(target_arch = "wasm32")]
+        let wire_bgls: &[&wgpu::BindGroupLayout] = &[&frame_bgl];
         let wire_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("wire.pipeline_layout"),
-            bind_group_layouts: &[&frame_bgl],
+            bind_group_layouts: wire_bgls,
             push_constant_ranges: &[],
         });
 
@@ -192,6 +207,11 @@ impl Pipeline {
 
         let wire_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("wire.shader"),
+            #[cfg(not(target_arch = "wasm32"))]
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
+                "../../shaders/wire_indexed.wgsl"
+            ))),
+            #[cfg(target_arch = "wasm32")]
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
                 "../../shaders/wire.wgsl"
             ))),
@@ -909,6 +929,10 @@ impl Pipeline {
         Self {
             wire_pipeline,
             wire_xray_pipeline,
+            #[cfg(not(target_arch = "wasm32"))]
+            wire_const_bgl: Some(wire_const_bgl),
+            #[cfg(target_arch = "wasm32")]
+            wire_const_bgl: None,
             hatch_pipeline,
             hatch_batched_pipeline,
             image_pipeline,
@@ -983,7 +1007,7 @@ impl Pipeline {
             {
                 j += 1;
             }
-            batches.extend(WireGpu::from_run(device, &wires[i..j], depth_map, scissor, mesh_edge));
+            batches.extend(WireGpu::from_run(device, &wires[i..j], depth_map, scissor, mesh_edge, self.wire_const_bgl.as_ref()));
             i = j;
         }
         self.gpu_wires = batches;
@@ -1044,7 +1068,8 @@ impl Pipeline {
         if let Some(h) = hover {
             push(h.value(), WireModel::HOVER, wires, &mut out);
         }
-        self.gpu_selected_wires = WireGpu::from_run(device, &out, depth_map, None, false);
+        self.gpu_selected_wires =
+            WireGpu::from_run(device, &out, depth_map, None, false, self.wire_const_bgl.as_ref());
     }
 
     /// Upload the live overlay (command preview / interim / grip-drag) wires.
@@ -1059,7 +1084,7 @@ impl Pipeline {
         self.gpu_preview_wires = if wires.is_empty() {
             vec![]
         } else {
-            WireGpu::from_run(device, wires, depth_map, None, false)
+            WireGpu::from_run(device, wires, depth_map, None, false, self.wire_const_bgl.as_ref())
         };
     }
 
@@ -1141,7 +1166,8 @@ impl Pipeline {
     ) {
         // Edge buffer is always built from `face3d_wires`, so 3DFACE
         // outlines stay on the screen regardless of mode.
-        self.gpu_face3d_edges = WireGpu::from_batch(device, face3d_wires, depth_map);
+        self.gpu_face3d_edges =
+            WireGpu::from_batch(device, face3d_wires, depth_map, self.wire_const_bgl.as_ref());
         // Fill buffer split: 3D quads + PolyfaceMesh / PolygonMesh face
         // tris go to `vertex_buffer_3d` (gated by `keep_3d_mesh_fills`);
         // 2D fills (text-LOD greek, MultiLeader background) go to
@@ -1612,6 +1638,9 @@ impl Pipeline {
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             for edges in &self.gpu_face3d_edges {
                 if edges.instance_count > 0 {
+                    if let Some(bg) = &edges.const_bind_group {
+                        pass.set_bind_group(1, bg.as_ref(), &[]);
+                    }
                     pass.set_vertex_buffer(0, edges.instance_buffer.slice(..));
                     pass.draw(0..6, 0..edges.instance_count);
                 }
@@ -1670,6 +1699,9 @@ impl Pipeline {
                     }
                     _ => {}
                 }
+                if let Some(bg) = &wire.const_bind_group {
+                    pass.set_bind_group(1, bg.as_ref(), &[]);
+                }
                 pass.set_vertex_buffer(0, wire.instance_buffer.slice(..));
                 pass.draw(0..6, 0..wire.instance_count);
             }
@@ -1685,6 +1717,9 @@ impl Pipeline {
                 pass.set_pipeline(&self.wire_xray_pipeline);
                 for pw in &self.gpu_preview_wires {
                     if pw.instance_count > 0 {
+                        if let Some(bg) = &pw.const_bind_group {
+                            pass.set_bind_group(1, bg.as_ref(), &[]);
+                        }
                         pass.set_vertex_buffer(0, pw.instance_buffer.slice(..));
                         pass.draw(0..6, 0..pw.instance_count);
                     }
@@ -1775,6 +1810,9 @@ impl Pipeline {
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             for wire in &self.gpu_selected_wires {
                 if wire.instance_count > 0 {
+                    if let Some(bg) = &wire.const_bind_group {
+                        pass.set_bind_group(1, bg.as_ref(), &[]);
+                    }
                     pass.set_vertex_buffer(0, wire.instance_buffer.slice(..));
                     pass.draw(0..6, 0..wire.instance_count);
                 }

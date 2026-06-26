@@ -60,6 +60,90 @@ fn instance_buffer_mapped(
 
 // ── Instance layout ───────────────────────────────────────────────────────
 
+// ── Native: slim per-segment instance + shared per-wire constants ───────────
+//
+// Every segment of a wire used to carry the wire's color / line-weight / dash
+// pattern / draw-depth (~44 B) on each instance — re-fetched once per segment
+// even though it's constant along the wire. On native we hoist those into a
+// per-wire `WireConst` storage buffer indexed by `wire_id`, so the instance
+// keeps only the per-segment data (endpoints + arc-length distances). Cuts the
+// instance from 104 B to 60 B (~42 %) and removes the redundant per-segment
+// re-fetch of the shared constants. WebGL2 has no vertex-stage storage buffers,
+// so the wasm build below keeps the original self-contained fat instance.
+#[cfg(not(target_arch = "wasm32"))]
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct WireInstance {
+    pub pos_a: [f32; 3],
+    pub pos_a_low: [f32; 3],
+    pub pos_b: [f32; 3],
+    pub pos_b_low: [f32; 3],
+    pub distance_a: f32,
+    pub distance_b: f32,
+    /// Index into the per-wire `WireConst` storage buffer (group 1).
+    pub wire_id: u32,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl WireInstance {
+    pub fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
+        // Must match `InstanceIn` in wire_indexed.wgsl.
+        const ATTRS: &[wgpu::VertexAttribute] = &[
+            wgpu::VertexAttribute { offset: std::mem::offset_of!(WireInstance, pos_a) as u64,      shader_location: 0, format: wgpu::VertexFormat::Float32x3 },
+            wgpu::VertexAttribute { offset: std::mem::offset_of!(WireInstance, pos_b) as u64,      shader_location: 1, format: wgpu::VertexFormat::Float32x3 },
+            wgpu::VertexAttribute { offset: std::mem::offset_of!(WireInstance, pos_a_low) as u64,  shader_location: 2, format: wgpu::VertexFormat::Float32x3 },
+            wgpu::VertexAttribute { offset: std::mem::offset_of!(WireInstance, pos_b_low) as u64,  shader_location: 3, format: wgpu::VertexFormat::Float32x3 },
+            wgpu::VertexAttribute { offset: std::mem::offset_of!(WireInstance, distance_a) as u64, shader_location: 4, format: wgpu::VertexFormat::Float32   },
+            wgpu::VertexAttribute { offset: std::mem::offset_of!(WireInstance, distance_b) as u64, shader_location: 5, format: wgpu::VertexFormat::Float32   },
+            wgpu::VertexAttribute { offset: std::mem::offset_of!(WireInstance, wire_id) as u64,    shader_location: 6, format: wgpu::VertexFormat::Uint32    },
+        ];
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<WireInstance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: ATTRS,
+        }
+    }
+}
+
+/// Per-wire constants shared by every segment of a wire (native only). std430
+/// layout: three vec4 then four scalars = 64 B, matching `WireConst` in
+/// wire_indexed.wgsl.
+#[cfg(not(target_arch = "wasm32"))]
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct WireConst {
+    pub color: [f32; 4],
+    pub pat0: [f32; 4],
+    pub pat1: [f32; 4],
+    pub half_width: f32,
+    pub pattern_length: f32,
+    pub draw_depth: f32,
+    pub _pad: f32,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl WireConst {
+    /// Bind-group layout for the per-wire storage buffer (group 1 of the wire /
+    /// xray pipelines). Read-only storage, visible to the vertex stage.
+    pub fn bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("wire_const.bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        })
+    }
+}
+
+// ── Web (WebGL2): self-contained fat instance (no vertex-stage storage) ─────
+#[cfg(target_arch = "wasm32")]
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct WireInstance {
@@ -82,6 +166,7 @@ pub struct WireInstance {
     pub draw_depth: f32,
 }
 
+#[cfg(target_arch = "wasm32")]
 impl WireInstance {
     pub fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
         // Offsets come from the struct layout (must match the shader location
@@ -123,12 +208,17 @@ pub struct WireGpu {
     /// in shaded modes so the surface reads as a clean solid; pure
     /// wireframe / HiddenLine / *WithEdges modes draw them.
     pub is_3d_mesh_edge: bool,
+    /// Per-wire constants storage (group 1), shared across all chunks of one
+    /// build. `None` on web (the fat instance carries the constants inline) and
+    /// for empty buffers. The draw loop binds it as group 1 when present.
+    pub const_bind_group: Option<std::sync::Arc<wgpu::BindGroup>>,
 }
 
 /// Expand one `WireModel` into its per-segment instance stream (1 instance per
 /// finite segment). Pulled out so both the single-wire and batched paths share
 /// the same emission logic, and so the batched path can `par_iter` across
 /// wires on cold open.
+#[cfg(target_arch = "wasm32")]
 fn pack_color(color: [f32; 4]) -> [u8; 4] {
     [
         (color[0].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
@@ -138,28 +228,10 @@ fn pack_color(color: [f32; 4]) -> [u8; 4] {
     ]
 }
 
-fn emit_wire_instances(wire: &WireModel, color: [f32; 4], draw_depth: f32) -> Vec<WireInstance> {
-    let color_u8 = pack_color(color);
-    let pat0 = [
-        wire.pattern[0],
-        wire.pattern[1],
-        wire.pattern[2],
-        wire.pattern[3],
-    ];
-    let pat1 = [
-        wire.pattern[4],
-        wire.pattern[5],
-        wire.pattern[6],
-        wire.pattern[7],
-    ];
-    let half_width = wire.line_weight_px * 0.5;
-
+/// Cumulative arc-length per point (NaN-break aware), with the dash pattern
+/// centred on the wire. Shared by the wasm and native emission paths.
+fn wire_distances(wire: &WireModel) -> Vec<f32> {
     let n = wire.points.len();
-    let seg_count = n.saturating_sub(1);
-    if seg_count == 0 {
-        return Vec::new();
-    }
-
     let mut dists = vec![0.0_f32; n];
     let mut has_break = false;
     for i in 1..n {
@@ -206,22 +278,33 @@ fn emit_wire_instances(wire: &WireModel, color: [f32; 4], draw_depth: f32) -> Ve
             }
         }
     }
+    dists
+}
 
-    // Low residual paired index-for-index with points; empty → all-zero
-    // (interactive / preview wires that don't need sub-f32 precision).
+#[inline]
+fn finite3(p: [f32; 3]) -> bool {
+    p[0].is_finite() && p[1].is_finite() && p[2].is_finite()
+}
+
+/// Web: emit fat per-segment instances (each carries the wire's constants).
+#[cfg(target_arch = "wasm32")]
+fn emit_wire_instances(wire: &WireModel, color: [f32; 4], draw_depth: f32) -> Vec<WireInstance> {
+    let color_u8 = pack_color(color);
+    let pat0 = [wire.pattern[0], wire.pattern[1], wire.pattern[2], wire.pattern[3]];
+    let pat1 = [wire.pattern[4], wire.pattern[5], wire.pattern[6], wire.pattern[7]];
+    let half_width = wire.line_weight_px * 0.5;
+    let n = wire.points.len();
+    let seg_count = n.saturating_sub(1);
+    if seg_count == 0 {
+        return Vec::new();
+    }
+    let dists = wire_distances(wire);
     let low = |i: usize| -> [f32; 3] { wire.points_low.get(i).copied().unwrap_or([0.0; 3]) };
-
     let mut instances: Vec<WireInstance> = Vec::with_capacity(seg_count);
     for i in 0..seg_count {
         let a = wire.points[i];
         let b = wire.points[i + 1];
-        if !a[0].is_finite()
-            || !a[1].is_finite()
-            || !a[2].is_finite()
-            || !b[0].is_finite()
-            || !b[1].is_finite()
-            || !b[2].is_finite()
-        {
+        if !finite3(a) || !finite3(b) {
             continue;
         }
         instances.push(WireInstance {
@@ -242,6 +325,51 @@ fn emit_wire_instances(wire: &WireModel, color: [f32; 4], draw_depth: f32) -> Ve
     instances
 }
 
+/// Native: emit slim per-segment instances (positions + distances + `wire_id`)
+/// plus the one `WireConst` record every segment of this wire shares.
+#[cfg(not(target_arch = "wasm32"))]
+fn emit_wire_native(
+    wire: &WireModel,
+    wire_id: u32,
+    color: [f32; 4],
+    draw_depth: f32,
+) -> (Vec<WireInstance>, WireConst) {
+    let cst = WireConst {
+        color,
+        pat0: [wire.pattern[0], wire.pattern[1], wire.pattern[2], wire.pattern[3]],
+        pat1: [wire.pattern[4], wire.pattern[5], wire.pattern[6], wire.pattern[7]],
+        half_width: wire.line_weight_px * 0.5,
+        pattern_length: wire.pattern_length,
+        draw_depth,
+        _pad: 0.0,
+    };
+    let n = wire.points.len();
+    let seg_count = n.saturating_sub(1);
+    if seg_count == 0 {
+        return (Vec::new(), cst);
+    }
+    let dists = wire_distances(wire);
+    let low = |i: usize| -> [f32; 3] { wire.points_low.get(i).copied().unwrap_or([0.0; 3]) };
+    let mut instances: Vec<WireInstance> = Vec::with_capacity(seg_count);
+    for i in 0..seg_count {
+        let a = wire.points[i];
+        let b = wire.points[i + 1];
+        if !finite3(a) || !finite3(b) {
+            continue;
+        }
+        instances.push(WireInstance {
+            pos_a: a,
+            pos_a_low: low(i),
+            pos_b: b,
+            pos_b_low: low(i + 1),
+            distance_a: dists[i],
+            distance_b: dists[i + 1],
+            wire_id,
+        });
+    }
+    (instances, cst)
+}
+
 /// Looks up a wire's draw-order depth from the per-entity map using the
 /// handle encoded in its `name`. Falls back to 0.0 (transient / preview
 /// wires that carry no document handle).
@@ -252,6 +380,36 @@ fn wire_draw_depth(wire: &WireModel, depth_map: &rustc_hash::FxHashMap<u64, f32>
         .ok()
         .and_then(|h| depth_map.get(&h).copied())
         .unwrap_or(0.0)
+}
+
+/// Build the shared per-wire `WireConst` storage buffer and its bind group
+/// (native only). All instance-buffer chunks from one build reference the same
+/// buffer via their global `wire_id`, so a single bind group is cloned into
+/// each chunk.
+#[cfg(not(target_arch = "wasm32"))]
+fn build_const_bind_group(
+    device: &wgpu::Device,
+    bgl: &wgpu::BindGroupLayout,
+    consts: &[WireConst],
+) -> std::sync::Arc<wgpu::BindGroup> {
+    use wgpu::util::DeviceExt;
+    // wgpu rejects zero-sized buffers; pad with one zeroed record when empty.
+    let one = [<WireConst as bytemuck::Zeroable>::zeroed()];
+    let data: &[WireConst] = if consts.is_empty() { &one } else { consts };
+    let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("wire_const.buf"),
+        contents: bytemuck::cast_slice(data),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("wire_const.bg"),
+        layout: bgl,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buf.as_entire_binding(),
+        }],
+    });
+    std::sync::Arc::new(bg)
 }
 
 impl WireGpu {
@@ -272,32 +430,76 @@ impl WireGpu {
         depth_map: &rustc_hash::FxHashMap<u64, f32>,
         scissor: Option<[f32; 4]>,
         mesh_edge: bool,
+        const_bgl: Option<&wgpu::BindGroupLayout>,
     ) -> Vec<Self> {
-        use crate::par::prelude::*;
         const MAX_INSTANCES: usize = 268_435_456 / std::mem::size_of::<WireInstance>();
-        let per: Vec<Vec<WireInstance>> = wires
-            .par_iter()
-            .map(|w| emit_wire_instances(w, w.color, wire_draw_depth(w, depth_map)))
-            .collect();
-        let mut instances: Vec<WireInstance> = Vec::with_capacity(per.iter().map(Vec::len).sum());
-        for mut v in per {
-            instances.append(&mut v);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use crate::par::prelude::*;
+            // Global `wire_id` = wire index; one shared WireConst buffer for all
+            // chunks. Indexed `collect` preserves wire order (the pass relies on
+            // submission order for depth-biased / transparent overlap).
+            let per: Vec<(Vec<WireInstance>, WireConst)> = wires
+                .par_iter()
+                .enumerate()
+                .map(|(idx, w)| {
+                    emit_wire_native(w, idx as u32, w.color, wire_draw_depth(w, depth_map))
+                })
+                .collect();
+            let mut instances: Vec<WireInstance> =
+                Vec::with_capacity(per.iter().map(|(v, _)| v.len()).sum());
+            let mut consts: Vec<WireConst> = Vec::with_capacity(per.len());
+            for (mut v, c) in per {
+                instances.append(&mut v);
+                consts.push(c);
+            }
+            if instances.is_empty() {
+                return vec![];
+            }
+            let bg = const_bgl.map(|bgl| build_const_bind_group(device, bgl, &consts));
+            instances
+                .chunks(MAX_INSTANCES)
+                .map(|chunk| {
+                    let buf = instance_buffer_mapped(device, "wire.run.ibuf", chunk);
+                    Self {
+                        instance_buffer: buf,
+                        instance_count: chunk.len() as u32,
+                        vp_scissor: scissor,
+                        is_3d_mesh_edge: mesh_edge,
+                        const_bind_group: bg.clone(),
+                    }
+                })
+                .collect()
         }
-        if instances.is_empty() {
-            return vec![];
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = const_bgl;
+            let per: Vec<Vec<WireInstance>> = wires
+                .iter()
+                .map(|w| emit_wire_instances(w, w.color, wire_draw_depth(w, depth_map)))
+                .collect();
+            let mut instances: Vec<WireInstance> =
+                Vec::with_capacity(per.iter().map(Vec::len).sum());
+            for mut v in per {
+                instances.append(&mut v);
+            }
+            if instances.is_empty() {
+                return vec![];
+            }
+            instances
+                .chunks(MAX_INSTANCES)
+                .map(|chunk| {
+                    let buf = instance_buffer_mapped(device, "wire.run.ibuf", chunk);
+                    Self {
+                        instance_buffer: buf,
+                        instance_count: chunk.len() as u32,
+                        vp_scissor: scissor,
+                        is_3d_mesh_edge: mesh_edge,
+                        const_bind_group: None,
+                    }
+                })
+                .collect()
         }
-        instances
-            .chunks(MAX_INSTANCES)
-            .map(|chunk| {
-                let buf = instance_buffer_mapped(device, "wire.run.ibuf", chunk);
-                Self {
-                    instance_buffer: buf,
-                    instance_count: chunk.len() as u32,
-                    vp_scissor: scissor,
-                    is_3d_mesh_edge: mesh_edge,
-                }
-            })
-            .collect()
     }
 
     /// Merge multiple WireModels into GPU instance buffers, chunked to fit the
@@ -307,58 +509,80 @@ impl WireGpu {
         device: &wgpu::Device,
         wires: &[WireModel],
         depth_map: &rustc_hash::FxHashMap<u64, f32>,
+        const_bgl: Option<&wgpu::BindGroupLayout>,
     ) -> Vec<Self> {
         let total_segs: usize = wires.iter().map(|w| w.points.len().saturating_sub(1)).sum();
         if total_segs == 0 {
             return vec![];
         }
-
-        // Parallel per-wire instance emission. Each wire's stream is
-        // independent — `block_cache` groups wires by style upstream, so order
-        // within a batch does not affect correctness. `reduce` concatenates the
-        // per-wire Vec<WireInstance> chunks while letting rayon spread work
-        // across cores.
-        #[cfg(not(target_arch = "wasm32"))]
-        let instances: Vec<WireInstance> = wires
-            .par_iter()
-            .map(|wire| emit_wire_instances(wire, wire.color, wire_draw_depth(wire, depth_map)))
-            .reduce(Vec::new, |mut acc, mut chunk| {
-                if acc.is_empty() {
-                    chunk
-                } else if chunk.is_empty() {
-                    acc
-                } else {
-                    acc.append(&mut chunk);
-                    acc
-                }
-            });
-        // Web: no thread pool — concatenate the per-wire streams sequentially.
-        #[cfg(target_arch = "wasm32")]
-        let instances: Vec<WireInstance> = wires
-            .iter()
-            .flat_map(|wire| emit_wire_instances(wire, wire.color, wire_draw_depth(wire, depth_map)))
-            .collect();
-
-        if instances.is_empty() {
-            return vec![];
-        }
-
         // GPU max buffer size is 256 MB; chunk to stay within the limit.
         const MAX_INSTANCES: usize = 268_435_456 / std::mem::size_of::<WireInstance>();
 
-        instances
-            .chunks(MAX_INSTANCES)
-            .enumerate()
-            .map(|(i, chunk)| {
-                let label = format!("wire.batch.ibuf.{i}");
-                let instance_buffer = instance_buffer_mapped(device, &label, chunk);
-                Self {
-                    instance_buffer,
-                    instance_count: chunk.len() as u32,
-                    vp_scissor: None,
-                    is_3d_mesh_edge: false,
-                }
-            })
-            .collect()
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use crate::par::prelude::*;
+            // `block_cache` groups wires by style upstream; order within a batch
+            // doesn't affect correctness, but indexed `collect` gives each wire a
+            // stable `wire_id` into the shared WireConst buffer.
+            let per: Vec<(Vec<WireInstance>, WireConst)> = wires
+                .par_iter()
+                .enumerate()
+                .map(|(idx, w)| {
+                    emit_wire_native(w, idx as u32, w.color, wire_draw_depth(w, depth_map))
+                })
+                .collect();
+            let mut instances: Vec<WireInstance> =
+                Vec::with_capacity(per.iter().map(|(v, _)| v.len()).sum());
+            let mut consts: Vec<WireConst> = Vec::with_capacity(per.len());
+            for (mut v, c) in per {
+                instances.append(&mut v);
+                consts.push(c);
+            }
+            if instances.is_empty() {
+                return vec![];
+            }
+            let bg = const_bgl.map(|bgl| build_const_bind_group(device, bgl, &consts));
+            instances
+                .chunks(MAX_INSTANCES)
+                .enumerate()
+                .map(|(i, chunk)| {
+                    let label = format!("wire.batch.ibuf.{i}");
+                    let instance_buffer = instance_buffer_mapped(device, &label, chunk);
+                    Self {
+                        instance_buffer,
+                        instance_count: chunk.len() as u32,
+                        vp_scissor: None,
+                        is_3d_mesh_edge: false,
+                        const_bind_group: bg.clone(),
+                    }
+                })
+                .collect()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = const_bgl;
+            let instances: Vec<WireInstance> = wires
+                .iter()
+                .flat_map(|w| emit_wire_instances(w, w.color, wire_draw_depth(w, depth_map)))
+                .collect();
+            if instances.is_empty() {
+                return vec![];
+            }
+            instances
+                .chunks(MAX_INSTANCES)
+                .enumerate()
+                .map(|(i, chunk)| {
+                    let label = format!("wire.batch.ibuf.{i}");
+                    let instance_buffer = instance_buffer_mapped(device, &label, chunk);
+                    Self {
+                        instance_buffer,
+                        instance_count: chunk.len() as u32,
+                        vp_scissor: None,
+                        is_3d_mesh_edge: false,
+                        const_bind_group: None,
+                    }
+                })
+                .collect()
+        }
     }
 }
