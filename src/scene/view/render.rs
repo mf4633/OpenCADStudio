@@ -80,10 +80,10 @@ pub struct ViewportData {
     /// Camera generation captured when this Primitive was assembled. Paired
     /// with `geometry_epoch` so the per-frame scissor / LOD recompute runs.
     pub(in crate::scene) camera_generation: u64,
-    /// Content id of `wires` (Phase 3.2). Stable across a pure pan that reuses
-    /// the Model-tile tessellation, so `prepare` skips re-uploading the
-    /// world-space wire buffer when only the camera moved. Non-tile and
-    /// preview/interim frames carry a fresh id each time → always re-upload.
+    /// Content id of `wires`. Stable across camera moves (the Model wire set is
+    /// held static), so `prepare` skips re-uploading the world-space wire buffer
+    /// when only the camera moved. Non-tile and preview/interim frames carry a
+    /// fresh id each time → always re-upload.
     pub(in crate::scene) wire_content_id: u64,
     /// Selected handles only (no hover) — solid meshes tint these blue.
     pub(in crate::scene) selected_handles: Arc<rustc_hash::FxHashSet<acadrust::Handle>>,
@@ -264,11 +264,11 @@ impl shader::Primitive for Primitive {
             }
             // Wire buffers are world-space, so a camera move alone doesn't
             // change them — only the view_proj uniform (uploaded every frame).
-            // Gate the upload on the wire content id instead of the camera tick
-            // (Phase 3.2): a pan that reused the Model-tile tessellation keeps
-            // the id, skipping the vertex re-pack + GPU write. Kept independent
-            // of the `cur_key` block so a preview/interim wire change still
-            // uploads even when the camera didn't move.
+            // Gate the upload on the wire content id instead of the camera tick:
+            // the Model wire set is held static, so its id is unchanged across
+            // camera moves and the vertex re-pack + GPU write is skipped. Kept
+            // independent of the `cur_key` block so a preview/interim wire change
+            // still uploads even when the camera didn't move.
             if vp.wire_content_id != inner.cached_wire_id {
                 inner.upload_wires(device, &vp.wires[..], &vp.draw_depths);
                 inner.cached_wire_id = vp.wire_content_id;
@@ -663,14 +663,12 @@ impl Scene {
         let us = (visible_w / full.width).clamp(0.0, 1.0);
         let vs = (visible_h / full.height).clamp(0.0, 1.0);
 
-        // Model tiles each get their own tessellation cache keyed off the
-        // tile's camera — culling/LOD depend on per-tile zoom, not the
-        // active tile's. Paper-space content viewports already had a
-        // per-viewport cache.
-        // `tile_wire_gen` is the Model-tile content id (Phase 3.2): present
-        // only on the tiled Model path, where a pan reuses the tessellation
-        // and its id so the GPU wire upload can be skipped. The other wire
-        // sources don't participate and force a re-upload below.
+        // Model tiles all share one resident, camera-independent wire set
+        // (`model_tile_wires_arc` holds it static). `tile_wire_gen` is that
+        // set's content id: stable across camera moves, so the GPU wire upload
+        // and the Face3D split below are skipped every frame the geometry is
+        // unchanged. The paper-space sources have no stable id and force a
+        // re-upload.
         let (base_arc, tile_wire_gen) = if let Some(tile_idx) = inst.tile_idx {
             let aspect = if full.height > 0.0 {
                 full.width / full.height
@@ -703,9 +701,9 @@ impl Scene {
             }
         };
         // Split Face3D wires from the rest. The split is content-only (keyed
-        // by the tile's wire id), so on a pan-reuse it's memoized rather than
-        // re-walking every wire (handle lookup + clone) each frame. Non-tile
-        // paths have no stable id and split inline as before.
+        // by the wire-set content id), so while the geometry is unchanged it's
+        // memoized rather than re-walking every wire (handle lookup + clone)
+        // each frame. Non-tile paths have no stable id and split inline.
         let (face3d_wires, other_arc) = match tile_wire_gen {
             Some(gen) => {
                 let cached = {

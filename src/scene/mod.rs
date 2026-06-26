@@ -62,13 +62,13 @@ use std::sync::Arc;
 /// GPU Pipeline to skip re-uploading geometry when switching tabs.
 static GEOMETRY_EPOCH: AtomicU64 = AtomicU64::new(1);
 
-/// Process-wide monotonic id stamped on each Model-tile wire re-tessellation.
-/// Reused (not re-stamped) when a pan reuses the cached tessellation, so it
-/// uniquely identifies a wire-buffer's *content* across frames. The GPU
-/// pipeline gates wire re-upload on it (Phase 3.2): a pan that reuses the
-/// tessellation keeps the same id, so the world-space wire buffer is not
-/// re-sent. Monotonic (never reused) → free of the ABA hazard a raw `Arc`
-/// pointer would carry when an address is freed and reallocated.
+/// Process-wide monotonic id stamped each time the Model wire set is built.
+/// The set is held static across camera moves, so the id stays the same every
+/// frame until the geometry epoch changes — it uniquely identifies a wire
+/// buffer's *content* across frames. The GPU pipeline gates wire re-upload on
+/// it: an unchanged id means the world-space wire buffer is not re-sent.
+/// Monotonic (never reused) → free of the ABA hazard a raw `Arc` pointer would
+/// carry when an address is freed and reallocated.
 static WIRE_CONTENT_GEN: AtomicU64 = AtomicU64::new(1);
 
 /// Resolve a viewport's paper-to-model scale ratio from its two
@@ -636,35 +636,6 @@ fn transform_block_mesh_lod_set(
     out
 }
 
-/// Stable hash of a `Camera`'s pose for use as a per-tile cache key.
-/// Two cameras with bit-identical target / rotation / distance hash the
-/// same; any orbit / pan / zoom on a tile bumps it.
-/// Hash of the camera state that affects *tessellation output* on the Model
-/// tile, deliberately EXCLUDING the pan target. Rotation governs the
-/// projection; `wpp` (world-per-pixel) governs the zoom-adaptive curve tol
-/// and the sub-pixel LOD cull. Two cameras with the same value differ only by
-/// pan, so the same tessellation is valid for both as long as the new view
-/// still fits inside the region the wires were culled to (see
-/// `model_tile_wires_arc`). Target is the one varying input on a pure pan.
-fn camera_pan_invariant_hash(c: &Camera, wpp: Option<f32>) -> u64 {
-    fn h(state: u64, x: f32) -> u64 {
-        state.rotate_left(13) ^ x.to_bits() as u64
-    }
-    let mut s: u64 = 0x9e37_79b9_7f4a_7c15;
-    s = h(s, c.rotation.x);
-    s = h(s, c.rotation.y);
-    s = h(s, c.rotation.z);
-    s = h(s, c.rotation.w);
-    s = h(s, wpp.unwrap_or(-1.0));
-    s
-}
-
-/// `outer` fully contains `inner` (both `[min_x, min_y, max_x, max_y]`).
-#[inline]
-fn aabb_contains(outer: [f32; 4], inner: [f32; 4]) -> bool {
-    outer[0] <= inner[0] && outer[1] <= inner[1] && outer[2] >= inner[2] && outer[3] >= inner[3]
-}
-
 /// World-XY rectangle the model camera currently sees, expanded by `margin`
 /// (1.0 = tight), as `[min_x, min_y, max_x, max_y]` for the entity R-tree cull.
 ///
@@ -761,19 +732,6 @@ pub struct Scene {
     /// invalidates the cull-dependent wire list as well as a geometry change.
     /// Uses `Arc` so `build_primitive()` avoids a full Vec clone during navigation.
     wire_cache: RefCell<Option<((u64, u64), Arc<Vec<WireModel>>)>>,
-    /// Per-Model-tile cached tessellation. Each tile has its own camera
-    /// (live for the active tile, stored snapshot for the others), so
-    /// LOD / frustum culling has to run independently — the shared
-    /// `wire_cache` would cull every tile against whichever camera was
-    /// current when it was last built. Keyed by tile index; the value
-    /// Carries `(geometry_epoch, pan_invariant_hash, tessellated_region)`.
-    /// A hit needs the epoch + the rotation/tol signature to match AND the
-    /// tile's current visible view to still fit inside the region the wires
-    /// were culled to — so a pure pan within that 1.25×-margin region reuses
-    /// the tessellation instead of rebuilding it. Zoom / orbit / edits change
-    /// the epoch or signature and rebuild as before.
-    model_tile_wire_cache:
-        RefCell<HashMap<usize, ((u64, u64, [f32; 4]), u64, Arc<Vec<WireModel>>)>>,
     /// Index built from every SortEntitiesTable in the document.
     /// Maps block_handle → (entity_handle.value() → sort_handle.value()).
     /// Replaces the O(objects) linear scan inside `wires_for_block()` with an O(1) lookup.
@@ -897,13 +855,18 @@ pub struct Scene {
     pub(crate) last_tess_ms: std::cell::Cell<f32>,
     /// Wire count produced by that most recent re-tessellation.
     pub(crate) last_tess_wires: std::cell::Cell<usize>,
-    /// Content id ([`WIRE_CONTENT_GEN`]) of the Model-tile wire set returned by
-    /// the most recent `model_tile_wires_arc` call — stamped on a miss, reused
-    /// on a pan-hit. `build_primitive` reads it right after the call to gate
-    /// GPU wire re-upload (Phase 3.2). 0 = none yet.
+    /// Content id ([`WIRE_CONTENT_GEN`]) of the Model wire set returned by the
+    /// most recent `model_tile_wires_arc` call — stamped when the static set is
+    /// (re)built, otherwise the held value. `build_primitive` reads it right
+    /// after the call to gate GPU wire re-upload. 0 = none yet.
     pub(crate) last_model_wire_gen: std::cell::Cell<u64>,
+    /// Static-hold cache for the Model layout: the FULL, un-culled tessellation
+    /// held resident and reused for every camera (the geometry is
+    /// camera-independent — see `model_tile_wires_arc`). `(epoch, gen, wires)`;
+    /// rebuilt when `geometry_epoch` changes.
+    model_static_wires: RefCell<Option<(u64, u64, Arc<Vec<WireModel>>)>>,
     /// Monotonic per-build nonce for wire sources that must NOT be skipped by
-    /// the Phase 3.2 upload gate — the paper / per-viewport wire paths and any
+    /// the upload gate — the paper / per-viewport wire paths and any
     /// frame carrying live preview / interim wires. High bit set so it can
     /// never collide with a real [`WIRE_CONTENT_GEN`] id; incremented every
     /// use so the GPU always sees a fresh id and re-uploads.
@@ -963,7 +926,6 @@ impl Scene {
             block_epoch: GEOMETRY_EPOCH.fetch_add(1, Ordering::Relaxed),
             selection_generation: 0,
             wire_cache: RefCell::new(None),
-            model_tile_wire_cache: RefCell::new(HashMap::default()),
             sort_cache: RefCell::new(None),
             draw_depth_cache: RefCell::new(None),
             hatch_cache: RefCell::new(None),
@@ -996,6 +958,7 @@ impl Scene {
             last_tess_ms: std::cell::Cell::new(0.0),
             last_tess_wires: std::cell::Cell::new(0),
             last_model_wire_gen: std::cell::Cell::new(0),
+            model_static_wires: RefCell::new(None),
             wire_force_nonce: std::cell::Cell::new(0),
             split_cache: RefCell::new(None),
             tess_memo: RefCell::new(HashMap::default()),
@@ -2005,83 +1968,44 @@ impl Scene {
             .collect()
     }
 
-    /// Per-tile cached tessellation for the Model layout. Each tile has
-    /// its own camera (live for the active tile, stored snapshot for the
-    /// others), so LOD / frustum culling has to run independently — the
-    /// shared `entity_wires_arc` cache would cull every tile against
-    /// whichever camera was current when it was last built.
+    /// Wire set for the Model layout, shared by every tile.
     ///
-    /// `cam_aspect` is the tile's pixel `width / height`; together with the
-    /// camera's `ortho_size` it determines the world-XY rectangle culled
-    /// against. Returns a clone of the cached `Arc` on a key match.
+    /// The model wire geometry is **camera-independent**, so it is tessellated
+    /// in full (un-culled, fixed detail) once per geometry epoch, held resident
+    /// (`model_static_wires`), and returned for any camera/tile. A pan/zoom only
+    /// changes the view uniform — the GPU re-draws the same buffer, with no
+    /// frustum cull, no zoom LOD, and no re-tessellation/re-upload on camera
+    /// moves. The per-tile camera args are unused (kept for call-site symmetry
+    /// with the paper-space wire sources).
     pub(super) fn model_tile_wires_arc(
         &self,
-        tile_idx: usize,
-        cam: &Camera,
-        cam_aspect: f32,
-        tile_pixel_height: f32,
+        _tile_idx: usize,
+        _cam: &Camera,
+        _cam_aspect: f32,
+        _tile_pixel_height: f32,
     ) -> Arc<Vec<WireModel>> {
-        let wpp = if tile_pixel_height > 0.0 {
-            Some((2.0 * cam.ortho_size()) / tile_pixel_height)
-        } else {
-            None
-        };
-        // Cache reuse is split from the exact-camera key: a pure pan keeps the
-        // geometry epoch and the pan-invariant signature (rotation + tol) but
-        // shifts the view. The cached wires were culled to a 1.25×-margin
-        // region; if the new *visible* view still sits inside that region they
-        // remain complete, so we can skip re-tessellation entirely — only the
-        // GPU re-uploads (camera_generation still bumps). No margin widening,
-        // so zoom (which changes the signature) costs exactly as before.
-        let pan_sig = camera_pan_invariant_hash(cam, wpp);
-        // Exact visible rect (margin 1.0) the reused wires must still cover.
-        // A tilted view returns no XY box (cull disabled) → require the cached
-        // region to be the full plane, so we only reuse a full tessellation.
-        let full = [f32::NEG_INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::INFINITY];
-        let need_region = if self.camera_generation == 0 {
-            full
-        } else {
-            view_cull_aabb(cam, cam_aspect, 1.0).unwrap_or(full)
-        };
+        // Reuse the resident full set if it's already built for this epoch.
         {
-            let cache = self.model_tile_wire_cache.borrow();
-            if let Some(((epoch, sig, region), gen, arc)) = cache.get(&tile_idx) {
-                if *epoch == self.geometry_epoch
-                    && *sig == pan_sig
-                    && aabb_contains(*region, need_region)
-                {
-                    // Pan-hit: reuse the tessellation AND its content id, so
-                    // the GPU wire upload is skipped too (Phase 3.2).
+            let held = self.model_static_wires.borrow();
+            if let Some((epoch, gen, arc)) = held.as_ref() {
+                if *epoch == self.geometry_epoch {
                     self.last_model_wire_gen.set(*gen);
                     return Arc::clone(arc);
                 }
             }
         }
-        // Miss → cull/tessellate to the 1.25×-margin region (unchanged cost)
-        // and remember that region for the pan-reuse test above.
-        // A tilted view yields no XY box → `None` = cull nothing (full tess),
-        // which is correct, just heavier, for the less common 3D/elevation case.
-        let tess_region = if self.camera_generation == 0 {
-            None
-        } else {
-            view_cull_aabb(cam, cam_aspect, 1.25)
-        };
+        // Build once: full tessellation, no cull (region = None), no zoom LOD
+        // (wpp = None). Held for the life of this geometry epoch.
         let block = self.model_space_block_handle();
         let t_tess = iced::time::Instant::now();
-        let mut wires = self.wires_for_block_culled(block, tess_region, wpp, None, None);
+        let mut wires = self.wires_for_block_culled(block, None, None, None, None);
         self.apply_refedit_fade(&mut wires, self.bg_color);
-        let arc = Arc::new(wires);
         self.last_tess_ms.set(t_tess.elapsed().as_secs_f32() * 1000.0);
-        self.last_tess_wires.set(arc.len());
-        let stored_region = tess_region
-            .unwrap_or([f32::NEG_INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::INFINITY]);
-        // New tessellation → fresh content id; the GPU will re-upload.
+        self.last_tess_wires.set(wires.len());
+        let arc = Arc::new(wires);
         let gen = WIRE_CONTENT_GEN.fetch_add(1, Ordering::Relaxed);
         self.last_model_wire_gen.set(gen);
-        self.model_tile_wire_cache.borrow_mut().insert(
-            tile_idx,
-            ((self.geometry_epoch, pan_sig, stored_region), gen, Arc::clone(&arc)),
-        );
+        *self.model_static_wires.borrow_mut() = Some((self.geometry_epoch, gen, Arc::clone(&arc)));
         arc
     }
 
@@ -8345,10 +8269,14 @@ fn tessellate_entity(
                         // (baseline-line / greek / full) and must reach it
                         // even when projected size is sub-5 px.
                         let is_text = matches!(e, EntityType::Text(_) | EntityType::MText(_));
+                        // Face3D is exempt from the sub-pixel stub: it is trivially
+                        // cheap to tessellate (4 corners → 2 tris), so there is no
+                        // cost to draw it full at any zoom, and the cube-stub
+                        // otherwise pops/coarsens flat faces across the threshold.
+                        let is_face3d = matches!(e, EntityType::Face3D(_));
                         let is_3d_entity = matches!(
                             e,
-                            EntityType::Face3D(_)
-                                | EntityType::Solid3D(_)
+                            EntityType::Solid3D(_)
                                 | EntityType::Mesh(_)
                                 | EntityType::PolyfaceMesh(_)
                                 | EntityType::PolygonMesh(_)
@@ -8356,7 +8284,7 @@ fn tessellate_entity(
                                 | EntityType::Region(_)
                                 | EntityType::Surface(_)
                         );
-                        if !is_text && w_px.max(h_px) / wpp < 5.0 {
+                        if !is_text && !is_face3d && w_px.max(h_px) / wpp < 5.0 {
                             // Sub-pixel entity: emit a stub instead of
                             // nothing so it stays visible / selectable /
                             // hit-test'able at any zoom. 2-D entities
