@@ -527,27 +527,10 @@ pub(crate) struct ModelTile {
     pub(crate) snap_on: bool,
 }
 
-/// Tolerance for matching two normalized tile coordinates as "the same"
-/// edge — drag math leaves small floating-point residue.
-const TILE_EPS: f32 = 1e-4;
-
-#[derive(Copy, Clone, Debug)]
-pub enum TileEdgeOrient {
-    Vertical,
-    Horizontal,
-}
-
-/// One inner divider between Model tiles, exposed by [`Scene::model_tile_edges`].
-/// `coord` is the fixed axis (x for vertical, y for horizontal) and `span`
-/// is the perpendicular extent over which the divider actually separates
-/// tiles. All values are normalized to the 0..1 canvas.
-#[derive(Clone, Debug)]
-pub struct TileEdge {
-    pub orient: TileEdgeOrient,
-    pub coord: f32,
-    pub span: (f32, f32),
-}
-
+/// Gap (pixels) between Model panes — the `pane_grid` spacing and the visible
+/// divider width. The renderer derives tile rects through this same spacing so
+/// the drawn viewports line up exactly with the pane_grid layout.
+pub const TILE_DIVIDER_PX: f32 = 2.0;
 
 /// Shift every vertex of a freshly tessellated `MeshLodSet` into the
 /// scene's local f32 space by subtracting `world_offset`. ACIS / SAT
@@ -693,6 +676,14 @@ pub struct Scene {
     pub(crate) model_tiles: RefCell<Vec<ModelTile>>,
     /// Index of the active model tile (camera input + overlays target it).
     pub(crate) active_model_tile: std::cell::Cell<usize>,
+    /// pane_grid layout tree for the Model tab — the source of truth for the
+    /// tile split layout, resize and focus. `model_tiles` (the renderer's
+    /// per-pane data: camera / render-mode / grid) is kept in lock-step with
+    /// it, and its rects are derived from the pane regions. Each pane's value
+    /// is the index of its backing `ModelTile`. Paper layout is unaffected.
+    /// Plain field (not a `RefCell`) so the view can borrow it for the
+    /// `PaneGrid` widget's lifetime; mutated through `&mut Scene` in update.
+    pub(crate) model_panes: iced::widget::pane_grid::State<usize>,
     pub selection: Rc<RefCell<SelectionState>>,
     /// The CAD document — single source of truth for all entities.
     pub document: CadDocument,
@@ -921,6 +912,8 @@ impl Scene {
                 snap_on: false,
             }]),
             active_model_tile: std::cell::Cell::new(0),
+            // One pane mapped to tile 0 — matches the single default tile above.
+            model_panes: iced::widget::pane_grid::State::new(0).0,
             selection: Rc::new(RefCell::new(SelectionState::default())),
             document: CadDocument::new(),
             selected: HashSet::default(),

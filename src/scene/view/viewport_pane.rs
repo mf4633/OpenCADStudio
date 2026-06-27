@@ -19,6 +19,10 @@ pub struct ViewportPane<'a> {
     /// Render mode applied to the Model layout's tiles. Paper-space content
     /// viewports use the render mode stored on their own viewport entity.
     pub render_mode: acadrust::entities::ViewportRenderMode,
+    /// `Some(tile_idx)` → this widget renders a single Model pane (one shader
+    /// per `pane_grid` pane, filling its own bounds). `None` → the unified
+    /// full-canvas path (paper layout, or the whole-canvas Model fallback).
+    pub pane: Option<usize>,
 }
 
 impl<'a> ViewportPane<'a> {
@@ -31,6 +35,23 @@ impl<'a> ViewportPane<'a> {
             scene,
             show_viewcube,
             render_mode,
+            pane: None,
+        }
+    }
+
+    /// One Model `pane_grid` pane: renders just `tile_idx` into this widget's
+    /// own bounds (the pane rectangle).
+    pub fn for_pane(
+        scene: &'a Scene,
+        show_viewcube: bool,
+        render_mode: acadrust::entities::ViewportRenderMode,
+        tile_idx: usize,
+    ) -> Self {
+        Self {
+            scene,
+            show_viewcube,
+            render_mode,
+            pane: Some(tile_idx),
         }
     }
 }
@@ -47,8 +68,14 @@ impl<'a, Msg: std::fmt::Debug + Clone> shader::Program<Msg> for ViewportPane<'a>
         _cursor: mouse::Cursor,
         bounds: Rectangle,
     ) -> Self::Primitive {
-        self.scene
-            .build_viewports(bounds, self.render_mode, state.hover_region)
+        match self.pane {
+            Some(idx) => self
+                .scene
+                .build_viewport_for_pane(bounds, idx, self.render_mode),
+            None => self
+                .scene
+                .build_viewports(bounds, self.render_mode, state.hover_region),
+        }
     }
 
     fn update(

@@ -2,7 +2,7 @@
 
 #![allow(unused_imports)]
 use super::util::*;
-use super::{format_size, tile_min_norm, TILE_EDGE_HIT_PX, VIEWCUBE_HIT_SIZE};
+use super::{format_size, VIEWCUBE_HIT_SIZE};
 use crate::app::helpers::{
     ortho_constrain, parse_coord, polar_constrain_near, ucs_rotate_vec, ucs_to_wcs, ucs_z_axis,
     CoordKind,
@@ -12,7 +12,7 @@ use crate::modules::ModuleEvent;
 use crate::scene::pick::grip::{find_hit_grip, find_hit_grip_paper, find_hit_grip_rte, GripEdit};
 use crate::scene::model::object::GripApply;
 use crate::scene::{
-    self, hover_id, CubeRegion, Scene, TileEdgeOrient, VIEWCUBE_DRAW_PX, VIEWCUBE_PAD, VIEWCUBE_PX,
+    self, hover_id, CubeRegion, Scene, VIEWCUBE_DRAW_PX, VIEWCUBE_PAD, VIEWCUBE_PX,
 };
 use crate::ui::PropertiesPanel;
 use acadrust::types::Color as AcadColor;
@@ -480,34 +480,6 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
     pub(super) fn on_viewport_move(&mut self, p: Point) -> Task<Message> {
                 let i = self.active_tab;
 
-                // A Model-tile divider drag short-circuits the rest of
-                // the move handling — the cursor neither pans the camera
-                // nor updates snap state while the user is resizing
-                // panes.
-                if let Some(drag) = self.tile_drag.as_mut() {
-                    let (vw, vh) = self.tabs[i].scene.selection.borrow().vp_size;
-                    if vw > 1.0 && vh > 1.0 {
-                        let new_coord = match drag.orient {
-                            TileEdgeOrient::Vertical => (p.x / vw).clamp(0.0, 1.0),
-                            TileEdgeOrient::Horizontal => (p.y / vh).clamp(0.0, 1.0),
-                        };
-                        let (min_w, min_h) = tile_min_norm(vw, vh);
-                        let min_size = match drag.orient {
-                            TileEdgeOrient::Vertical => min_w,
-                            TileEdgeOrient::Horizontal => min_h,
-                        };
-                        self.tabs[i].scene.move_model_tile_edge(
-                            drag.orient,
-                            drag.last_applied,
-                            new_coord,
-                            min_size,
-                        );
-                        drag.last_applied = new_coord;
-                        self.tabs[i].scene.camera_generation += 1;
-                    }
-                    return Task::none();
-                }
-
                 // UCS icon grip drag: map the cursor onto the UCS plane and
                 // slide the origin / rotate the axis. Short-circuits pan & snap.
                 if let Some(kind) = self.ucs_grip_drag {
@@ -669,21 +641,10 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                 let vp_size = sel.vp_size;
                 drop(sel);
 
-                // Hover (no button held): the tile under the cursor becomes
-                // active, so the camera + tile bounds used for picking below
-                // follow the pane the cursor is in. During a drag the active
-                // tile stays put so the operation finishes in its own pane.
-                if !dragging && vp_size.0 > 1.0 && vp_size.1 > 1.0 {
-                    if self.tabs[i]
-                        .scene
-                        .set_active_model_tile_at(p.x / vp_size.0, p.y / vp_size.1)
-                    {
-                        self.tabs[i].scene.camera_generation += 1;
-                        self.sync_render_mode_to_active_tile(i);
-                        // Grid/snap follow the newly active viewport.
-                        self.adopt_view_display(i);
-                    }
-                }
+                // The active pane already follows the cursor (each pane's own
+                // mouse_area focuses it via `PaneMove` → `focus_model_pane`), so
+                // the camera + tile bounds used for picking below are already the
+                // pane the cursor is in.
 
                 // Tile-relative picking: shadow `p` with the cursor mapped
                 // into the active Model tile and `vp_size` with the tile's
@@ -1398,6 +1359,65 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
         self.tabs[i].scene.camera_generation += 1;
     }
 
+    // ── Per-pane Model viewport (pane_grid) ───────────────────────────────
+
+    /// Focus Model pane `idx` (cursor entered it): swap in its camera, sync the
+    /// render-mode / grid display. No-op if already active.
+    pub(super) fn focus_model_pane(&mut self, idx: usize) {
+        let i = self.active_tab;
+        if self.tabs[i].scene.set_active_model_tile(idx) {
+            self.tabs[i].scene.camera_generation += 1;
+            self.sync_render_mode_to_active_tile(i);
+            self.adopt_view_display(i);
+        }
+    }
+
+    /// Convert a pane-local cursor point (from the pane's `mouse_area`) to the
+    /// canvas-relative point the viewport handlers expect.
+    pub(super) fn pane_canvas_point(&self, idx: usize, local: Point) -> Point {
+        let i = self.active_tab;
+        let (vw, vh) = self.tabs[i].scene.selection.borrow().vp_size;
+        let o = self.tabs[i].scene.pane_origin_px(idx, vw, vh);
+        Point::new(o.x + local.x, o.y + local.y)
+    }
+
+    pub(super) fn on_pane_resized(
+        &mut self,
+        ev: iced::widget::pane_grid::ResizeEvent,
+    ) -> Task<Message> {
+        let i = self.active_tab;
+        self.tabs[i].scene.model_panes.resize(ev.split, ev.ratio);
+        let (vw, vh) = self.tabs[i].scene.selection.borrow().vp_size;
+        self.tabs[i].scene.sync_tiles_from_panes(vw, vh);
+        self.tabs[i].scene.camera_generation += 1;
+        Task::none()
+    }
+
+    pub(super) fn on_pane_clicked(
+        &mut self,
+        pane: iced::widget::pane_grid::Pane,
+    ) -> Task<Message> {
+        let i = self.active_tab;
+        if let Some(&idx) = self.tabs[i].scene.model_panes.get(pane) {
+            self.focus_model_pane(idx);
+        }
+        Task::none()
+    }
+
+    pub(super) fn on_pane_dragged(
+        &mut self,
+        ev: iced::widget::pane_grid::DragEvent,
+    ) -> Task<Message> {
+        if let iced::widget::pane_grid::DragEvent::Dropped { pane, target } = ev {
+            let i = self.active_tab;
+            self.tabs[i].scene.model_panes.drop(pane, target);
+            let (vw, vh) = self.tabs[i].scene.selection.borrow().vp_size;
+            self.tabs[i].scene.sync_tiles_from_panes(vw, vh);
+            self.tabs[i].scene.camera_generation += 1;
+        }
+        Task::none()
+    }
+
     pub(super) fn on_viewport_left_press(&mut self) -> Task<Message> {
                 let i = self.active_tab;
                 // A click in the viewport dismisses any open ribbon dropdown
@@ -1497,48 +1517,9 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                     self.ucs_icon_selected = false;
                 }
 
-                // Tiled Model layout: an inner divider near the cursor
-                // becomes a resize grip. Start the drag and short-circuit
-                // (no pick / select / camera swap). Released on
-                // `ViewportLeftRelease`.
-                if self.tabs[i].active_cmd.is_none()
-                    && self.tabs[i].scene.current_layout == "Model"
-                    && vw > 1.0
-                    && vh > 1.0
-                {
-                    let canvas_bounds = iced::Rectangle {
-                        x: 0.0,
-                        y: 0.0,
-                        width: vw,
-                        height: vh,
-                    };
-                    if let Some(edge) =
-                        self.tabs[i]
-                            .scene
-                            .hit_model_tile_edge(p, canvas_bounds, TILE_EDGE_HIT_PX)
-                    {
-                        self.tile_drag = Some(crate::app::TileDrag {
-                            orient: edge.orient,
-                            last_applied: edge.coord,
-                        });
-                        return Task::none();
-                    }
-                }
-
-                // Tiled Model layout: clicking a non-active tile activates
-                // it (swapping in its camera) instead of selecting / drawing.
-                if self.tabs[i].active_cmd.is_none() && vw > 1.0 && vh > 1.0 {
-                    if self.tabs[i]
-                        .scene
-                        .set_active_model_tile_at(p.x / vw, p.y / vh)
-                    {
-                        self.tabs[i].scene.camera_generation += 1;
-                        self.sync_render_mode_to_active_tile(i);
-                        // Grid/snap follow the newly active viewport.
-                        self.adopt_view_display(i);
-                        return Task::none();
-                    }
-                }
+                // Divider resize is handled natively by the input pane_grid
+                // (`on_resize`); the active pane already follows the cursor via
+                // `focus_model_pane`. So a press here goes straight to picking.
 
                 // From here the click targets the active tile: map the
                 // cursor into it and use the tile's size for picking, so
@@ -1646,14 +1627,6 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                     let mut sel = self.tabs[i].scene.selection.borrow_mut();
                     sel.middle_down = false;
                     sel.middle_last_pos = None;
-                    return Task::none();
-                }
-
-                // End an in-flight tile-divider drag. The move clamps
-                // each side to its minimum, so panes never collapse from
-                // dragging — use the close button to remove a pane.
-                if self.tile_drag.take().is_some() {
-                    self.tabs[i].scene.camera_generation += 1;
                     return Task::none();
                 }
 

@@ -181,22 +181,26 @@ pub fn selection_overlay<'a>(
     selection: SelectionState,
     snap: Option<(Point, SnapType)>,
     grips: Vec<GripMarker>,
-    ucs_icon: Option<UcsIconParams>,
+    ucs_icons: Vec<UcsIconParams>,
     ost_points: Vec<OstTrackPoint>,
     cursor_screen: Point,
     show_viewcube: bool,
-    tile_edges: Vec<crate::scene::TileEdge>,
+    dividers: Vec<iced::Rectangle>,
+    pane_move_rect: Option<iced::Rectangle>,
+    pane_drop_rect: Option<iced::Rectangle>,
     pan_mode: bool,
 ) -> Element<'a, Message> {
     canvas(SelectionCanvas {
         selection,
         snap,
         grips,
-        ucs_icon,
+        ucs_icons,
         ost_points,
         cursor_screen,
         show_viewcube,
-        tile_edges,
+        dividers,
+        pane_move_rect,
+        pane_drop_rect,
         pan_mode,
     })
     .width(Length::Fill)
@@ -208,53 +212,41 @@ struct SelectionCanvas {
     selection: SelectionState,
     snap: Option<(Point, SnapType)>,
     grips: Vec<GripMarker>,
-    ucs_icon: Option<UcsIconParams>,
+    /// One UCS icon per Model pane (each viewport shows its own at its origin);
+    /// a single entry for paper / floating-viewport. Only the active pane's
+    /// entry carries hover/selected (grips).
+    ucs_icons: Vec<UcsIconParams>,
     ost_points: Vec<OstTrackPoint>,
     cursor_screen: Point,
     show_viewcube: bool,
-    tile_edges: Vec<crate::scene::TileEdge>,
+    /// Divider bars (pixel rects, canvas-relative) between Model panes — drawn
+    /// as filled lines and used to suppress the crosshair over a divider.
+    dividers: Vec<iced::Rectangle>,
+    /// When a pane move is armed (drag handle pressed), the source pane's rect
+    /// (px) — dimmed, with a ghost card dragged along under the cursor.
+    pane_move_rect: Option<iced::Rectangle>,
+    /// The pane under the cursor during a pane move (drop target), highlighted.
+    pane_drop_rect: Option<iced::Rectangle>,
     /// Interactive PAN mode: the crosshair is hidden and the cursor becomes a
     /// hand so the viewport reads as a draggable surface.
     pan_mode: bool,
 }
 
 impl SelectionCanvas {
-    /// Returns the orientation of the Model-tile divider the cursor sits
-    /// on (within a few pixels of perpendicular distance, inside the
-    /// edge's span). Used by both `mouse_interaction` (to pick a resize
-    /// cursor) and `draw` (to suppress the CAD crosshair).
-    fn tile_edge_under(
-        &self,
-        cursor: mouse::Cursor,
-        bounds: iced::Rectangle,
-    ) -> Option<crate::scene::TileEdgeOrient> {
-        const TOL_PX: f32 = 4.0;
-        let pos = cursor.position_in(bounds)?;
-        for e in &self.tile_edges {
-            let (perp, edge_px, span_lo, span_hi, pos_along) = match e.orient {
-                crate::scene::TileEdgeOrient::Vertical => (
-                    pos.x,
-                    e.coord * bounds.width,
-                    e.span.0 * bounds.height,
-                    e.span.1 * bounds.height,
-                    pos.y,
-                ),
-                crate::scene::TileEdgeOrient::Horizontal => (
-                    pos.y,
-                    e.coord * bounds.height,
-                    e.span.0 * bounds.width,
-                    e.span.1 * bounds.width,
-                    pos.x,
-                ),
-            };
-            if (perp - edge_px).abs() <= TOL_PX
-                && pos_along >= span_lo
-                && pos_along <= span_hi
-            {
-                return Some(e.orient);
-            }
-        }
-        None
+    /// True when the cursor sits on a Model-pane divider (within a few px), so
+    /// `draw` can suppress the CAD crosshair there. The resize cursor itself is
+    /// supplied by the input pane_grid layered above.
+    fn divider_under(&self, cursor: mouse::Cursor, bounds: iced::Rectangle) -> bool {
+        const TOL_PX: f32 = 3.0;
+        let Some(pos) = cursor.position_in(bounds) else {
+            return false;
+        };
+        self.dividers.iter().any(|d| {
+            pos.x >= d.x - TOL_PX
+                && pos.x <= d.x + d.width + TOL_PX
+                && pos.y >= d.y - TOL_PX
+                && pos.y <= d.y + d.height + TOL_PX
+        })
     }
 }
 
@@ -290,20 +282,9 @@ impl canvas::Program<Message> for SelectionCanvas {
                 }
             }
         }
-        // Hover over a Model-tile divider → resize cursor cue. The
-        // system cursor is intentionally shown here so the OS arrow gives
-        // its own resize affordance; the draw step suppresses the custom
-        // CAD crosshair while we're over a divider.
-        if let Some(orient) = self.tile_edge_under(cursor, bounds) {
-            return match orient {
-                crate::scene::TileEdgeOrient::Vertical => {
-                    mouse::Interaction::ResizingHorizontally
-                }
-                crate::scene::TileEdgeOrient::Horizontal => {
-                    mouse::Interaction::ResizingVertically
-                }
-            };
-        }
+        // The resize cursor over a divider is supplied by the input pane_grid
+        // layered above this overlay; `draw` only suppresses the CAD crosshair
+        // there (see `divider_under`).
         // Over the viewport (no divider, no viewcube): hide the system
         // cursor entirely. `Interaction::None` would let the stack fall
         // through to a sibling — `Hidden` is the explicit "no cursor"
@@ -325,43 +306,87 @@ impl canvas::Program<Message> for SelectionCanvas {
     ) -> Vec<canvas::Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
 
-        // ── Tile dividers (Model-space tiled layout) ──────────────────────
-        // Drawn first so all other overlays sit on top — the line is just
-        // a visual cue for the resize-drag handles.
-        if !self.tile_edges.is_empty() {
+        // ── Pane dividers (Model-space tiled layout) ──────────────────────
+        // Filled bars in the pane_grid spacing gaps, so adjacent panes read as
+        // distinct viewports. Drawn first so all other overlays sit on top.
+        if !self.dividers.is_empty() {
             const DIVIDER: Color = Color {
-                r: 0.40,
-                g: 0.45,
-                b: 0.55,
-                a: 0.85,
+                r: 0.46,
+                g: 0.52,
+                b: 0.62,
+                a: 1.0,
             };
-            for e in &self.tile_edges {
-                let (a, b) = match e.orient {
-                    crate::scene::TileEdgeOrient::Vertical => {
-                        let x = e.coord * bounds.width;
-                        (
-                            Point::new(x, e.span.0 * bounds.height),
-                            Point::new(x, e.span.1 * bounds.height),
-                        )
-                    }
-                    crate::scene::TileEdgeOrient::Horizontal => {
-                        let y = e.coord * bounds.height;
-                        (
-                            Point::new(e.span.0 * bounds.width, y),
-                            Point::new(e.span.1 * bounds.width, y),
-                        )
-                    }
-                };
-                let path = canvas::Path::new(|p| {
-                    p.move_to(a);
-                    p.line_to(b);
-                });
+            for d in &self.dividers {
+                let bar = canvas::Path::rectangle(
+                    Point::new(d.x, d.y),
+                    iced::Size::new(d.width.max(1.0), d.height.max(1.0)),
+                );
+                frame.fill(&bar, DIVIDER);
+            }
+        }
+
+        // ── Pane move (drag-to-swap) ──────────────────────────────────────
+        // While armed: dim the lifted source pane, highlight the drop target
+        // under the cursor, and drag a translucent ghost card along the cursor
+        // so the pane is visibly "moving".
+        if let Some(src) = self.pane_move_rect {
+            let accent = Color {
+                r: 0.30,
+                g: 0.62,
+                b: 1.0,
+                a: 1.0,
+            };
+            // Source pane: dimmed + dashed-feel outline (it has been lifted).
+            let src_path =
+                canvas::Path::rectangle(Point::new(src.x, src.y), iced::Size::new(src.width, src.height));
+            frame.fill(
+                &src_path,
+                Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.28,
+                },
+            );
+            frame.stroke(
+                &src_path,
+                canvas::Stroke {
+                    width: 1.5,
+                    style: canvas::Style::Solid(Color { a: 0.6, ..accent }),
+                    ..Default::default()
+                },
+            );
+            // Drop target pane: bright fill + outline.
+            if let Some(dst) = self.pane_drop_rect {
+                let dst_path = canvas::Path::rectangle(
+                    Point::new(dst.x, dst.y),
+                    iced::Size::new(dst.width, dst.height),
+                );
+                frame.fill(&dst_path, Color { a: 0.16, ..accent });
                 frame.stroke(
-                    &path,
+                    &dst_path,
+                    canvas::Stroke {
+                        width: 2.5,
+                        style: canvas::Style::Solid(accent),
+                        ..Default::default()
+                    },
+                );
+            }
+            // Ghost card dragged under the cursor — a 0.32× preview of the
+            // source pane, centred on the cursor.
+            if let Some(c) = self.selection.last_move_pos {
+                let gw = (src.width * 0.32).clamp(60.0, 280.0);
+                let gh = (src.height * 0.32).clamp(40.0, 200.0);
+                let g = canvas::Path::rectangle(
+                    Point::new(c.x - gw * 0.5, c.y - gh * 0.5),
+                    iced::Size::new(gw, gh),
+                );
+                frame.fill(&g, Color { a: 0.30, ..accent });
+                frame.stroke(
+                    &g,
                     canvas::Stroke {
                         width: 2.0,
-                        style: canvas::Style::Solid(DIVIDER),
-                        line_cap: canvas::LineCap::Butt,
+                        style: canvas::Style::Solid(Color { a: 0.95, ..accent }),
                         ..Default::default()
                     },
                 );
@@ -799,7 +824,7 @@ impl canvas::Program<Message> for SelectionCanvas {
         // Over a Model-tile divider the OS cursor switches to a resize
         // arrow (see `mouse_interaction`); drawing the CAD crosshair on
         // top of it would double up the visual feedback.
-        let over_divider = self.tile_edge_under(cursor, bounds).is_some();
+        let over_divider = self.divider_under(cursor, bounds);
         // PAN mode replaces the crosshair with a hand cursor.
         if !over_viewcube && !over_divider && !self.pan_mode {
             if let Some(cp) = self.selection.last_move_pos {
@@ -849,8 +874,8 @@ impl canvas::Program<Message> for SelectionCanvas {
             }
         } // end !over_viewcube
 
-        // ── UCS icon ──────────────────────────────────────────────────────
-        if let Some(ref ucs) = self.ucs_icon {
+        // ── UCS icon (one per Model pane) ─────────────────────────────────
+        for ucs in &self.ucs_icons {
             draw_ucs_icon(
                 &mut frame,
                 ucs.view_proj,

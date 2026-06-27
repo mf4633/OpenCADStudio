@@ -370,31 +370,33 @@ impl OpenCADStudio {
                             .push_info("VPORTS  Configuration [SIngle/2H/2V/4]:");
                         return Some(self.focus_cmd_input());
                     }
-                    // Model space: split the tiled viewport layout.
-                    use iced::Rectangle as R;
-                    let full = R { x: 0.0, y: 0.0, width: 1.0, height: 1.0 };
-                    let rects: Option<Vec<R>> = match sub.as_str() {
-                        "SINGLE" | "SI" | "1" => Some(vec![full]),
-                        "2H" | "2" => Some(vec![
-                            R { x: 0.0, y: 0.0, width: 1.0, height: 0.5 },
-                            R { x: 0.0, y: 0.5, width: 1.0, height: 0.5 },
-                        ]),
-                        "2V" => Some(vec![
-                            R { x: 0.0, y: 0.0, width: 0.5, height: 1.0 },
-                            R { x: 0.5, y: 0.0, width: 0.5, height: 1.0 },
-                        ]),
-                        "4" => Some(vec![
-                            R { x: 0.0, y: 0.0, width: 0.5, height: 0.5 },
-                            R { x: 0.5, y: 0.0, width: 0.5, height: 0.5 },
-                            R { x: 0.0, y: 0.5, width: 0.5, height: 0.5 },
-                            R { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
-                        ]),
+                    // Model space: split the tiled viewport layout via pane_grid.
+                    use iced::widget::pane_grid::{Axis, Configuration as C};
+                    let split = |axis, a, b| C::Split {
+                        axis,
+                        ratio: 0.5,
+                        a: Box::new(a),
+                        b: Box::new(b),
+                    };
+                    let config: Option<(C<usize>, usize)> = match sub.as_str() {
+                        "SINGLE" | "SI" | "1" => Some((C::Pane(0), 1)),
+                        "2H" | "2" => {
+                            Some((split(Axis::Horizontal, C::Pane(0), C::Pane(1)), 2))
+                        }
+                        "2V" => Some((split(Axis::Vertical, C::Pane(0), C::Pane(1)), 2)),
+                        "4" => Some((
+                            split(
+                                Axis::Vertical,
+                                split(Axis::Horizontal, C::Pane(0), C::Pane(2)),
+                                split(Axis::Horizontal, C::Pane(1), C::Pane(3)),
+                            ),
+                            4,
+                        )),
                         _ => None,
                     };
-                    match rects {
-                        Some(rects) => {
-                            let n = rects.len();
-                            self.tabs[i].scene.set_model_tile_layout(rects);
+                    match config {
+                        Some((config, n)) => {
+                            self.tabs[i].scene.set_model_panes(config);
                             self.tabs[i].scene.camera_generation += 1;
                             self.command_line
                                 .push_output(&format!("VPORTS: {n} viewport(s)."));

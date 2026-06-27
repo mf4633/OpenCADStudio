@@ -348,6 +348,9 @@ impl Scene {
         *self.model_tiles.borrow_mut() = tiles;
         self.active_model_tile.set(0);
         *self.camera.borrow_mut() = active_cam;
+        // Rebuild the pane_grid layout from the restored tile rects so the panes
+        // match (the renderer / input iterate panes, not tiles).
+        self.rebuild_panes_from_tiles();
         self.camera_generation += 1;
         true
     }

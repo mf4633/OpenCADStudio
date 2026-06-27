@@ -2165,8 +2165,11 @@ pub struct MultiPipeline {
 }
 
 impl MultiPipeline {
-    /// Ensure exactly `n` (≥1) inner pipelines exist, creating any missing
-    /// ones. Extra pipelines beyond `n` are dropped.
+    /// Ensure at least `n` (≥1) inner pipelines exist, creating any missing
+    /// ones. Grow-only: extra pipelines are NOT dropped, because per-pane Model
+    /// shader widgets share this storage and each only touches its own slot —
+    /// truncating mid-frame would destroy another pane's slot. Stale inners (a
+    /// closed pane, or fewer paper viewports) are harmless idle GPU resources.
     pub(crate) fn ensure_len(
         &mut self,
         device: &wgpu::Device,
@@ -2177,7 +2180,6 @@ impl MultiPipeline {
         while self.inners.len() < n {
             self.inners.push(Pipeline::new(device, queue, self.format));
         }
-        self.inners.truncate(n);
     }
 }
 

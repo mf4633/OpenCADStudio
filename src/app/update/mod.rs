@@ -1,7 +1,5 @@
 use super::{Message, OpenCADStudio};
-use crate::scene::{
-    VIEWCUBE_DRAW_PX, VIEWCUBE_PAD,
-};
+use crate::scene::VIEWCUBE_DRAW_PX;
 use crate::ui::PropertiesPanel;
 use acadrust::types::Color as AcadColor;
 use iced::time::Instant;
@@ -42,19 +40,6 @@ fn is_modal_blocked_key_msg(msg: &Message) -> bool {
 }
 
 const VIEWCUBE_HIT_SIZE: f32 = VIEWCUBE_DRAW_PX;
-/// Pixel distance from a Model-tile inner divider that still registers as
-/// a resize grip on the press.
-const TILE_EDGE_HIT_PX: f32 = 4.0;
-/// Normalized minimum tile size a divider drag clamps to. Sized to
-/// comfortably contain the ViewCube + its padding so every tile always
-/// has room to show the gizmo.
-fn tile_min_norm(canvas_w: f32, canvas_h: f32) -> (f32, f32) {
-    let px = VIEWCUBE_DRAW_PX + 2.0 * VIEWCUBE_PAD + 16.0;
-    (
-        (px / canvas_w.max(1.0)).min(0.95),
-        (px / canvas_h.max(1.0)).min(0.95),
-    )
-}
 
 fn format_size(bytes: u64) -> String {
     const KB: f64 = 1024.0;
@@ -706,15 +691,17 @@ impl OpenCADStudio {
 
             Message::SplitModelViewport(horizontal) => {
                 let i = self.active_tab;
-                self.tabs[i].scene.split_active_model_tile(horizontal);
+                self.tabs[i].scene.split_active_pane(horizontal);
                 self.tabs[i].scene.camera_generation += 1;
                 Task::none()
             }
 
             Message::CloseModelViewport => {
                 let i = self.active_tab;
-                self.tabs[i].scene.close_active_model_tile();
+                self.tabs[i].scene.close_active_pane();
                 self.tabs[i].scene.camera_generation += 1;
+                self.sync_render_mode_to_active_tile(i);
+                self.adopt_view_display(i);
                 Task::none()
             }
 
@@ -1020,6 +1007,69 @@ impl OpenCADStudio {
             Message::ViewportMove(p) => self.on_viewport_move(p),
 
             Message::ViewportExit => self.on_viewport_exit(),
+
+            // ── Per-pane Model viewport ───────────────────────────────────
+            Message::PaneResized(ev) => self.on_pane_resized(ev),
+            Message::PaneClicked(pane) => self.on_pane_clicked(pane),
+            Message::PaneDragged(ev) => self.on_pane_dragged(ev),
+            Message::PaneMove(idx, local) => {
+                let p = self.pane_canvas_point(idx, local);
+                // While dragging a pane, just track the cursor (no focus swap or
+                // snap) so the drop target reads cleanly.
+                if self.pane_move_from.is_some() {
+                    self.tabs[self.active_tab]
+                        .scene
+                        .selection
+                        .borrow_mut()
+                        .last_move_pos = Some(p);
+                    return Task::none();
+                }
+                self.focus_model_pane(idx);
+                self.on_viewport_move(p)
+            }
+            Message::PaneMoveStart => {
+                let i = self.active_tab;
+                self.pane_move_from = Some(self.tabs[i].scene.active_model_tile.get());
+                Task::none()
+            }
+            Message::PanePress(idx) => {
+                // A fresh press ends any stale (un-dropped) pane move.
+                self.pane_move_from = None;
+                self.focus_model_pane(idx);
+                self.on_viewport_left_press()
+            }
+            Message::PaneRelease(idx) => {
+                // Finishing a pane-move drag: swap the source pane with the one
+                // released over, instead of the normal release handling.
+                if let Some(from) = self.pane_move_from.take() {
+                    let i = self.active_tab;
+                    self.tabs[i].scene.swap_model_panes(from, idx);
+                    self.tabs[i].scene.camera_generation += 1;
+                    return Task::none();
+                }
+                self.focus_model_pane(idx);
+                self.on_viewport_left_release()
+            }
+            Message::PaneRightPress(idx) => {
+                self.focus_model_pane(idx);
+                self.update(Message::ViewportRightPress)
+            }
+            Message::PaneRightRelease(idx) => {
+                self.focus_model_pane(idx);
+                self.update(Message::ViewportRightRelease)
+            }
+            Message::PaneMiddlePress(idx) => {
+                self.focus_model_pane(idx);
+                self.update(Message::ViewportMiddlePress)
+            }
+            Message::PaneMiddleRelease(idx) => {
+                self.focus_model_pane(idx);
+                self.update(Message::ViewportMiddleRelease)
+            }
+            Message::PaneScroll(idx, d) => {
+                self.focus_model_pane(idx);
+                self.update(Message::ViewportScroll(d))
+            }
 
             Message::ViewportLeftPress => self.on_viewport_left_press(),
 

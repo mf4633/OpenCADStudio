@@ -26,18 +26,7 @@ pub use style_ops::StyleKind;
 use document::DocumentTab;
 
 use crate::modules::ModuleEvent;
-use crate::scene::{CubeRegion, TileEdgeOrient};
-
-/// In-flight drag of a Model-tile inner divider. `last_applied` is the
-/// most recent normalized coordinate handed to `move_model_tile_edge` —
-/// the next `ViewportMove` uses it as the `old_coord` argument so the
-/// drag follows the same edge across frames even after sub-pixel
-/// adjustments from the clamp inside `move_model_tile_edge`.
-#[derive(Clone, Debug)]
-pub struct TileDrag {
-    pub orient: TileEdgeOrient,
-    pub last_applied: f32,
-}
+use crate::scene::CubeRegion;
 
 /// Which UCS-icon grip is being dragged. `Origin` slides the UCS origin within
 /// its own plane; `XAxis`/`YAxis` rotate the UCS so that axis points at the
@@ -265,10 +254,6 @@ pub(super) struct OpenCADStudio {
     /// `true` after a bare `VPORTS` in model space — the next command-line
     /// entry is treated as the tiled-config option (SIngle/2H/2V/4).
     awaiting_vports: bool,
-    /// Active drag of a Model-tile divider. Set on press over an inner
-    /// edge, updated on move, cleared on release (which also runs the
-    /// collapse pass).
-    tile_drag: Option<TileDrag>,
     /// Cursor is hovering over the UCS icon body — drives the hover highlight.
     ucs_icon_hover: bool,
     /// UCS icon is selected (clicked): its grips are shown and draggable.
@@ -276,6 +261,9 @@ pub(super) struct OpenCADStudio {
     /// Active direct-drag of a UCS icon grip (origin slide or axis rotate).
     /// Set on press over a grip, updated on move, committed on release.
     ucs_grip_drag: Option<UcsGripKind>,
+    /// Pane-move drag in progress: the source pane's tile index, armed by the
+    /// controls-bar drag handle. On release over another pane the two swap.
+    pane_move_from: Option<usize>,
     /// `true` once the user has reshaped the dynamic-input field set via
     /// the `,` separator during the current command iteration. Tells
     /// `sync_dyn_fields` to preserve the user's chosen shape instead of
@@ -1143,6 +1131,26 @@ pub enum Message {
     ViewportMiddleRelease,
     ViewportScroll(mouse::ScrollDelta),
     ViewportExit,
+    // ── Per-pane Model viewport (pane_grid) ───────────────────────────────
+    /// A pane_grid divider was dragged — resize the split.
+    PaneResized(iced::widget::pane_grid::ResizeEvent),
+    /// A pane body was clicked — focus that pane.
+    PaneClicked(iced::widget::pane_grid::Pane),
+    /// A pane was drag-and-dropped onto another — swap them.
+    PaneDragged(iced::widget::pane_grid::DragEvent),
+    /// Per-pane mouse events. `usize` = the pane's tile index; the `Point` is
+    /// pane-local (offset to canvas coords + focus in the handler).
+    PaneMove(usize, Point),
+    PanePress(usize),
+    PaneRelease(usize),
+    PaneRightPress(usize),
+    PaneRightRelease(usize),
+    PaneMiddlePress(usize),
+    PaneMiddleRelease(usize),
+    PaneScroll(usize, mouse::ScrollDelta),
+    /// Drag-handle pressed on the active pane's controls bar: arm a pane move —
+    /// the next pane released over is swapped with the active pane.
+    PaneMoveStart,
     ViewCubeSnap(CubeRegion),
     /// World-frame view snap from a compass cardinal (N/E/S/W), bypassing the
     /// UCS so the compass stays world-aligned.
@@ -1806,10 +1814,10 @@ impl OpenCADStudio {
             default_bg_color: None,
             default_paper_bg_color: None,
             awaiting_vports: false,
-            tile_drag: None,
             ucs_icon_hover: false,
             ucs_icon_selected: false,
             ucs_grip_drag: None,
+            pane_move_from: None,
             dyn_user_reshaped: false,
             grip_hover: None,
             grip_popup: None,

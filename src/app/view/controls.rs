@@ -2,7 +2,7 @@ use super::*;
 use super::super::document::{DynComponent, DynFieldEntry};
 use super::super::Message;
 use iced::widget::{
-    button, container, row,
+    button, container, mouse_area, row,
 };
 use iced::{Background, Border, Color, Element, Theme};
 
@@ -25,6 +25,33 @@ pub(super) fn viewport_controls<'a>(
     ];
     let light = Color { r: 0.85, g: 0.85, b: 0.85, a: 1.0 };
     let accent = Color { r: 0.45, g: 0.70, b: 1.0, a: 1.0 };
+    let green = Color { r: 0.36, g: 0.80, b: 0.45, a: 1.0 };
+    let red = Color { r: 0.92, g: 0.38, b: 0.38, a: 1.0 };
+
+    // Fixed-colour icon button (close = red); colour stays on hover.
+    let tinted_btn = move |bytes: &'static [u8], color: Color, msg: Message| {
+        button(crate::ui::icons::tinted(bytes, 15.0, color))
+            .on_press(msg)
+            .padding([4, 6])
+            .style(move |_: &Theme, status| iced::widget::button::Style {
+                background: Some(Background::Color(match status {
+                    iced::widget::button::Status::Hovered
+                    | iced::widget::button::Status::Pressed => Color {
+                        r: 0.25,
+                        g: 0.25,
+                        b: 0.25,
+                        a: 0.9,
+                    },
+                    _ => Color::TRANSPARENT,
+                })),
+                border: Border {
+                    radius: 3.0.into(),
+                    ..Default::default()
+                },
+                text_color: color,
+                ..Default::default()
+            })
+    };
 
     // Borderless icon button; an `active` toggle gets an accent tint + fill.
     let icon_btn = move |bytes: &'static [u8], active: bool, msg: Message| {
@@ -106,11 +133,29 @@ pub(super) fn viewport_controls<'a>(
             .push(icon_btn(crate::ui::icons::SPLIT_V, false, Message::SplitModelViewport(false)))
             .push(sep())
             .push(icon_btn(crate::ui::icons::SPLIT_H, false, Message::SplitModelViewport(true)));
-        // Close button: only meaningful with more than one model tile.
+        // Drag handle + close: only meaningful with more than one model tile.
+        // The handle is a `mouse_area` (not a button) so it fires on press-DOWN,
+        // letting the drag continue onto the target pane to swap them (a button
+        // would only fire on release). Placed just left of Close.
         if tile_count > 1 {
+            let drag = mouse_area(
+                container(crate::ui::icons::tinted(crate::ui::icons::MOVE, 15.0, green))
+                    .padding([4, 6])
+                    .style(|_: &Theme| iced::widget::container::Style {
+                        border: Border {
+                            radius: 3.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+            )
+            .interaction(iced::mouse::Interaction::Grab)
+            .on_press(Message::PaneMoveStart);
             bar = bar
                 .push(sep())
-                .push(icon_btn(crate::ui::icons::CLOSE, false, Message::CloseModelViewport));
+                .push(drag)
+                .push(sep())
+                .push(tinted_btn(crate::ui::icons::CLOSE, red, Message::CloseModelViewport));
         }
     }
 

@@ -2,7 +2,7 @@
 
 #![allow(unused_imports)]
 use super::util::*;
-use super::{format_size, tile_min_norm, TILE_EDGE_HIT_PX, VIEWCUBE_HIT_SIZE};
+use super::{format_size, VIEWCUBE_HIT_SIZE};
 use crate::app::helpers::{
     ortho_constrain, parse_coord, polar_constrain_near, ucs_rotate_vec, ucs_to_wcs, ucs_z_axis,
     CoordKind,
@@ -12,7 +12,7 @@ use crate::modules::ModuleEvent;
 use crate::scene::pick::grip::{find_hit_grip, find_hit_grip_paper, find_hit_grip_rte, GripEdit};
 use crate::scene::model::object::GripApply;
 use crate::scene::{
-    self, hover_id, CubeRegion, Scene, TileEdgeOrient, VIEWCUBE_DRAW_PX, VIEWCUBE_PAD, VIEWCUBE_PX,
+    self, hover_id, CubeRegion, Scene, VIEWCUBE_DRAW_PX, VIEWCUBE_PAD, VIEWCUBE_PX,
 };
 use crate::ui::PropertiesPanel;
 use acadrust::types::Color as AcadColor;
@@ -401,6 +401,10 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                 if self.text_inline.is_some() {
                     self.text_inline_cancel();
                     return self.post_editor_closed(false);
+                }
+                // Esc cancels an armed pane move.
+                if self.pane_move_from.take().is_some() {
+                    return Task::none();
                 }
                 // UCS icon: Esc ends any grip drag and clears the selection
                 // (only when no command owns Escape).

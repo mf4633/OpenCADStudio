@@ -7,7 +7,7 @@ use crate::scene::pick::grip::{grips_to_screen, grips_to_screen_paper, grips_to_
 use crate::scene::view::viewport_pane::ViewportPane;
 use crate::scene::{VIEWCUBE_PAD, VIEWCUBE_REGION_PX};
 use iced::widget::{
-    button, column, container, mouse_area, row, shader, stack, text, Row,
+    button, column, container, mouse_area, pane_grid, responsive, row, shader, stack, text, Row,
     Space,
 };
 use iced::window;
@@ -78,7 +78,7 @@ impl OpenCADStudio {
         // borders) and the floating content viewports blit on top.
         let viewport_3d: Element<'_, Message> = if tab.is_start {
             start_page_view()
-        } else {
+        } else if is_paper {
             shader(ViewportPane::model(
                 &tab.scene,
                 self.show_viewcube,
@@ -87,6 +87,67 @@ impl OpenCADStudio {
             .width(Fill)
             .height(Fill)
             .into()
+        } else {
+            // Model space: a pane_grid of per-pane shader widgets (rendering
+            // only). The input mouse_areas live in a SECOND, identical pane_grid
+            // layered ABOVE the crosshair overlay (`model_input_layer` below) —
+            // they must sit above the selection overlay, whose `Hidden` cursor
+            // interaction otherwise "levitates" the cursor and starves any layer
+            // beneath it of mouse events. A separate eventless `responsive`
+            // Space captures the area size to keep `vp_size` / tile rects
+            // current (building the pane_grid inside `responsive` resets the
+            // mouse_areas' hover state and drops their move events).
+            let scene = &tab.scene;
+            let show_viewcube = self.show_viewcube;
+            let render_mode = tab.render_mode;
+            let size_probe: Element<'_, Message> = responsive(move |size| {
+                {
+                    let mut sel = scene.selection.borrow_mut();
+                    sel.vp_size = (size.width, size.height);
+                }
+                scene.sync_tiles_from_panes(size.width, size.height);
+                Space::new().width(Fill).height(Fill).into()
+            })
+            .into();
+            let shaders = pane_grid::PaneGrid::new(
+                &scene.model_panes,
+                move |_pane, &idx, _maximized| {
+                    pane_grid::Content::new(
+                        shader(ViewportPane::for_pane(
+                            scene,
+                            show_viewcube,
+                            render_mode,
+                            idx,
+                        ))
+                        .width(Fill)
+                        .height(Fill),
+                    )
+                },
+            )
+            .width(Fill)
+            .height(Fill)
+            .spacing(crate::scene::TILE_DIVIDER_PX);
+            stack![size_probe, shaders].width(Fill).height(Fill).into()
+        };
+
+        // Per-pane input layer: a pane_grid of transparent mouse_areas matching
+        // the shader pane_grid (same `model_panes` → identical layout). Layered
+        // above the crosshair overlay so it actually receives mouse events, and
+        // it owns the divider resize. Only built for the Model layout.
+        let model_input_layer: Option<Element<'_, Message>> = if is_paper || tab.is_start {
+            None
+        } else {
+            let scene = &tab.scene;
+            Some(
+                pane_grid::PaneGrid::new(&scene.model_panes, |_pane, &idx, _maximized| {
+                    pane_grid::Content::new(pane_mouse_area(idx))
+                })
+                .width(Fill)
+                .height(Fill)
+                .spacing(crate::scene::TILE_DIVIDER_PX)
+                .on_resize(6.0, Message::PaneResized)
+                .into(),
+            )
         };
 
         let grid_overlay = {
@@ -211,8 +272,8 @@ impl OpenCADStudio {
             // Rotation-only projection (view_proj_rte): the icon shows axis
             // DIRECTIONS only, so the full view_proj's huge UTM translation would
             // cancel catastrophically in f32 and make the tripod jitter.
-            let ucs_icon = if !self.show_ucs_icon {
-                None
+            let ucs_icons: Vec<crate::ui::overlay::UcsIconParams> = if !self.show_ucs_icon {
+                vec![]
             } else if let Some((vp_cam, full)) = tab.scene.viewport_edit_frame((vw, vh)) {
                 let (_, ux, uy, uz) = tab.ucs_xform().axes();
                 let origin_screen = self.ucs_icon_at_origin.then(|| {
@@ -220,31 +281,51 @@ impl OpenCADStudio {
                         .project(tab.ucs_origin_world(), full)
                         .map(|p| iced::Point::new(full.x + p.x, full.y + p.y))
                 }).flatten();
-                Some(crate::ui::overlay::UcsIconParams {
+                vec![crate::ui::overlay::UcsIconParams {
                     view_proj: vp_cam.view_proj_rte(full),
                     bounds: full,
                     axes: (ux, uy, uz),
                     origin_screen,
                     hover: self.ucs_icon_hover,
                     selected: self.ucs_icon_selected,
-                })
+                }]
             } else if !is_paper {
-                let cam = tab.scene.camera.borrow();
+                // One icon per Model pane — each at its own UCS origin, projected
+                // through that pane's camera at its pane rect. Only the active
+                // pane carries the interactive hover / selected grips.
                 let (_, ux, uy, uz) = tab.ucs_xform().axes();
-                let origin_screen = self.ucs_icon_at_origin.then(|| {
-                    cam.project(tab.ucs_origin_world(), vp_bounds)
-                        .map(|p| iced::Point::new(vp_bounds.x + p.x, vp_bounds.y + p.y))
-                }).flatten();
-                Some(crate::ui::overlay::UcsIconParams {
-                    view_proj: cam.view_proj_rte(vp_bounds),
-                    bounds: vp_bounds,
-                    axes: (ux, uy, uz),
-                    origin_screen,
-                    hover: self.ucs_icon_hover,
-                    selected: self.ucs_icon_selected,
-                })
+                let origin_w = tab.ucs_origin_world();
+                let active = tab.scene.active_model_tile.get();
+                let live = tab.scene.camera.borrow().clone();
+                tab.scene
+                    .model_tiles
+                    .borrow()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        let b = iced::Rectangle {
+                            x: t.rect.x * vw,
+                            y: t.rect.y * vh,
+                            width: (t.rect.width * vw).max(1.0),
+                            height: (t.rect.height * vh).max(1.0),
+                        };
+                        let cam = if i == active { live.clone() } else { t.camera.clone() };
+                        let origin_screen = self.ucs_icon_at_origin.then(|| {
+                            cam.project(origin_w, b)
+                                .map(|p| iced::Point::new(b.x + p.x, b.y + p.y))
+                        }).flatten();
+                        crate::ui::overlay::UcsIconParams {
+                            view_proj: cam.view_proj_rte(b),
+                            bounds: b,
+                            axes: (ux, uy, uz),
+                            origin_screen,
+                            hover: i == active && self.ucs_icon_hover,
+                            selected: i == active && self.ucs_icon_selected,
+                        }
+                    })
+                    .collect()
             } else {
-                None
+                vec![]
             };
 
             // OST tracking points → screen positions, projected relative-to-eye
@@ -272,22 +353,53 @@ impl OpenCADStudio {
                 vec![]
             };
 
-            // Model-space tile dividers (none in paper / single-tile layouts).
-            let tile_edges = if !is_paper {
-                tab.scene.model_tile_edges()
+            // Model-space pane dividers (none in paper / single-pane layouts).
+            let dividers = if !is_paper {
+                let (vw, vh) = tab.scene.selection.borrow().vp_size;
+                tab.scene.model_pane_dividers(vw, vh)
             } else {
                 vec![]
+            };
+
+            // Pane move (drag-to-swap) visuals: source pane rect + the drop
+            // target pane under the cursor.
+            let (pane_move_rect, pane_drop_rect) = match self.pane_move_from {
+                Some(from) if !is_paper => {
+                    let (vw, vh) = tab.scene.selection.borrow().vp_size;
+                    let cursor = tab.scene.selection.borrow().last_move_pos;
+                    let tiles = tab.scene.model_tiles.borrow();
+                    let px = |t: &crate::scene::ModelTile| iced::Rectangle {
+                        x: t.rect.x * vw,
+                        y: t.rect.y * vh,
+                        width: t.rect.width * vw,
+                        height: t.rect.height * vh,
+                    };
+                    let src = tiles.get(from).map(px);
+                    let drop = cursor.and_then(|c| {
+                        tiles.iter().enumerate().find(|(i, t)| {
+                            *i != from
+                                && c.x >= t.rect.x * vw
+                                && c.x < (t.rect.x + t.rect.width) * vw
+                                && c.y >= t.rect.y * vh
+                                && c.y < (t.rect.y + t.rect.height) * vh
+                        })
+                    });
+                    (src, drop.map(|(_, t)| px(t)))
+                }
+                _ => (None, None),
             };
 
             crate::ui::overlay::selection_overlay(
                 sel,
                 snap_info,
                 grips,
-                ucs_icon,
+                ucs_icons,
                 ost_points,
                 tab.last_cursor_screen,
                 !is_paper && self.show_viewcube,
-                tile_edges,
+                dividers,
+                pane_move_rect,
+                pane_drop_rect,
                 tab.pan_mode,
             )
         };
@@ -317,9 +429,10 @@ impl OpenCADStudio {
             tab.bg_color
                 .map(|[r, g, b, a]| Color { r, g, b, a })
                 .unwrap_or(Color {
-                    r: 0.11,
-                    g: 0.11,
-                    b: 0.11,
+                    // Default model background: RGB (33, 40, 48).
+                    r: 33.0 / 255.0,
+                    g: 40.0 / 255.0,
+                    b: 48.0 / 255.0,
                     a: 1.0,
                 })
         };
@@ -445,11 +558,17 @@ impl OpenCADStudio {
                     .height(Fill),
                 viewport_3d,
                 selection_overlay,
-                viewport_mouse,
             ]
             .width(Fill)
             .height(Fill)
         };
+
+        // Per-pane input pane_grid goes ABOVE the crosshair overlay so it
+        // receives mouse events (the overlay's `Hidden` cursor would otherwise
+        // starve any layer beneath it). The controls bar is pushed on top of it.
+        if let Some(input) = model_input_layer {
+            viewport_stack = viewport_stack.push(input);
+        }
 
         // Model-space render-mode picker, top-left. Sits ABOVE the
         // viewport mouse_area so clicks inside its bounds reach it
@@ -1674,6 +1793,23 @@ const BRAND_DARK: Color = Color {
     b: 0.08,
     a: 1.0,
 };
+
+/// Transparent input layer for one Model pane: a `mouse_area` filling the pane
+/// that emits pane-tagged viewport events (`idx` = the pane's tile index). The
+/// handlers offset the pane-local point to canvas coords and focus the pane.
+fn pane_mouse_area<'a>(idx: usize) -> Element<'a, Message> {
+    mouse_area(container(Space::new().width(Fill).height(Fill)))
+        .on_move(move |p| Message::PaneMove(idx, p))
+        .on_press(Message::PanePress(idx))
+        .on_release(Message::PaneRelease(idx))
+        .on_right_press(Message::PaneRightPress(idx))
+        .on_right_release(Message::PaneRightRelease(idx))
+        .on_middle_press(Message::PaneMiddlePress(idx))
+        .on_middle_release(Message::PaneMiddleRelease(idx))
+        .on_scroll(move |d| Message::PaneScroll(idx, d))
+        .on_exit(Message::ViewportExit)
+        .into()
+}
 
 pub(super) fn start_page_view<'a>() -> Element<'a, Message> {
     const TEXT: Color = Color {

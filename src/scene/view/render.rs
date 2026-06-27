@@ -113,6 +113,13 @@ pub struct Primitive {
     pub(in crate::scene) viewports: Vec<ViewportData>,
     /// Background color used to clear each viewport's MSAA buffer.
     pub(in crate::scene) bg_color: [f32; 4],
+    /// First `MultiPipeline` inner slot this primitive owns. Paper space (one
+    /// shader widget, many viewports) uses 0. Per-pane Model widgets each own a
+    /// distinct slot (= their tile index) so several shader widgets can share
+    /// the type-keyed pipeline storage without clobbering one another — all
+    /// `prepare` calls run before all `render` calls, so disjoint slots are
+    /// safe.
+    pub(in crate::scene) base_slot: usize,
 }
 
 /// Flags the render pipeline consumes, derived from
@@ -201,10 +208,10 @@ impl shader::Primitive for Primitive {
         let phys = viewport.physical_size();
         let full_size = Size::new(phys.width, phys.height);
         let scale = viewport.scale_factor() as f32;
-        pipeline.ensure_len(device, queue, self.viewports.len());
+        pipeline.ensure_len(device, queue, self.base_slot + self.viewports.len());
 
         for (i, vp) in self.viewports.iter().enumerate() {
-            let inner = &mut pipeline.inners[i];
+            let inner = &mut pipeline.inners[self.base_slot + i];
             // The MSAA / depth / resolve textures are always sized to the
             // FULL viewport rectangle (not the on-canvas-visible portion)
             // so the camera matrices render at consistent aspect / scale.
@@ -347,7 +354,7 @@ impl shader::Primitive for Primitive {
         let clip_right = clip.x + clip.width;
         let clip_bottom = clip.y + clip.height;
         for (i, vp) in self.viewports.iter().enumerate() {
-            let Some(inner) = pipeline.inners.get(i) else {
+            let Some(inner) = pipeline.inners.get(self.base_slot + i) else {
                 break;
             };
             // Where the viewport would land on the surface in absolute
@@ -628,7 +635,72 @@ impl Scene {
             .collect();
         // Empty viewports → blit nothing; the container background (model bg
         // or the paper desk colour) stays visible.
-        Primitive { viewports, bg_color }
+        Primitive {
+            viewports,
+            bg_color,
+            base_slot: 0,
+        }
+    }
+
+    /// Build a single-pane Model primitive: the viewport for tile `tile_idx`,
+    /// filling the shader widget's own `bounds` (= the pane rectangle the
+    /// `pane_grid` laid out). Each Model pane is its own shader widget, so the
+    /// camera matrices use the pane aspect for free and the primitive owns
+    /// pipeline slot `tile_idx`. The active tile renders the live camera /
+    /// render-mode; the rest use their stored snapshot.
+    pub(in crate::scene) fn build_viewport_for_pane(
+        &self,
+        bounds: Rectangle,
+        tile_idx: usize,
+        model_render_mode: acadrust::entities::ViewportRenderMode,
+    ) -> Primitive {
+        let hover_region = self.viewcube_hover.get();
+        let canvas = (bounds.width.max(1.0), bounds.height.max(1.0));
+        let bg_color = [0.0, 0.0, 0.0, 0.0];
+        let tiles = self.model_tiles.borrow();
+        let Some(tile) = tiles.get(tile_idx) else {
+            return Primitive {
+                viewports: vec![],
+                bg_color,
+                base_slot: tile_idx,
+            };
+        };
+        let active = self.active_model_tile.get();
+        let is_active = tile_idx == active;
+        let camera = if is_active {
+            self.camera.borrow().clone()
+        } else {
+            tile.camera.clone()
+        };
+        let inst = ViewportInstance {
+            handle: Handle::NULL,
+            tile_idx: Some(tile_idx),
+            // Fills the whole widget (= pane); normalized rect is (0,0,1,1).
+            screen_rect: Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: canvas.0,
+                height: canvas.1,
+            },
+            camera,
+            render_mode: if is_active {
+                model_render_mode
+            } else {
+                tile.render_mode
+            },
+            active: is_active,
+            grid_on: tile.grid_on,
+            paper_sheet: false,
+        };
+        let viewports = self
+            .viewport_data_for(&inst, canvas, hover_region)
+            .into_iter()
+            .collect();
+        Primitive {
+            viewports,
+            bg_color,
+            base_slot: tile_idx,
+        }
     }
 
     /// Build one `ViewportData` from a `ViewportInstance`: gathers the
