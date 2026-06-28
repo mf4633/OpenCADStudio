@@ -42,12 +42,20 @@ pub struct LocalWire {
     pub snap_pts: Vec<(glam::DVec3, SnapHint)>,
     pub tangent_geoms: Vec<TangentGeom>,
     pub fill_tris: Vec<[f32; 3]>,
+    pub fill_tris_low: Vec<[f32; 3]>,
+    /// Per-wire colour from the tessellator output. For most entities this
+    /// equals the sub-entity's resolved colour. For colour-split MTEXT
+    /// (`\C`/`\c` inline overrides) each wire carries its own override colour.
     pub color: [f32; 4],
     pub aci: u8,
     pub pattern_length: f32,
     pub pattern: [f32; 8],
     pub line_weight_px: f32,
     pub plinegen: bool,
+    /// Set at construction; used to discriminate fill-only GPU batches from
+    /// stroke batches in [`StyleKey`]. Derived from
+    /// `points.is_empty() && !fill_tris.is_empty()`.
+    pub is_fill_only: bool,
     pub color_is_byblock: bool,
     pub lt_is_byblock: bool,
     pub lw_is_byblock: bool,
@@ -292,9 +300,7 @@ fn build_defn(
                 subs.push(LocalSub::Nested(build_nested_ref(nested_ins, doc, bg_color)));
             }
             _ => {
-                if let Some(lw) =
-                    tessellate_sub_local(doc, entity, anno_scale, bg_color)
-                {
+                for lw in tessellate_sub_local(doc, entity, anno_scale, bg_color) {
                     subs.push(LocalSub::Wire(lw));
                 }
             }
@@ -344,7 +350,7 @@ fn tessellate_sub_local(
     sub: &EntityType,
     anno_scale: f32,
     bg_color: [f32; 4],
-) -> Option<LocalWire> {
+) -> Vec<LocalWire> {
     let h = sub.common().handle;
 
     // Sanity guard: skip sub-entities whose primary dimension is so large
@@ -352,7 +358,7 @@ fn tessellate_sub_local(
     // of points. These are typically corrupt-radius primitives that slipped
     // past purge_corrupt_entities (finite but absurd values).
     if is_unreasonable_extent(sub) {
-        return None;
+        return vec![];
     }
 
     // Store the RAW colour. `Batches::finalize` applies `adapt_to_bg`
@@ -369,42 +375,12 @@ fn tessellate_sub_local(
     // Pass `local_offset` as the f64 world-offset so tessellate subtracts it
     // before casting to f32 — same precision-preservation trick used for
     // top-level entities, applied per-defn.
-    //
-    // tessellate() may emit multiple WireModels for a single sub-entity (e.g.
-    // MTEXT with inline `\C` / `\c` colour switches splits one entity into
-    // one wire per colour group). The block-defn cache stores a single
-    // LocalWire per sub-entity, so we fold the wires into one — points get
-    // concatenated with NaN separators, the primary colour comes from the
-    // first wire. Per-segment colour is lost inside cached block defns; for
-    // top-level MTEXT outside blocks the colour split is preserved via the
-    // hot path in `tessellate_entity`.
-    let mut wires_out = tessellate::tessellate(
+    let wires_out = tessellate::tessellate(
         doc, h, sub, false, sub_color, pat_len, pat, lw_px, anno_scale, None,
     );
     if wires_out.is_empty() {
-        return None;
+        return vec![];
     }
-    let mut wire = wires_out.remove(0);
-    for extra in wires_out {
-        if !wire.points.is_empty() && !extra.points.is_empty() {
-            wire.points.push([f32::NAN, f32::NAN, f32::NAN]);
-        }
-        wire.points.extend(extra.points);
-        wire.key_vertices.extend(extra.key_vertices);
-        wire.snap_pts.extend(extra.snap_pts);
-        wire.tangent_geoms.extend(extra.tangent_geoms);
-        wire.fill_tris.extend(extra.fill_tris);
-    }
-
-    if wire.points.len() > 100_000 {
-        return None;
-    }
-
-    // Geometry is stored absolute; the double-single (high/low) render path
-    // keeps it precise at UTM scale, so no per-defn offset is subtracted.
-    let aabb_local = aabb_from_points_iter(
-        wire.points.iter().copied().chain(wire.fill_tris.iter().copied()),
-    );
 
     let text_height_local: Option<f32> = match sub {
         EntityType::Text(t) => Some((t.height * anno_scale as f64) as f32),
@@ -427,26 +403,46 @@ fn tessellate_sub_local(
     let text_obb_local: Option<[[f64; 3]; 4]> =
         crate::entities::text_support::text_obb_corners_native(sub, anno_scale, mtext_lines);
 
-    Some(LocalWire {
-        points: wire.points,
-        points_low: wire.points_low,
-        key_vertices: wire.key_vertices,
-        snap_pts: wire.snap_pts,
-        tangent_geoms: wire.tangent_geoms,
-        fill_tris: wire.fill_tris,
-        color: sub_color,
-        aci,
-        pattern_length: pat_len,
-        pattern: pat,
-        line_weight_px: lw_px,
-        plinegen: wire.plinegen,
-        color_is_byblock,
-        lt_is_byblock,
-        lw_is_byblock,
-        aabb_local,
-        text_height_local,
-        text_obb_local,
-    })
+    let mut result = Vec::with_capacity(wires_out.len());
+    for wire in wires_out {
+        // Per-wire point-count cap: a single wire that exceeds this is skipped
+        // rather than aborting the whole sub-entity — with per-wire separation,
+        // other colour segments from the same entity still render.
+        if wire.points.len() > 100_000 {
+            continue;
+        }
+
+        // Geometry is stored absolute; the double-single (high/low) render path
+        // keeps it precise at UTM scale, so no per-defn offset is subtracted.
+        let aabb_local = aabb_from_points_iter(
+            wire.points.iter().copied().chain(wire.fill_tris.iter().copied()),
+        );
+        let is_fill_only = wire.points.is_empty() && !wire.fill_tris.is_empty();
+
+        result.push(LocalWire {
+            points: wire.points,
+            points_low: wire.points_low,
+            key_vertices: wire.key_vertices,
+            snap_pts: wire.snap_pts,
+            tangent_geoms: wire.tangent_geoms,
+            fill_tris: wire.fill_tris,
+            fill_tris_low: wire.fill_tris_low,
+            color: wire.color,
+            aci,
+            pattern_length: pat_len,
+            pattern: pat,
+            line_weight_px: lw_px,
+            plinegen: wire.plinegen,
+            is_fill_only,
+            color_is_byblock,
+            lt_is_byblock,
+            lw_is_byblock,
+            aabb_local,
+            text_height_local,
+            text_obb_local,
+        });
+    }
+    result
 }
 
 fn aabb_from_points_iter<I: IntoIterator<Item = [f32; 3]>>(pts: I) -> [f32; 4] {
@@ -1118,20 +1114,30 @@ fn expand_defn(
                     // We apply the Insert's transform scale to the stored
                     // local glyph height to get the screen height.
                     if let Some(h_local) = lw.text_height_local {
-                        let m = &accum_xform.matrix.m;
-                        let sy = ((m[1][0] * m[1][0]
-                            + m[1][1] * m[1][1]
-                            + m[1][2] * m[1][2]) as f64)
-                            .sqrt() as f32;
-                        let h_world = h_local * sy;
-                        let h_px = h_world / wpp;
-                        if h_px < 1.0 {
-                            emit_text_baseline(lw, accum_xform, ctx, out, wpp);
-                            continue;
-                        }
-                        if h_px < 5.0 {
-                            emit_greeked_text(lw, local, accum_xform, ctx, out);
-                            continue;
+                        // Fill-only wires (outline stripped into a sibling
+                        // LocalWire) must bypass the LOD ladder: both
+                        // emit_text_baseline and emit_greeked_text generate
+                        // their own OBB geometry and completely ignore
+                        // lw.fill_tris, so routing a fill-only wire through
+                        // either path would produce an invisible double-draw.
+                        // emit_wire handles fill_tris correctly at all zoom
+                        // levels, so skip the LOD rungs for these wires.
+                        if !lw.is_fill_only {
+                            let m = &accum_xform.matrix.m;
+                            let sy = ((m[1][0] * m[1][0]
+                                + m[1][1] * m[1][1]
+                                + m[1][2] * m[1][2]) as f64)
+                                .sqrt() as f32;
+                            let h_world = h_local * sy;
+                            let h_px = h_world / wpp;
+                            if h_px < 1.0 {
+                                emit_text_baseline(lw, accum_xform, ctx, out, wpp);
+                                continue;
+                            }
+                            if h_px < 5.0 {
+                                emit_greeked_text(lw, local, accum_xform, ctx, out);
+                                continue;
+                            }
                         }
                     }
                 }
@@ -1289,7 +1295,7 @@ fn emit_wire(
         final_lw_px,
         lw.aci,
         lw.plinegen,
-        false,
+        lw.is_fill_only,
     );
 
     // If the open batch for this style would exceed wgpu's per-buffer limit
@@ -1309,7 +1315,7 @@ fn emit_wire(
             final_lw_px,
             lw.aci,
             lw.plinegen,
-            false,
+            lw.is_fill_only,
         )
     });
 
@@ -1388,11 +1394,13 @@ fn emit_wire(
             .tangent_geoms
             .push(transform_tangent(tg, accum_xform));
     }
-    for p in &lw.fill_tris {
+    debug_assert_eq!(lw.fill_tris.len(), lw.fill_tris_low.len());
+    for (idx, p) in lw.fill_tris.iter().enumerate() {
+        let pl = lw.fill_tris_low[idx];
         let v = accum_xform.apply(Vector3::new(
-            p[0] as f64,
-            p[1] as f64,
-            p[2] as f64,
+            p[0] as f64 + pl[0] as f64,
+            p[1] as f64 + pl[1] as f64,
+            p[2] as f64 + pl[2] as f64,
         ));
         let (hx, lx) = WireModel::split_ds(v.x);
         let (hy, ly) = WireModel::split_ds(v.y);
