@@ -1304,6 +1304,9 @@ impl MultiLeaderTess for MultiLeader {
             plinegen: true,
             vp_scissor: None,
             fill_tris: arrow_fill,
+            // FIXME: fill_tris_low left empty — needs double-single split to match
+            // fill_tris. Any geometry from this path inside a block definition will
+            // trip the debug_assert_eq! in emit_wire (block_cache.rs:1397).
             fill_tris_low: Vec::new(),
         });
 
@@ -1593,6 +1596,9 @@ impl MultiLeaderTess for MultiLeader {
                         plinegen: true,
                         vp_scissor: None,
                         fill_tris: greek_tris,
+                        // FIXME: fill_tris_low left empty — needs double-single split to match
+                        // fill_tris. Any geometry from this path inside a block definition will
+                        // trip the debug_assert_eq! in emit_wire (block_cache.rs:1397).
                         fill_tris_low: Vec::new(),
                     });
                 }
@@ -1670,6 +1676,9 @@ impl MultiLeaderTess for MultiLeader {
                         plinegen: true,
                         vp_scissor: None,
                         fill_tris: text_fill_tris,
+                        // FIXME: fill_tris_low left empty — needs double-single split to match
+                        // fill_tris. Any geometry from this path inside a block definition will
+                        // trip the debug_assert_eq! in emit_wire (block_cache.rs:1397).
                         fill_tris_low: Vec::new(),
                     });
                 }

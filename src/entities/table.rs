@@ -755,6 +755,9 @@ pub fn tessellate_table(
                 plinegen: true,
                 vp_scissor: None,
                 fill_tris,
+                // FIXME: fill_tris_low left empty — needs double-single split to match
+                // fill_tris. Any geometry from this path inside a block definition will
+                // trip the debug_assert_eq! in emit_wire (block_cache.rs:1397).
                 fill_tris_low: Vec::new(),
             }
         };

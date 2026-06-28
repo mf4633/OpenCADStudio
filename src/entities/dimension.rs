@@ -1261,6 +1261,9 @@ fn tessellate_dimension_inner(
         plinegen: true,
         vp_scissor: None,
         fill_tris: geom.arrow_fill,
+        // FIXME: fill_tris_low left empty — needs double-single split to match
+        // fill_tris. Any geometry from this path inside a block definition will
+        // trip the debug_assert_eq! in emit_wire (block_cache.rs:1397).
         fill_tris_low: Vec::new(),
     });
 
@@ -1293,8 +1296,11 @@ fn tessellate_dimension_inner(
                     aabb: WireModel::UNBOUNDED_AABB,
                     plinegen: true,
                     vp_scissor: None,
-                    fill_tris: rect,
-                    fill_tris_low: Vec::new(),
+        fill_tris: rect,
+        // FIXME: fill_tris_low left empty — needs double-single split to match
+        // fill_tris. Any geometry from this path inside a block definition will
+        // trip the debug_assert_eq! in emit_wire (block_cache.rs:1397).
+        fill_tris_low: Vec::new(),
                 });
             }
         }
