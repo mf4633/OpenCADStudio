@@ -377,6 +377,12 @@ impl Scene {
             })
             .collect();
 
+        // Background for adapting block-child hatch colours at the leaf (#221).
+        let hatch_bg: [f32; 4] = if self.current_layout != "Model" {
+            self.paper_bg_color
+        } else {
+            self.bg_color
+        };
         for entity in self.document.entities() {
             let EntityType::Insert(ins) = entity else {
                 continue;
@@ -402,26 +408,81 @@ impl Scene {
             // hatches land in the correct world position. A depth guard keeps
             // a malformed cyclic block reference from looping forever.
             let normalize = crate::modules::draw::modify::explode::normalize_insert_entity;
-            let mut stack: Vec<(EntityType, usize)> = ins
+            // Block-child colour inheritance sources (#221), kept RAW and
+            // adapted at the leaf. `ins_color` feeds ByBlock; `l0` (the
+            // INSERT's *layer* style) feeds the layer-0 rule. Both chain
+            // through nested inserts, mirroring expand_insert.
+            let ins_color =
+                crate::scene::view::render::render_style_for(&self.document, entity).0;
+            let l0 = crate::scene::view::render::layer_render_style(
+                &self.document,
+                &ins.common.layer,
+            );
+            let mut stack: Vec<(
+                EntityType,
+                usize,
+                [f32; 4],
+                crate::scene::view::render::InheritStyle,
+            )> = ins
                 .explode_from_document(&self.document)
                 .into_iter()
-                .map(|e| (normalize(e), 0usize))
+                .map(|e| (normalize(e), 0usize, ins_color, l0))
                 .collect();
-            while let Some((sub, depth)) = stack.pop() {
+            while let Some((sub, depth, sub_ins_color, sub_l0)) = stack.pop() {
                 match sub {
                     EntityType::Insert(nins) => {
                         if depth >= 32 {
                             continue;
                         }
+                        use acadrust::types::Color;
+                        // Chain the inheritance sources into the nested insert,
+                        // mirroring expand_insert's nested resolution: ByBlock →
+                        // parent source; layer-0 + ByLayer → parent layer-0
+                        // target; else the nested insert's own resolved style.
+                        let child_ins_color = if nins.common.color == Color::ByBlock {
+                            sub_ins_color
+                        } else if nins.common.layer == "0"
+                            && nins.common.color == Color::ByLayer
+                        {
+                            sub_l0.color
+                        } else {
+                            crate::scene::view::render::render_style_for(
+                                &self.document,
+                                &EntityType::Insert(nins.clone()),
+                            )
+                            .0
+                        };
+                        let child_l0 = if nins.common.layer == "0" {
+                            sub_l0
+                        } else {
+                            crate::scene::view::render::layer_render_style(
+                                &self.document,
+                                &nins.common.layer,
+                            )
+                        };
                         for e in nins.explode_from_document(&self.document) {
-                            stack.push((normalize(e), depth + 1));
+                            stack.push((normalize(e), depth + 1, child_ins_color, child_l0));
                         }
                     }
                     EntityType::Hatch(dxf) => {
                         if dxf.common.invisible || layer_hidden(&dxf.common.layer) {
                             continue;
                         }
-                        let color = self.render_style(&EntityType::Hatch(dxf.clone())).0;
+                        // Resolve ByBlock / layer-0 inheritance for this block
+                        // child, then adapt to the background (#221). Pattern /
+                        // lineweight args are unused by a hatch's colour.
+                        let color = crate::scene::view::render::render_style_for_block_sub(
+                            &self.document,
+                            &EntityType::Hatch(dxf.clone()),
+                            sub_ins_color,
+                            0.0,
+                            [0.0; 8],
+                            0.0,
+                            sub_l0,
+                        )
+                        .0;
+                        let color =
+                            crate::scene::view::render::adapt_to_bg(color, hatch_bg);
                         if let Some(mut model) =
                             Self::hatch_model_from_dxf(&dxf, color)
                         {

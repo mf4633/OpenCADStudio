@@ -220,6 +220,20 @@ pub(crate) fn tessellate_entity(
                 if !br.entity_handles.is_empty() {
                     let mut wires: Vec<WireModel> =
                         Vec::with_capacity(br.entity_handles.len());
+                    // The Dimension's own layer style — layer-0 inheritance
+                    // target for baked sub-entities on layer "0" (#221).
+                    let dim_l0_color = view::render::adapt_to_bg(
+                        view::render::layer_render_style(document, &e.common().layer).color,
+                        bg_color,
+                    );
+                    let dim_l0_aci = document
+                        .layers
+                        .get(&e.common().layer)
+                        .map(|l| match &l.color {
+                            acadrust::types::Color::Index(i) => *i,
+                            _ => 0,
+                        })
+                        .unwrap_or(0);
                     for &eh in &br.entity_handles {
                         let Some(sub) = document.get_entity(eh) else { continue };
                         // Sub-entities inside *D### / DIMBLOCK## blocks
@@ -227,6 +241,8 @@ pub(crate) fn tessellate_entity(
                         // they should inherit from the Dimension entity.
                         let sub_color_is_byblock =
                             sub.common().color == acadrust::types::Color::ByBlock;
+                        let sub_is_l0_bylayer = sub.common().layer == "0"
+                            && sub.common().color == acadrust::types::Color::ByLayer;
                         let sub_wires = tessellate_entity(
                             document, selected, active_viewport, bg_color,
                             // Block contents are baked at the final WCS size —
@@ -238,10 +254,14 @@ pub(crate) fn tessellate_entity(
                             // Override ByBlock colour with the dim's resolved
                             // colour so text matches `DIMCLRT`-style behaviour
                             // (or layer colour) instead of the raw ByBlock
-                            // fallback that render_style_for produces.
+                            // fallback that render_style_for produces. A layer-0
+                            // sub inherits the dim's layer colour instead.
                             if sub_color_is_byblock {
                                 w.color = if sel { WireModel::SELECTED } else { entity_color };
                                 w.aci = aci;
+                            } else if sub_is_l0_bylayer && !sel {
+                                w.color = dim_l0_color;
+                                w.aci = dim_l0_aci;
                             }
                             wires.push(w);
                         }
@@ -320,10 +340,26 @@ pub(crate) fn tessellate_entity(
                 if !br.entity_handles.is_empty() {
                     let mut wires: Vec<WireModel> =
                         Vec::with_capacity(br.entity_handles.len());
+                    // The Table's own layer style — layer-0 inheritance target
+                    // for baked sub-entities on layer "0" (#221).
+                    let tab_l0_color = view::render::adapt_to_bg(
+                        view::render::layer_render_style(document, &e.common().layer).color,
+                        bg_color,
+                    );
+                    let tab_l0_aci = document
+                        .layers
+                        .get(&e.common().layer)
+                        .map(|l| match &l.color {
+                            acadrust::types::Color::Index(i) => *i,
+                            _ => 0,
+                        })
+                        .unwrap_or(0);
                     for &eh in &br.entity_handles {
                         let Some(sub) = document.get_entity(eh) else { continue };
                         let sub_color_is_byblock =
                             sub.common().color == acadrust::types::Color::ByBlock;
+                        let sub_is_l0_bylayer = sub.common().layer == "0"
+                            && sub.common().color == acadrust::types::Color::ByLayer;
                         let sub_wires = tessellate_entity(
                             document, selected, active_viewport, bg_color,
                             anno_scale, sub, block_cache, view_aabb, world_per_pixel,
@@ -333,6 +369,9 @@ pub(crate) fn tessellate_entity(
                             if sub_color_is_byblock {
                                 w.color = if sel { WireModel::SELECTED } else { entity_color };
                                 w.aci = aci;
+                            } else if sub_is_l0_bylayer && !sel {
+                                w.color = tab_l0_color;
+                                w.aci = tab_l0_aci;
                             }
                             wires.push(w);
                         }
@@ -367,6 +406,13 @@ pub(crate) fn tessellate_entity(
         // Resolve the INSERT's own style so ByBlock sub-entities can inherit it.
         let (ins_color, ins_pat_len, ins_pat, ins_lw_px, _) = view::render::render_style_for(document, e);
         let ins_color = view::render::adapt_to_bg(ins_color, bg_color);
+        // Resolve the INSERT's *layer* style — the layer-0 inheritance target
+        // for sub-entities on layer "0" with ByLayer properties (#221).
+        let ins_layer = {
+            let mut s = view::render::layer_render_style(document, &ins.common.layer);
+            s.color = view::render::adapt_to_bg(s.color, bg_color);
+            s
+        };
         let ip = glam::Vec3::new(
             (ins.insert_point.x) as f32,
             (ins.insert_point.y) as f32,
@@ -408,6 +454,7 @@ pub(crate) fn tessellate_entity(
                 ins_pat_len,
                 ins_pat,
                 ins_lw_px,
+                ins_layer,
                 sel,
                 pslt_factor,
                 view_aabb,
@@ -438,6 +485,7 @@ pub(crate) fn tessellate_entity(
                     ins_pat_len,
                     ins_pat,
                     ins_lw_px,
+                    ins_layer,
                     bg_color,
                     is_xref,
                     pslt_factor,
@@ -469,6 +517,7 @@ pub(crate) fn tessellate_entity(
                         ins_pat_len,
                         ins_pat,
                         ins_lw_px,
+                        ins_layer,
                     );
                 let sub_color = view::render::adapt_to_bg(sub_color, bg_color);
                 let sub_color = if is_xref && !sel {
@@ -509,6 +558,7 @@ pub(crate) fn tessellate_entity(
             ins_pat_len,
             ins_pat,
             ins_lw_px,
+            ins_layer,
             bg_color,
             is_xref,
             pslt_factor,

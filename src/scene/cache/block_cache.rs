@@ -59,6 +59,13 @@ pub struct LocalWire {
     pub color_is_byblock: bool,
     pub lt_is_byblock: bool,
     pub lw_is_byblock: bool,
+    /// Set when this child sits on layer "0" and the matching property is
+    /// ByLayer. At expand time the value is then taken from the INSERT's
+    /// *layer* (the layer-0 inheritance rule) instead of the cached layer-0
+    /// value baked here.
+    pub color_l0: bool,
+    pub lt_l0: bool,
+    pub lw_l0: bool,
     /// XY bounding box of this wire in block-local coordinates.
     /// `[min_x, min_y, max_x, max_y]`. Used for view-frustum culling at
     /// expand-time: transform corners by the Insert transform → world AABB
@@ -89,6 +96,18 @@ pub struct NestedRef {
     pub color_is_byblock: bool,
     pub lt_is_byblock: bool,
     pub lw_is_byblock: bool,
+    /// The nested INSERT's own properties are ByLayer. Combined with
+    /// `layer_is_zero` these drive the layer-0 rule for the nested insert
+    /// *itself* (so its ByBlock leaves inherit the outer layer, not layer 0).
+    pub color_is_bylayer: bool,
+    pub lt_is_bylayer: bool,
+    pub lw_is_bylayer: bool,
+    /// The nested INSERT itself sits on layer "0": its own layer-0 children
+    /// chain up to the outer insert's layer rather than resolving to `l0`.
+    pub layer_is_zero: bool,
+    /// The nested INSERT's own layer style — the layer-0 inheritance target
+    /// for its children when the nested insert is not itself on layer 0.
+    pub l0: crate::scene::view::render::InheritStyle,
     pub instance_offsets: Vec<[f64; 3]>,
     /// XCLIP boundary for this nested insert, in the parent defn's local frame
     /// (`None` = unclipped). Baked at build time because the clip's spatial
@@ -322,6 +341,9 @@ fn build_nested_ref(
     // against different backgrounds without rebuilding.
     let (ins_color, ins_pat_len, ins_pat, ins_lw_px, _) =
         crate::scene::view::render::render_style_for(doc, &EntityType::Insert(nested_ins.clone()));
+    // The nested insert's own layer style — the layer-0 target for its
+    // children (raw colour; adapted at emit like `ins_color`).
+    let l0 = crate::scene::view::render::layer_render_style(doc, &nested_ins.common.layer);
     let _ = bg_color;
 
     // Bake the XCLIP boundary (parent-defn-local) so the nested insert keeps
@@ -340,6 +362,17 @@ fn build_nested_ref(
         color_is_byblock: nested_ins.common.color == AcadColor::ByBlock,
         lt_is_byblock: nested_ins.common.linetype.eq_ignore_ascii_case("byblock"),
         lw_is_byblock: matches!(nested_ins.common.line_weight, LineWeight::ByBlock),
+        color_is_bylayer: nested_ins.common.color == AcadColor::ByLayer,
+        lt_is_bylayer: {
+            let lt = &nested_ins.common.linetype;
+            lt.is_empty() || lt.eq_ignore_ascii_case("bylayer")
+        },
+        lw_is_bylayer: matches!(
+            nested_ins.common.line_weight,
+            LineWeight::ByLayer | LineWeight::Default
+        ),
+        layer_is_zero: nested_ins.common.layer == "0",
+        l0,
         instance_offsets: array_offsets(nested_ins),
         clip_poly,
     }
@@ -371,6 +404,21 @@ fn tessellate_sub_local(
     let color_is_byblock = sub.common().color == AcadColor::ByBlock;
     let lt_is_byblock = sub.common().linetype.eq_ignore_ascii_case("byblock");
     let lw_is_byblock = matches!(sub.common().line_weight, LineWeight::ByBlock);
+
+    // Layer-0 rule: a child on layer "0" with ByLayer properties inherits the
+    // INSERT's layer at expand time. Flag each ByLayer property so emit_wire
+    // can override the cached (layer-0-resolved) value with the insert layer's.
+    let on_l0 = sub.common().layer == "0";
+    let color_l0 = on_l0 && sub.common().color == AcadColor::ByLayer;
+    let lt_l0 = on_l0 && {
+        let lt = &sub.common().linetype;
+        lt.is_empty() || lt.eq_ignore_ascii_case("bylayer")
+    };
+    let lw_l0 = on_l0
+        && matches!(
+            sub.common().line_weight,
+            LineWeight::ByLayer | LineWeight::Default
+        );
 
     // Pass `local_offset` as the f64 world-offset so tessellate subtracts it
     // before casting to f32 — same precision-preservation trick used for
@@ -437,6 +485,9 @@ fn tessellate_sub_local(
             color_is_byblock,
             lt_is_byblock,
             lw_is_byblock,
+            color_l0,
+            lt_l0,
+            lw_l0,
             aabb_local,
             text_height_local,
             text_obb_local,
@@ -537,6 +588,8 @@ pub fn expand_insert(
     ins_pat_len: f32,
     ins_pat: [f32; 8],
     ins_lw_px: f32,
+    // The INSERT's own layer style — layer-0 inheritance target for children.
+    ins_layer: crate::scene::view::render::InheritStyle,
     selected: bool,
     pslt_factor: f32,
     // World-space XY view AABB (with world_offset already subtracted, so the
@@ -598,6 +651,7 @@ pub fn expand_insert(
             ins_pat_len,
             ins_pat,
             ins_lw_px,
+            l0: ins_layer,
             selected,
             pslt_factor,
             view_aabb,
@@ -693,18 +747,7 @@ fn emit_greeked_text(
         return;
     }
 
-    let final_color = if ctx.selected {
-        WireModel::SELECTED
-    } else if lw.color_is_byblock {
-        ctx.ins_color
-    } else {
-        lw.color
-    };
-    let final_color = if ctx.is_xref && !ctx.selected {
-        fade_toward_bg(final_color, ctx.bg_color)
-    } else {
-        final_color
-    };
+    let final_color = resolve_wire_color(lw, ctx);
 
     let key = style_key(final_color, 0.0, [0.0; 8], 1.0, lw.aci, true, true);
     let entry = out
@@ -790,18 +833,7 @@ fn emit_text_baseline(
         (ux / ulen, uy / ulen, uz / ulen)
     };
 
-    let final_color = if ctx.selected {
-        WireModel::SELECTED
-    } else if lw.color_is_byblock {
-        ctx.ins_color
-    } else {
-        lw.color
-    };
-    let final_color = if ctx.is_xref && !ctx.selected {
-        fade_toward_bg(final_color, ctx.bg_color)
-    } else {
-        final_color
-    };
+    let final_color = resolve_wire_color(lw, ctx);
 
     let key = style_key(final_color, 0.0, [0.0; 8], 1.0, lw.aci, true, false);
     let entry = out
@@ -868,6 +900,9 @@ struct ExpandCtx<'a> {
     ins_pat_len: f32,
     ins_pat: [f32; 8],
     ins_lw_px: f32,
+    /// Layer-0 inheritance target — the current INSERT's *layer* style, used
+    /// for child wires on layer "0" whose properties are ByLayer.
+    l0: crate::scene::view::render::InheritStyle,
     selected: bool,
     pslt_factor: f32,
     // World-space XY view AABB (post world_offset). `None` = no culling.
@@ -1202,28 +1237,43 @@ fn expand_defn(
                         continue;
                     }
                 }
-                // Resolve ByBlock for this nested ref against the outer ctx.
+                // Resolve the nested insert's own style against the outer ctx:
+                // ByBlock inherits the outer insert; a nested insert that is
+                // itself on layer "0" with ByLayer props inherits the outer
+                // layer-0 target (so its ByBlock leaves resolve to that layer,
+                // not layer 0). Mirrors the leaf resolution in emit_wire.
                 let nested_color = if nref.color_is_byblock {
                     ctx.ins_color
+                } else if nref.layer_is_zero && nref.color_is_bylayer {
+                    ctx.l0.color
                 } else {
                     nref.ins_color
                 };
                 let (nested_pat_len, nested_pat) = if nref.lt_is_byblock {
                     (ctx.ins_pat_len, ctx.ins_pat)
+                } else if nref.layer_is_zero && nref.lt_is_bylayer {
+                    (ctx.l0.pat_len, ctx.l0.pat)
                 } else {
                     (nref.ins_pat_len, nref.ins_pat)
                 };
                 let nested_lw_px = if nref.lw_is_byblock {
                     ctx.ins_lw_px
+                } else if nref.layer_is_zero && nref.lw_is_bylayer {
+                    ctx.l0.lw_px
                 } else {
                     nref.ins_lw_px
                 };
+                // Layer-0 target for the nested expansion: a nested insert that
+                // is itself on layer 0 chains up to the outer target; otherwise
+                // its layer-0 children resolve to the nested insert's own layer.
+                let nested_l0 = if nref.layer_is_zero { ctx.l0 } else { nref.l0 };
                 let inner_ctx = ExpandCtx {
                     cache: ctx.cache,
                     ins_color: nested_color,
                     ins_pat_len: nested_pat_len,
                     ins_pat: nested_pat,
                     ins_lw_px: nested_lw_px,
+                    l0: nested_l0,
                     selected: ctx.selected,
                     pslt_factor: ctx.pslt_factor,
                     view_aabb: ctx.view_aabb,
@@ -1279,6 +1329,28 @@ fn expand_defn(
     }
 }
 
+/// Resolve a cached LocalWire's final colour against the current expansion
+/// context: selection override first, then ByBlock → insert colour, then the
+/// layer-0 rule → insert-layer colour, else the cached colour; finally xref
+/// fade. Shared by the stroke, fill, and greeked-text emit paths.
+fn resolve_wire_color(lw: &LocalWire, ctx: &ExpandCtx) -> [f32; 4] {
+    let c = if ctx.selected {
+        WireModel::SELECTED
+    } else if lw.color_is_byblock {
+        ctx.ins_color
+    } else if lw.color_l0 {
+        // Inherit the insert layer's RGB but keep the child's own transparency.
+        [ctx.l0.color[0], ctx.l0.color[1], ctx.l0.color[2], lw.color[3]]
+    } else {
+        lw.color
+    };
+    if ctx.is_xref && !ctx.selected {
+        fade_toward_bg(c, ctx.bg_color)
+    } else {
+        c
+    }
+}
+
 fn emit_wire(
     lw: &LocalWire,
     accum_xform: &Transform,
@@ -1291,25 +1363,18 @@ fn emit_wire(
 
     // Resolve final style for this LocalWire against the outer Insert ctx
     // before we hash it into a batch.
-    let final_color = if ctx.selected {
-        WireModel::SELECTED
-    } else if lw.color_is_byblock {
-        ctx.ins_color
-    } else {
-        lw.color
-    };
-    let final_color = if ctx.is_xref && !ctx.selected {
-        fade_toward_bg(final_color, ctx.bg_color)
-    } else {
-        final_color
-    };
+    let final_color = resolve_wire_color(lw, ctx);
     let (final_pat_len, final_pat) = if lw.lt_is_byblock {
         (ctx.ins_pat_len, ctx.ins_pat)
+    } else if lw.lt_l0 {
+        (ctx.l0.pat_len, ctx.l0.pat)
     } else {
         (lw.pattern_length, lw.pattern)
     };
     let final_lw_px = if lw.lw_is_byblock {
         ctx.ins_lw_px
+    } else if lw.lw_l0 {
+        ctx.l0.lw_px
     } else {
         lw.line_weight_px
     };

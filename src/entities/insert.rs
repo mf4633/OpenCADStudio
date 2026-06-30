@@ -133,6 +133,7 @@ pub(crate) fn append_insert_attribute_wires(
     ins_pat_len: f32,
     ins_pat: [f32; 8],
     ins_lw_px: f32,
+    ins_layer: render::InheritStyle,
     bg_color: [f32; 4],
     is_xref: bool,
     pslt_factor: f32,
@@ -162,6 +163,7 @@ pub(crate) fn append_insert_attribute_wires(
             ins_pat_len,
             ins_pat,
             ins_lw_px,
+            ins_layer,
         );
         let sub_color = render::adapt_to_bg(sub_color, bg_color);
         let sub_color = if is_xref && !sel {

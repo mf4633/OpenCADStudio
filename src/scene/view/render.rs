@@ -533,26 +533,65 @@ pub(in crate::scene) fn render_style_for(
                 .unwrap_or(&LineWeight::Default),
             _ => ew,
         };
-        const MM_TO_PX: f32 = 96.0 / 25.4;
-        // CAD apps display model-space lineweights larger than their true
-        // physical size so the gradations stay legible on screen — at true
-        // scale a 0.5 mm line is ~2 px and is indistinguishable from thinner
-        // weights (which all floor to 1 px). Apply the same legibility boost so
-        // weights are pronounced and tell apart, matching other DWG editors.
-        // (#147)
-        const LWT_DISPLAY_BOOST: f32 = 2.0;
-        resolved
-            .millimeters()
-            .map(|mm| (mm as f32 * MM_TO_PX * LWT_DISPLAY_BOOST).max(1.0))
-            .unwrap_or(1.0)
+        lineweight_to_px(resolved)
     };
 
     (entity_color, pattern_length, pattern, line_weight_px, aci)
 }
 
-/// Like `render_style_for` but resolves ByBlock properties by inheriting from
-/// the INSERT entity's already-resolved style. Call this for exploded block
-/// sub-entities so that ByBlock color/linetype/lineweight propagate correctly.
+/// Resolved render style used as the inheritance source for a block child's
+/// ByBlock properties (the INSERT's own style) or its layer-0 properties (the
+/// INSERT's *layer* style). Bundled so it threads through the block-expansion
+/// call chain as a single value.
+#[derive(Clone, Copy, Debug)]
+pub struct InheritStyle {
+    pub color: [f32; 4],
+    pub pat_len: f32,
+    pub pat: [f32; 8],
+    pub lw_px: f32,
+}
+
+/// Convert a concrete (already layer-resolved) lineweight to display pixels.
+pub(crate) fn lineweight_to_px(lw: &LineWeight) -> f32 {
+    const MM_TO_PX: f32 = 96.0 / 25.4;
+    // CAD apps display model-space lineweights larger than their true physical
+    // size so the gradations stay legible on screen — at true scale a 0.5 mm
+    // line is ~2 px and is indistinguishable from thinner weights (which all
+    // floor to 1 px). Apply the same legibility boost so weights are pronounced
+    // and tell apart, matching other DWG editors. (#147)
+    const LWT_DISPLAY_BOOST: f32 = 2.0;
+    lw.millimeters()
+        .map(|mm| (mm as f32 * MM_TO_PX * LWT_DISPLAY_BOOST).max(1.0))
+        .unwrap_or(1.0)
+}
+
+/// Resolve a layer's own color / linetype / lineweight to concrete render
+/// values — what a fully-ByLayer entity on that layer would draw as. Used for
+/// the layer-0 block rule: a block child on layer "0" inherits the block
+/// reference's layer through this. Color is returned RAW (background adaptation
+/// happens at emit time). Falls back to white / Continuous / 1 px when the
+/// layer is missing.
+pub(crate) fn layer_render_style(document: &CadDocument, layer_name: &str) -> InheritStyle {
+    let layer = document.layers.get(layer_name);
+    let color = layer.map(|l| &l.color).unwrap_or(&AcadColor::WHITE);
+    let [r, g, b, _] = tess_util::aci_to_rgba(color);
+    let lt_name = layer.map(|l| l.line_type.as_str()).unwrap_or("Continuous");
+    let lt_scale = document.header.linetype_scale as f32;
+    let (pat_len, pat) = resolve_pattern(&document.line_types, lt_name, lt_scale);
+    let lw = layer.map(|l| &l.line_weight).unwrap_or(&LineWeight::Default);
+    InheritStyle {
+        color: [r, g, b, 1.0],
+        pat_len,
+        pat,
+        lw_px: lineweight_to_px(lw),
+    }
+}
+
+/// Like `render_style_for` but resolves a block sub-entity's inherited
+/// properties: ByBlock inherits the INSERT's style, and (the layer-0 rule) a
+/// sub-entity on layer "0" with ByLayer properties inherits the INSERT's
+/// *layer* style (`l0`). Explicit properties always win. Call this for
+/// exploded block sub-entities so color/linetype/lineweight propagate right.
 pub(crate) fn render_style_for_block_sub(
     document: &CadDocument,
     e: &EntityType,
@@ -560,24 +599,35 @@ pub(crate) fn render_style_for_block_sub(
     insert_pat_len: f32,
     insert_pat: [f32; 8],
     insert_lw_px: f32,
+    l0: InheritStyle,
 ) -> ([f32; 4], f32, [f32; 8], f32, u8) {
     let (color, pat_len, pat, lw_px, aci) = render_style_for(document, e);
     let common = e.common();
+    let on_l0 = common.layer == "0";
 
     let final_color = if common.color == AcadColor::ByBlock {
         insert_color
+    } else if on_l0 && common.color == AcadColor::ByLayer {
+        // Inherit the insert layer's RGB but keep the child's own transparency.
+        [l0.color[0], l0.color[1], l0.color[2], color[3]]
     } else {
         color
     };
 
+    let lt_bylayer =
+        common.linetype.is_empty() || common.linetype.eq_ignore_ascii_case("bylayer");
     let (final_pat_len, final_pat) = if common.linetype.eq_ignore_ascii_case("byblock") {
         (insert_pat_len, insert_pat)
+    } else if on_l0 && lt_bylayer {
+        (l0.pat_len, l0.pat)
     } else {
         (pat_len, pat)
     };
 
     let final_lw = if matches!(common.line_weight, LineWeight::ByBlock) {
         insert_lw_px
+    } else if on_l0 && matches!(common.line_weight, LineWeight::ByLayer | LineWeight::Default) {
+        l0.lw_px
     } else {
         lw_px
     };
@@ -1012,4 +1062,94 @@ fn split_face3d_wires(
         }
     }
     (face3d, others)
+}
+
+// ── Layer-0 block inheritance (#221) ──────────────────────────────────────
+// A block child on layer "0" with ByLayer properties inherits the block
+// reference's *layer*; every other layer is "sticky" (keeps its own layer);
+// ByBlock inherits the insert's own style; explicit properties always win.
+#[cfg(test)]
+mod layer0_inherit_tests {
+    use super::*;
+    use acadrust::entities::Line;
+    use acadrust::tables::Layer;
+    use acadrust::types::{Color, Transparency};
+
+    // ACI: 1 = red, 3 = green, 7 = white. Distinct, so the assertions below
+    // can tell "inherited the insert layer" from "kept layer 0".
+    fn doc() -> CadDocument {
+        let mut d = CadDocument::new();
+        let mut walls = Layer::new("Walls");
+        walls.color = Color::Index(1); // red
+        d.layers.add_or_replace(walls);
+        let mut zero = Layer::new("0");
+        zero.color = Color::Index(7); // white
+        d.layers.add_or_replace(zero);
+        let mut other = Layer::new("Other");
+        other.color = Color::Index(3); // green
+        d.layers.add_or_replace(other);
+        d
+    }
+
+    fn child(layer: &str, color: Color) -> EntityType {
+        let mut l = Line::new();
+        l.common.layer = layer.to_string();
+        l.common.color = color;
+        EntityType::Line(l)
+    }
+
+    fn resolve(d: &CadDocument, e: &EntityType, ins: [f32; 4]) -> [f32; 4] {
+        // Insert sits on "Walls"; its layer style is the layer-0 target.
+        let l0 = layer_render_style(d, "Walls");
+        render_style_for_block_sub(d, e, ins, l0.pat_len, l0.pat, l0.lw_px, l0).0
+    }
+
+    #[test]
+    fn layer0_bylayer_inherits_insert_layer() {
+        let d = doc();
+        let walls = layer_render_style(&d, "Walls").color;
+        let zero = layer_render_style(&d, "0").color;
+        let c = resolve(&d, &child("0", Color::ByLayer), walls);
+        assert_eq!(&c[..3], &walls[..3], "layer-0 child must show the insert's layer (Walls)");
+        assert_ne!(&c[..3], &zero[..3], "layer-0 child must NOT show layer 0's own color");
+    }
+
+    #[test]
+    fn nonzero_layer_is_sticky() {
+        let d = doc();
+        let walls = layer_render_style(&d, "Walls").color;
+        let other = layer_render_style(&d, "Other").color;
+        let c = resolve(&d, &child("Other", Color::ByLayer), walls);
+        assert_eq!(&c[..3], &other[..3], "a child on a normal layer keeps its own layer");
+    }
+
+    #[test]
+    fn byblock_inherits_insert_color() {
+        let d = doc();
+        let ins = [0.2, 0.4, 0.6, 1.0];
+        let c = resolve(&d, &child("0", Color::ByBlock), ins);
+        assert_eq!(&c[..3], &ins[..3], "ByBlock child uses the insert's color");
+    }
+
+    #[test]
+    fn explicit_color_wins_even_on_layer0() {
+        let d = doc();
+        let walls = layer_render_style(&d, "Walls").color;
+        let green = tess_util::aci_to_rgba(&Color::Index(3));
+        let c = resolve(&d, &child("0", Color::Index(3)), walls);
+        assert_eq!(&c[..3], &green[..3], "an explicit color must win even on layer 0");
+    }
+
+    #[test]
+    fn layer0_preserves_child_transparency() {
+        let d = doc();
+        let walls = layer_render_style(&d, "Walls").color;
+        let mut l = Line::new();
+        l.common.layer = "0".to_string();
+        l.common.color = Color::ByLayer;
+        l.common.transparency = Transparency::from_percent(0.5); // 50% transparent
+        let c = resolve(&d, &EntityType::Line(l), walls);
+        assert_eq!(&c[..3], &walls[..3], "RGB inherited from the insert layer");
+        assert!((c[3] - 0.5).abs() < 0.02, "child's own 50% transparency is kept, got {}", c[3]);
+    }
 }

@@ -2321,8 +2321,28 @@ impl Scene {
                 if !self.mesh_entity_visible(ins.common.handle) {
                     continue;
                 }
+                // Colour inheritance sources for block-internal solids (#221).
+                let bg = self.current_bg();
+                let ins_color = crate::scene::view::render::adapt_to_bg(
+                    crate::scene::view::render::render_style_for(&self.document, e).0,
+                    bg,
+                );
+                let l0 = crate::scene::view::render::adapt_to_bg(
+                    crate::scene::view::render::layer_render_style(
+                        &self.document,
+                        &ins.common.layer,
+                    )
+                    .color,
+                    bg,
+                );
                 let start = out.len();
-                self.expand_block_meshes(&ins.block_name, &ins.get_transform(), 0, &mut out);
+                self.expand_block_meshes(
+                    &ins.block_name,
+                    &ins.get_transform(),
+                    0,
+                    Some((ins_color, l0)),
+                    &mut out,
+                );
                 // Tag the instanced meshes with the parent INSERT handle so the
                 // hover / selection highlight (keyed on the mesh name) tints the
                 // block, not the inner solid's own handle which nothing selects.
@@ -2344,6 +2364,11 @@ impl Scene {
         block_name: &str,
         accum: &acadrust::types::Transform,
         depth: usize,
+        // Block-child colour inheritance sources, bg-adapted:
+        // `(insert_color, insert_layer_color)`. `Some` only on the render path;
+        // pick paths pass `None` (colour irrelevant). Drives the ByBlock /
+        // layer-0 overrides for block-internal solids (#221).
+        inherit: Option<([f32; 4], [f32; 4])>,
         out: &mut Vec<MeshLodSet>,
     ) {
         if depth > 16 {
@@ -2364,11 +2389,101 @@ impl Scene {
             }
             if let EntityType::Insert(ins) = e {
                 let composed = ins.get_transform().then(accum);
-                self.expand_block_meshes(&ins.block_name, &composed, depth + 1, out);
+                let child = inherit.map(|(pc, pl0)| self.chain_mesh_inherit(ins, pc, pl0));
+                self.expand_block_meshes(&ins.block_name, &composed, depth + 1, child, out);
             } else if let Some(set) = self.block_meshes.get(&h) {
-                out.push(transform_block_mesh_lod_set(set, accum));
+                // The solid's own transparency (baked into the cached colour).
+                let own_alpha = set.lods.first().map(|m| m.color[3]).unwrap_or(1.0);
+                let mut ts = transform_block_mesh_lod_set(set, accum);
+                // Re-resolve colour against the INSERT context: a block-internal
+                // solid that is ByBlock or on layer "0" + ByLayer can't be
+                // coloured at cache-build time (no insert context there). (#221)
+                if let Some(c) = self.block_mesh_override_color(e, h, inherit, own_alpha) {
+                    for lod in &mut ts.lods {
+                        lod.color = c;
+                    }
+                }
+                out.push(ts);
             }
         }
+    }
+
+    /// Background colour for the current layout (model vs paper).
+    fn current_bg(&self) -> [f32; 4] {
+        if self.current_layout != "Model" {
+            self.paper_bg_color
+        } else {
+            self.bg_color
+        }
+    }
+
+    /// Chain block-child colour inheritance into a nested INSERT, mirroring
+    /// `expand_insert`: ByBlock keeps the parent source; a nested insert on
+    /// layer "0" with ByLayer colour adopts the parent layer-0 target; else it
+    /// uses its own resolved colour / layer. Returned colours are bg-adapted.
+    fn chain_mesh_inherit(
+        &self,
+        ins: &acadrust::entities::Insert,
+        parent_ins_color: [f32; 4],
+        parent_l0: [f32; 4],
+    ) -> ([f32; 4], [f32; 4]) {
+        use acadrust::types::Color;
+        let bg = self.current_bg();
+        let child_ins_color = if ins.common.color == Color::ByBlock {
+            parent_ins_color
+        } else if ins.common.layer == "0" && ins.common.color == Color::ByLayer {
+            parent_l0
+        } else {
+            crate::scene::view::render::adapt_to_bg(
+                crate::scene::view::render::render_style_for(
+                    &self.document,
+                    &EntityType::Insert(ins.clone()),
+                )
+                .0,
+                bg,
+            )
+        };
+        let child_l0 = if ins.common.layer == "0" {
+            parent_l0
+        } else {
+            crate::scene::view::render::adapt_to_bg(
+                crate::scene::view::render::layer_render_style(&self.document, &ins.common.layer)
+                    .color,
+                bg,
+            )
+        };
+        (child_ins_color, child_l0)
+    }
+
+    /// Per-instance colour override for a block-internal solid mesh: ByBlock →
+    /// insert colour, layer-0 + ByLayer → insert-layer colour, else `None`
+    /// (keep the cached own-layer colour). Applies the same REFEDIT fade as
+    /// `recolor_meshes`, keyed on the inner solid handle. (#221)
+    fn block_mesh_override_color(
+        &self,
+        e: &EntityType,
+        h: Handle,
+        inherit: Option<([f32; 4], [f32; 4])>,
+        own_alpha: f32,
+    ) -> Option<[f32; 4]> {
+        let (ins_color, l0_color) = inherit?;
+        use acadrust::types::Color;
+        let common = e.common();
+        let mut c = if common.color == Color::ByBlock {
+            ins_color
+        } else if common.layer == "0" && common.color == Color::ByLayer {
+            // Inherit the insert layer's RGB but keep the solid's own alpha,
+            // matching the wire/hatch path (render_style_for_block_sub).
+            [l0_color[0], l0_color[1], l0_color[2], own_alpha]
+        } else {
+            return None;
+        };
+        if let Some(keep) = &self.refedit_keep {
+            if !keep.contains(&h) {
+                c = crate::scene::cache::block_cache::fade_toward_bg(c, self.current_bg());
+            }
+        }
+        Some(c)
     }
 
     /// Hatches eligible for click / box / lasso hit-testing in the current
@@ -2572,7 +2687,7 @@ impl Scene {
                     continue;
                 }
                 let mut sets = Vec::new();
-                self.expand_block_meshes(&ins.block_name, &ins.get_transform(), 0, &mut sets);
+                self.expand_block_meshes(&ins.block_name, &ins.get_transform(), 0, None, &mut sets);
                 for set in sets {
                     if let Some(m) = set.lods.into_iter().next() {
                         block_owned.push((ins.common.handle, m));
@@ -2615,7 +2730,7 @@ impl Scene {
                 continue;
             }
             let mut sets = Vec::new();
-            self.expand_block_meshes(&ins.block_name, &ins.get_transform(), 0, &mut sets);
+            self.expand_block_meshes(&ins.block_name, &ins.get_transform(), 0, None, &mut sets);
             let hit = sets.iter().any(|set| {
                 set.lods.first().map_or(false, |m| {
                     !pick::hit_test::mesh_box_hit(
@@ -2660,7 +2775,7 @@ impl Scene {
                 continue;
             }
             let mut sets = Vec::new();
-            self.expand_block_meshes(&ins.block_name, &ins.get_transform(), 0, &mut sets);
+            self.expand_block_meshes(&ins.block_name, &ins.get_transform(), 0, None, &mut sets);
             let hit = sets.iter().any(|set| {
                 set.lods.first().map_or(false, |m| {
                     !pick::hit_test::mesh_poly_hit(
