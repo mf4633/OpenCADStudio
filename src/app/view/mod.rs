@@ -1464,7 +1464,12 @@ impl OpenCADStudio {
                         Some(Message::WindowResized(sz.width as f32, sz.height as f32))
                     }
                     iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
-                        Some(Message::SetShiftDown(m.shift()))
+                        // `command()` is Cmd on macOS, Ctrl elsewhere — the
+                        // platform multi-select modifier for the layer list.
+                        Some(Message::SetModifiers {
+                            shift: m.shift(),
+                            ctrl: m.command() || m.control(),
+                        })
                     }
                     iced::Event::Keyboard(keyboard::Event::KeyPressed {
                         key,

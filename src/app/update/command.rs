@@ -614,6 +614,7 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                     .position(|l| l.name == new_name);
                 if let Some(idx) = new_idx {
                     self.tabs[i].layers.selected = Some(idx);
+                    self.tabs[i].layers.selected_multi = vec![idx];
                     self.tabs[i].layers.editing = Some(idx);
                     self.tabs[i].layers.edit_buf = new_name.clone();
                 }
@@ -623,56 +624,53 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
 
     pub(super) fn on_layer_delete(&mut self) -> Task<Message> {
                 let i = self.active_tab;
-                let Some(idx) = self.tabs[i].layers.selected else {
-                    return Task::none();
-                };
-                let name = self.tabs[i]
-                    .layers
-                    .layers
-                    .get(idx)
-                    .map(|l| l.name.clone())
-                    .unwrap_or_default();
-                if name.is_empty() {
+                // Every selected layer (multi-select), or the anchor if none.
+                let mut names = self.selected_layer_names(i);
+                if names.is_empty() {
                     return Task::none();
                 }
-                if name == "0" {
+                // Layer "0" and the current layer can't be deleted — drop them
+                // from the batch and note it.
+                let current = self.tabs[i].scene.document.header.current_layer_name.clone();
+                let before = names.len();
+                names.retain(|n| n != "0" && *n != current);
+                if names.len() < before {
                     self.command_line
-                        .push_error("Layer \"0\" cannot be deleted.");
+                        .push_info("Layer \"0\" and the current layer can't be deleted — skipped.");
+                }
+                if names.is_empty() {
                     return Task::none();
                 }
-                if name == self.tabs[i].scene.document.header.current_layer_name {
-                    self.command_line
-                        .push_error("Cannot delete the current layer. Set another layer current first.");
-                    return Task::none();
-                }
-                // Count objects on the layer. Empty → delete straight away;
+                // Total objects across the layers. Empty → delete straight away;
                 // non-empty → warn first (deleting also removes those objects).
                 let count = self.tabs[i]
                     .scene
                     .document
                     .entities()
-                    .filter(|e| e.common().layer == name)
+                    .filter(|e| names.contains(&e.common().layer))
                     .count();
                 if count == 0 {
                     self.push_undo_snapshot(i, "LAYER DELETE");
-                    self.tabs[i].scene.document.layers.remove(&name);
+                    for name in &names {
+                        self.tabs[i].scene.document.layers.remove(name);
+                    }
                     self.tabs[i].dirty = true;
                     self.sync_layer_panel(i);
                 } else {
-                    self.layer_delete_pending = Some((name, count));
+                    self.layer_delete_pending = Some((names, count));
                     self.active_modal = Some(crate::app::ModalKind::LayerDeleteWarning);
                     self.modal_offset = iced::Vector::ZERO;
                 }
                 Task::none()
     }
 
-    /// User confirmed deleting a non-empty layer: erase every object on it,
-    /// then remove the layer record.
+    /// User confirmed deleting non-empty layer(s): erase every object on them,
+    /// then remove the layer records.
     pub(super) fn on_layer_delete_confirm(&mut self) -> Task<Message> {
         let i = self.active_tab;
         self.active_modal = None;
         self.modal_offset = iced::Vector::ZERO;
-        let Some((name, _)) = self.layer_delete_pending.take() else {
+        let Some((names, _)) = self.layer_delete_pending.take() else {
             return Task::none();
         };
         self.push_undo_snapshot(i, "LAYER DELETE");
@@ -680,17 +678,34 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
             .scene
             .document
             .entities()
-            .filter(|e| e.common().layer == name)
+            .filter(|e| names.contains(&e.common().layer))
             .map(|e| e.common().handle)
             .collect();
-        // Remove the layer record first so the lock guard in `erase_entities`
+        // Remove the layer records first so the lock guard in `erase_entities`
         // (which looks the layer up by name) can't block the objects.
-        self.tabs[i].scene.document.layers.remove(&name);
+        for name in &names {
+            self.tabs[i].scene.document.layers.remove(name);
+        }
         self.tabs[i].scene.erase_entities(&handles);
         self.tabs[i].dirty = true;
         self.sync_layer_panel(i);
         self.refresh_properties();
         Task::none()
+    }
+
+    /// Layer names for the current Layer-manager selection — every row in the
+    /// multi-selection, or the anchor row when the multi-set is empty. Bulk
+    /// property edits and deletion act on these.
+    pub(super) fn selected_layer_names(&self, i: usize) -> Vec<String> {
+        let panel = &self.tabs[i].layers;
+        let idxs: Vec<usize> = if panel.selected_multi.is_empty() {
+            panel.selected.into_iter().collect()
+        } else {
+            panel.selected_multi.clone()
+        };
+        idxs.iter()
+            .filter_map(|&x| panel.layers.get(x).map(|l| l.name.clone()))
+            .collect()
     }
 
     /// Rebuild the Layer-manager panel + ribbon after a layer-table change.
@@ -699,6 +714,7 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
         let vp_info = self.tabs[i].scene.viewport_list();
         self.tabs[i].layers.sync_with_viewports(&doc_layers, vp_info);
         self.tabs[i].layers.selected = None;
+        self.tabs[i].layers.selected_multi.clear();
         self.sync_ribbon_layers();
     }
 

@@ -83,7 +83,12 @@ pub struct LayerPanel {
     pub layers: Vec<Layer>,
     #[allow(dead_code)]
     pub visible: bool,
+    /// Anchor row: the last row clicked. Drives the editable combos and the
+    /// Shift-range origin. Its layer is always part of `selected_multi`.
     pub selected: Option<usize>,
+    /// All selected rows (Ctrl/Shift extend it). Bulk property changes and
+    /// deletion act on every row here. Empty ⇔ nothing selected.
+    pub selected_multi: Vec<usize>,
     pub editing: Option<usize>,
     pub edit_buf: String,
     pub current_layer: String,
@@ -106,6 +111,7 @@ impl Default for LayerPanel {
             visible: false,
             layers: vec![Layer::new("0", Color::WHITE)],
             selected: None,
+            selected_multi: Vec::new(),
             editing: None,
             edit_buf: String::new(),
             current_layer: "0".to_string(),
@@ -135,6 +141,18 @@ impl LayerPanel {
         doc_layers: &Table<DocLayer>,
         vp_info: Vec<(Handle, String, Vec<Handle>)>,
     ) {
+        // The rebuild below re-indexes rows, so capture the selection by name
+        // first and re-resolve it after (indices alone would go stale).
+        let anchor_name = self
+            .selected
+            .and_then(|i| self.layers.get(i))
+            .map(|l| l.name.clone());
+        let multi_names: Vec<String> = self
+            .selected_multi
+            .iter()
+            .filter_map(|&i| self.layers.get(i).map(|l| l.name.clone()))
+            .collect();
+
         self.vp_cols = vp_info
             .iter()
             .map(|(h, label, _)| VpCol {
@@ -169,6 +187,14 @@ impl LayerPanel {
             })
             .collect();
 
+        // Re-resolve the selection against the rebuilt rows by name.
+        self.selected = anchor_name
+            .and_then(|n| self.layers.iter().position(|l| l.name == n));
+        self.selected_multi = multi_names
+            .iter()
+            .filter_map(|n| self.layers.iter().position(|l| l.name == *n))
+            .collect();
+
         self.apply_sort();
     }
 
@@ -194,6 +220,13 @@ impl LayerPanel {
             .selected
             .and_then(|i| self.layers.get(i))
             .map(|l| l.name.clone());
+        // Sort reorders rows, so the multi-selection (stored as indices) must
+        // be re-resolved by name afterward or it would point at the wrong rows.
+        let multi_names: Vec<String> = self
+            .selected_multi
+            .iter()
+            .filter_map(|&i| self.layers.get(i).map(|l| l.name.clone()))
+            .collect();
 
         use std::cmp::Ordering;
         self.layers.sort_by(|a, b| {
@@ -225,6 +258,10 @@ impl LayerPanel {
         if let Some(n) = sel_name {
             self.selected = self.layers.iter().position(|l| l.name == n);
         }
+        self.selected_multi = multi_names
+            .iter()
+            .filter_map(|n| self.layers.iter().position(|l| l.name == *n))
+            .collect();
     }
 
     pub fn sync_linetypes(&mut self, items: Vec<LinetypeItem>) {
@@ -318,12 +355,15 @@ impl LayerPanel {
         // ── Layer rows ────────────────────────────────────────────────────
         let mut rows_col = column![].spacing(0);
         for (i, layer) in self.layers.iter().enumerate() {
-            let is_sel = self.selected == Some(i);
+            // Highlight every selected row; show the editable combos only on the
+            // anchor (a single shared combo state can't drive several rows).
+            let is_anchor = self.selected == Some(i);
+            let is_sel = is_anchor || self.selected_multi.contains(&i);
             let is_current = layer.name == self.current_layer;
             let is_editing = self.editing == Some(i);
             let color_open = self.color_picker_row == Some(i);
 
-            let (ltc, lwc) = if is_sel {
+            let (ltc, lwc) = if is_anchor {
                 (Some(&self.linetype_combo), Some(&self.lw_combo))
             } else {
                 (None, None)

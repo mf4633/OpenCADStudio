@@ -348,10 +348,11 @@ pub(super) struct OpenCADStudio {
     aec_drop_count: usize,
     /// Set once the user confirms overwriting an existing file on Save-As.
     overwrite_acknowledged: bool,
-    /// Layer awaiting a "delete non-empty layer" confirmation: `(name, object
-    /// count)`. Set when the user deletes a layer that still has objects; the
-    /// warning modal reads it, and confirming erases those objects too.
-    layer_delete_pending: Option<(String, usize)>,
+    /// Layers awaiting a "delete non-empty layer(s)" confirmation: `(names,
+    /// total object count)`. Set when the user deletes one or more layers that
+    /// still have objects; the warning modal reads it, and confirming erases
+    /// those objects too.
+    layer_delete_pending: Option<(Vec<String>, usize)>,
     /// Pixel offset of the active modal from screen-centre (drag-to-move).
     /// Reset to zero whenever a modal closes so each dialog opens centred.
     modal_offset: iced::Vector,
@@ -433,6 +434,9 @@ pub(super) struct OpenCADStudio {
     /// removes the picked entity from the selection). Tracked from keyboard
     /// modifier-change events since mouse click messages carry no modifiers.
     shift_down: bool,
+    /// True while Ctrl/Cmd is held — drives Ctrl-click multi-select in the
+    /// Layer Manager. Tracked from modifier-change events.
+    ctrl_down: bool,
     /// Open in-place MText editor (toolbar + text area + live preview), if any.
     mtext_editor: Option<mtext_editor::MTextEditorState>,
     /// Open in-place single-line TEXT editor (plain text-entry box), if any.
@@ -1546,7 +1550,7 @@ pub enum Message {
     InvertSelection,
     /// Keyboard modifier state changed — tracks whether Shift is held so the
     /// pick path can do subtractive (Shift+click) selection.
-    SetShiftDown(bool),
+    SetModifiers { shift: bool, ctrl: bool },
     // ── In-place MText editor ───────────────────────────────────────────
     /// Text-area edit action from the multi-line editor widget.
     MTextEdit(iced::widget::text_editor::Action),
@@ -1991,6 +1995,7 @@ impl OpenCADStudio {
             clipboard_centroid: glam::DVec3::ZERO,
             clipboard_deps: ClipboardDeps::default(),
             shift_down: false,
+            ctrl_down: false,
             mtext_editor: None,
             text_inline: None,
             layout_context_menu: None,

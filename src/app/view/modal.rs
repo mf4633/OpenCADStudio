@@ -486,11 +486,11 @@ impl OpenCADStudio {
                 sized(overwrite_dialog_window(&self.save_dialog_filename), 420, 180)
             }
             super::super::ModalKind::LayerDeleteWarning => {
-                let (name, count) = self
+                let (names, count) = self
                     .layer_delete_pending
                     .clone()
-                    .unwrap_or_else(|| (String::new(), 0));
-                sized(layer_delete_warning_window(&name, count), 440, 200)
+                    .unwrap_or_else(|| (Vec::new(), 0));
+                sized(layer_delete_warning_window(&names, count), 440, 200)
             }
             super::super::ModalKind::Unsaved => {
                 let tab_name = match &self.pending_close {
@@ -1053,9 +1053,9 @@ fn overwrite_dialog_window(filename: &str) -> Element<'static, Message> {
     .into()
 }
 
-/// Confirm deleting a layer that still has objects on it. "Delete Objects"
-/// erases them and removes the layer; "Cancel" leaves everything.
-fn layer_delete_warning_window(name: &str, count: usize) -> Element<'static, Message> {
+/// Confirm deleting layer(s) that still have objects on them. "Delete Objects"
+/// erases them and removes the layers; "Cancel" leaves everything.
+fn layer_delete_warning_window(names: &[String], count: usize) -> Element<'static, Message> {
     const BG: Color = Color { r: 0.18, g: 0.18, b: 0.20, a: 1.0 };
     const BORDER_COL: Color = Color { r: 0.38, g: 0.38, b: 0.42, a: 1.0 };
     const TEXT_COL: Color = Color { r: 0.90, g: 0.90, b: 0.90, a: 1.0 };
@@ -1065,8 +1065,14 @@ fn layer_delete_warning_window(name: &str, count: usize) -> Element<'static, Mes
     const BTN_CANCEL_HOV: Color = Color { r: 0.36, g: 0.36, b: 0.40, a: 1.0 };
 
     let obj = if count == 1 { "object" } else { "objects" };
+    let subject = if names.len() == 1 {
+        format!("Layer \"{}\"", names[0])
+    } else {
+        format!("{} selected layers", names.len())
+    };
     let body_text = format!(
-        "Layer \"{name}\" is not empty — it still has {count} {obj}.\n\nDeleting the layer will also remove {} from the drawing. Continue?",
+        "{subject} still {} {count} {obj}.\n\nDeleting will also remove {} from the drawing. Continue?",
+        if names.len() == 1 { "has" } else { "hold" },
         if count == 1 { "that object" } else { "those objects" }
     );
 

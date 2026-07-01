@@ -925,13 +925,32 @@ impl OpenCADStudio {
                 if self.tabs[i].layers.editing.is_some() {
                     return Task::done(Message::LayerRenameCommit);
                 }
-                self.tabs[i].layers.selected = Some(idx);
+                let (shift, ctrl) = (self.shift_down, self.ctrl_down);
+                let panel = &mut self.tabs[i].layers;
+                if ctrl {
+                    // Ctrl/Cmd-click toggles this row in the selection.
+                    if let Some(pos) = panel.selected_multi.iter().position(|&x| x == idx) {
+                        panel.selected_multi.remove(pos);
+                    } else {
+                        panel.selected_multi.push(idx);
+                    }
+                } else if shift {
+                    // Shift-click selects the range from the anchor to here.
+                    let anchor = panel.selected.unwrap_or(idx);
+                    let (lo, hi) = (anchor.min(idx), anchor.max(idx));
+                    panel.selected_multi = (lo..=hi).collect();
+                } else {
+                    // Plain click selects just this row.
+                    panel.selected_multi = vec![idx];
+                }
+                panel.selected = Some(idx);
                 Task::none()
             }
 
             Message::LayerRenameStart(idx) => {
                 let i = self.active_tab;
                 self.tabs[i].layers.selected = Some(idx);
+                self.tabs[i].layers.selected_multi = vec![idx];
                 if let Some(layer) = self.tabs[i].layers.layers.get(idx) {
                     self.tabs[i].layers.edit_buf = layer.name.clone();
                 }
@@ -957,6 +976,12 @@ impl OpenCADStudio {
                     panel.color_picker_row = Some(idx);
                     panel.color_full_palette = false;
                     panel.selected = Some(idx);
+                    // Opening the swatch on a row outside the current
+                    // multi-selection narrows to just that row; on a selected
+                    // row it keeps the multi-selection so the pick applies to all.
+                    if !panel.selected_multi.contains(&idx) {
+                        panel.selected_multi = vec![idx];
+                    }
                 }
                 Task::none()
             }
@@ -969,23 +994,26 @@ impl OpenCADStudio {
 
             Message::LayerColorSet(aci) => {
                 let i = self.active_tab;
-                if let Some(idx) = self.tabs[i].layers.selected {
-                    if let Some(layer) = self.tabs[i].layers.layers.get(idx) {
-                        let name = layer.name.clone();
-                        if let Some(dl) = self.tabs[i].scene.document.layers.get_mut(&name) {
+                // Apply to every selected layer (multi-select), not just one.
+                let names = self.selected_layer_names(i);
+                if !names.is_empty() {
+                    use crate::ui::window::layers::iced_color_from_acad;
+                    let new_color = iced_color_from_acad(&AcadColor::Index(aci));
+                    for name in &names {
+                        if let Some(dl) = self.tabs[i].scene.document.layers.get_mut(name) {
                             dl.color = AcadColor::Index(aci);
                         }
-                        use crate::ui::window::layers::iced_color_from_acad;
-                        let new_color = iced_color_from_acad(&AcadColor::Index(aci));
-                        if let Some(pl) = self.tabs[i].layers.layers.get_mut(idx) {
+                    }
+                    for pl in self.tabs[i].layers.layers.iter_mut() {
+                        if names.contains(&pl.name) {
                             pl.color = new_color;
                         }
-                        self.tabs[i].dirty = true;
-                        // ByLayer color is baked into the cached wires at
-                        // tessellation time, so bump the geometry epoch to
-                        // invalidate the wire cache and repaint with the new color.
-                        self.tabs[i].scene.bump_geometry();
                     }
+                    self.tabs[i].dirty = true;
+                    // ByLayer color is baked into the cached wires at
+                    // tessellation time, so bump the geometry epoch to
+                    // invalidate the wire cache and repaint with the new color.
+                    self.tabs[i].scene.bump_geometry();
                     self.tabs[i].layers.color_picker_row = None;
                     self.tabs[i].layers.color_full_palette = false;
                     self.sync_ribbon_layers();
@@ -995,38 +1023,42 @@ impl OpenCADStudio {
 
             Message::LayerLinetypeSet(lt) => {
                 let i = self.active_tab;
-                if let Some(idx) = self.tabs[i].layers.selected {
-                    if let Some(layer) = self.tabs[i].layers.layers.get(idx) {
-                        let name = layer.name.clone();
-                        if let Some(dl) = self.tabs[i].scene.document.layers.get_mut(&name) {
+                let names = self.selected_layer_names(i);
+                if !names.is_empty() {
+                    for name in &names {
+                        if let Some(dl) = self.tabs[i].scene.document.layers.get_mut(name) {
                             dl.line_type = lt.clone();
                         }
-                        if let Some(pl) = self.tabs[i].layers.layers.get_mut(idx) {
-                            pl.linetype = lt;
-                        }
-                        self.tabs[i].dirty = true;
-                        // Linetype is baked into the cached wires; repaint.
-                        self.tabs[i].scene.bump_geometry();
                     }
+                    for pl in self.tabs[i].layers.layers.iter_mut() {
+                        if names.contains(&pl.name) {
+                            pl.linetype = lt.clone();
+                        }
+                    }
+                    self.tabs[i].dirty = true;
+                    // Linetype is baked into the cached wires; repaint.
+                    self.tabs[i].scene.bump_geometry();
                 }
                 Task::none()
             }
 
             Message::LayerLineweightSet(lw) => {
                 let i = self.active_tab;
-                if let Some(idx) = self.tabs[i].layers.selected {
-                    if let Some(layer) = self.tabs[i].layers.layers.get(idx) {
-                        let name = layer.name.clone();
-                        if let Some(dl) = self.tabs[i].scene.document.layers.get_mut(&name) {
+                let names = self.selected_layer_names(i);
+                if !names.is_empty() {
+                    for name in &names {
+                        if let Some(dl) = self.tabs[i].scene.document.layers.get_mut(name) {
                             dl.line_weight = lw;
                         }
-                        if let Some(pl) = self.tabs[i].layers.layers.get_mut(idx) {
+                    }
+                    for pl in self.tabs[i].layers.layers.iter_mut() {
+                        if names.contains(&pl.name) {
                             pl.lineweight = lw;
                         }
-                        self.tabs[i].dirty = true;
-                        // Lineweight is baked into the cached wires; repaint.
-                        self.tabs[i].scene.bump_geometry();
                     }
+                    self.tabs[i].dirty = true;
+                    // Lineweight is baked into the cached wires; repaint.
+                    self.tabs[i].scene.bump_geometry();
                 }
                 Task::none()
             }
@@ -1585,8 +1617,9 @@ impl OpenCADStudio {
                 Task::none()
             }
 
-            Message::SetShiftDown(down) => {
-                self.shift_down = down;
+            Message::SetModifiers { shift, ctrl } => {
+                self.shift_down = shift;
+                self.ctrl_down = ctrl;
                 Task::none()
             }
 
