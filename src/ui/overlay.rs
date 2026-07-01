@@ -180,6 +180,7 @@ impl canvas::Program<Message> for GridCanvas {
 pub fn selection_overlay<'a>(
     selection: SelectionState,
     snap: Option<(Point, SnapType)>,
+    snap_ext_base: Option<Point>,
     grips: Vec<GripMarker>,
     ucs_icons: Vec<UcsIconParams>,
     ost_points: Vec<OstTrackPoint>,
@@ -195,6 +196,7 @@ pub fn selection_overlay<'a>(
     canvas(SelectionCanvas {
         selection,
         snap,
+        snap_ext_base,
         grips,
         ucs_icons,
         ost_points,
@@ -215,6 +217,9 @@ pub fn selection_overlay<'a>(
 struct SelectionCanvas {
     selection: SelectionState,
     snap: Option<(Point, SnapType)>,
+    /// Screen position of the endpoint an active Extension snap extends from,
+    /// so the dashed extension guide line can be drawn back to it. (#238)
+    snap_ext_base: Option<Point>,
     grips: Vec<GripMarker>,
     /// One UCS icon per Model pane (each viewport shows its own at its origin);
     /// a single entry for paper / floating-viewport. Only the active pane's
@@ -788,10 +793,36 @@ impl canvas::Program<Message> for SelectionCanvas {
                     frame.stroke(&path, stroke);
                 }
                 SnapType::Extension => {
-                    // Three dots strung along a tracked direction.
+                    // Unit direction from the endpoint the snap extends from
+                    // toward the snap point, so the guide line and the three
+                    // dots follow the actual extension path (#238).
+                    let dir = self.snap_ext_base.and_then(|base| {
+                        let dx = sp.x - base.x;
+                        let dy = sp.y - base.y;
+                        let len = (dx * dx + dy * dy).sqrt();
+                        (len > 1e-3).then(|| (base, Point::new(dx / len, dy / len)))
+                    });
+                    // Dashed guide line from that endpoint, through the snap
+                    // point and a little beyond, so the extension path is
+                    // visible as the cursor tracks along it.
+                    if let Some((base, u)) = dir {
+                        let dash = canvas::Stroke {
+                            line_dash: canvas::LineDash {
+                                segments: &[4.0, 4.0],
+                                offset: 0,
+                            },
+                            ..canvas::Stroke::default().with_color(marker).with_width(1.0)
+                        };
+                        let tip = Point::new(sp.x + u.x * 18.0, sp.y + u.y * 18.0);
+                        frame.stroke(&canvas::Path::line(base, tip), dash);
+                    }
+                    // Three dots at the snap point, strung along the extension
+                    // direction (horizontal fallback when the base is unknown).
+                    let u = dir.map(|(_, u)| u).unwrap_or(Point::new(1.0, 0.0));
                     let r = 1.4_f32;
                     for k in [-7.0_f32, 0.0, 7.0] {
-                        let dot = canvas::Path::circle(Point::new(sp.x + k, sp.y), r);
+                        let dot =
+                            canvas::Path::circle(Point::new(sp.x + u.x * k, sp.y + u.y * k), r);
                         frame.fill(&dot, marker);
                     }
                 }

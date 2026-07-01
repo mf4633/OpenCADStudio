@@ -64,6 +64,10 @@ pub struct SnapResult {
     pub snap_type: SnapType,
     /// Set when `snap_type == Tangent`; provides entity geometry for TTR/TTT.
     pub tangent_obj: Option<TangentObject>,
+    /// Screen position of the endpoint an Extension snap extends from, so the
+    /// overlay can draw the dashed extension guide line back to it. `None` for
+    /// every other snap type. (#238)
+    pub extension_base: Option<Point>,
 }
 
 /// Object-snap-tracking alignment: the cursor projected onto a ray from an
@@ -523,6 +527,7 @@ impl Snapper {
                         screen,
                         snap_type: SnapType::Grid,
                         tangent_obj: None,
+                        extension_base: None,
                     });
                     best_rank = snap_priority(SnapType::Grid);
                     best_d2 = d2;
@@ -596,6 +601,7 @@ impl Snapper {
                     screen,
                     snap_type,
                     tangent_obj: None,
+                    extension_base: None,
                 });
             }
         };
@@ -886,6 +892,7 @@ impl Snapper {
                             screen: screen_pt,
                             snap_type: SnapType::Tangent,
                             tangent_obj: Some(tangent_obj),
+                            extension_base: None,
                         });
                     }
                 }
@@ -936,8 +943,19 @@ impl Snapper {
                         screen,
                         snap_type: SnapType::Center,
                         tangent_obj: None,
+                        extension_base: None,
                     });
                 }
+            }
+        }
+
+        // If an Extension snap won, re-find the endpoint whose ray it lies on
+        // so the overlay can draw the dashed extension guide line back to it.
+        // The snapped point is on some endpoint's extension by construction, so
+        // this just identifies which one. (#238)
+        if let Some(b) = best.as_mut() {
+            if b.snap_type == SnapType::Extension {
+                b.extension_base = extension_base_screen(b.world, wires, view_rot, eye, bounds);
             }
         }
 
@@ -1097,6 +1115,49 @@ fn extension_snap(
         return None;
     }
     Some(world_pt)
+}
+
+/// Given a finalized Extension snap point, return the screen position of the
+/// endpoint whose extension ray it lies on — for the dashed guide line (#238).
+/// Mirrors [`extension_snap`]'s endpoint/direction choice (beyond the first or
+/// last vertex); the nearest exactly-on-ray endpoint wins on the rare tie.
+fn extension_base_screen(
+    snapped: glam::DVec3,
+    wires: &[WireModel],
+    view_rot: Mat4,
+    eye: glam::DVec3,
+    bounds: Rectangle,
+) -> Option<Point> {
+    let mut best: Option<(f64, glam::DVec3)> = None;
+    for wire in wires {
+        let n = wire.points.len();
+        if n < 2 {
+            continue;
+        }
+        for (origin, prev) in [
+            (wp_f64(wire, 0), wp_f64(wire, 1)),
+            (wp_f64(wire, n - 1), wp_f64(wire, n - 2)),
+        ] {
+            let dir = origin - prev;
+            let len2 = dir.x * dir.x + dir.y * dir.y;
+            if len2 < 1e-12 {
+                continue;
+            }
+            let t = ((snapped.x - origin.x) * dir.x + (snapped.y - origin.y) * dir.y) / len2;
+            if t < 0.05 {
+                continue; // must be beyond the endpoint, matching extension_snap
+            }
+            // Off-ray distance²: ~0 means the snapped point genuinely lies on
+            // this endpoint's extension.
+            let on_x = origin.x + t * dir.x;
+            let on_y = origin.y + t * dir.y;
+            let off = (on_x - snapped.x).powi(2) + (on_y - snapped.y).powi(2);
+            if off < 1e-9 && best.map_or(true, |(bo, _)| off < bo) {
+                best = Some((off, origin));
+            }
+        }
+    }
+    best.map(|(_, origin)| world_to_screen(origin, view_rot, eye, bounds))
 }
 
 // ── Projection helpers ────────────────────────────────────────────────────

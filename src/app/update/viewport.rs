@@ -1068,6 +1068,7 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                                 screen,
                                 snap_type: SnapType::ObjectPick,
                                 tangent_obj: None,
+                                extension_base: None,
                             });
                             if let Some(cmd) = self.tabs[i].active_cmd.as_mut() {
                                 cmd.set_acquisition_hint(Some(pick.label));
