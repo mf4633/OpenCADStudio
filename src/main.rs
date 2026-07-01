@@ -11,6 +11,7 @@ mod command;
 mod entities;
 mod io;
 mod modules;
+mod patreon;
 mod plugin;
 mod scene;
 mod snap;

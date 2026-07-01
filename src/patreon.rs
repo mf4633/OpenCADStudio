@@ -1,0 +1,90 @@
+//! Live Patreon supporters fetch for the Start page.
+//!
+//! The creator access token is injected at BUILD time via the
+//! `OCS_PATREON_TOKEN` environment variable (`option_env!`), so it never lives
+//! in the source tree or git history — official release builds set it from a CI
+//! secret; other builds simply get an empty list. Note that an embedded token
+//! can still be extracted from a shipped binary, so it should be a
+//! campaign-scoped token with the minimum needed access.
+
+#[cfg(not(target_arch = "wasm32"))]
+const UA: &str = concat!("OpenCADStudio/", env!("CARGO_PKG_VERSION"));
+
+/// Fetch the paying patrons from the Patreon API as `(display name, amount in
+/// cents)`, highest pledge first. `Err` when no token is configured or the API
+/// call fails.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn fetch_patrons() -> Result<Vec<(String, i64)>, String> {
+    let token = option_env!("OCS_PATREON_TOKEN")
+        .filter(|t| !t.is_empty())
+        .ok_or("no Patreon token configured")?;
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(15)))
+        .build()
+        .into();
+
+    // The token is creator-scoped, so its first campaign is the one to list.
+    let campaigns = get_json(&agent, token, "https://www.patreon.com/api/oauth2/v2/campaigns")?;
+    let campaign_id = campaigns["data"][0]["id"]
+        .as_str()
+        .ok_or("no Patreon campaign found for this token")?
+        .to_string();
+
+    // Page through the campaign members, keeping only paying patrons.
+    let mut patrons: Vec<(String, i64)> = Vec::new();
+    let mut url = format!(
+        "https://www.patreon.com/api/oauth2/v2/campaigns/{campaign_id}/members\
+         ?fields%5Bmember%5D=full_name,patron_status,currently_entitled_amount_cents\
+         &page%5Bcount%5D=200"
+    );
+    // Bound the loop so a malformed `next` link can never spin forever.
+    for _ in 0..50 {
+        let page = get_json(&agent, token, &url)?;
+        if let Some(arr) = page["data"].as_array() {
+            for m in arr {
+                let attrs = &m["attributes"];
+                // Paying supporters only: an active patron currently entitled to
+                // a non-zero amount (excludes free followers, $0 tiers, declined
+                // and former patrons).
+                if attrs["patron_status"].as_str() != Some("active_patron") {
+                    continue;
+                }
+                let cents = attrs["currently_entitled_amount_cents"].as_i64().unwrap_or(0);
+                if cents <= 0 {
+                    continue;
+                }
+                let name = attrs["full_name"].as_str().unwrap_or("").trim();
+                if !name.is_empty() {
+                    patrons.push((name.to_string(), cents));
+                }
+            }
+        }
+        match page["links"]["next"].as_str() {
+            Some(next) if !next.is_empty() => url = next.to_string(),
+            _ => break,
+        }
+    }
+
+    // Highest pledge first, then alphabetical.
+    patrons.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Ok(patrons)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn get_json(
+    agent: &ureq::Agent,
+    token: &str,
+    url: &str,
+) -> Result<serde_json::Value, String> {
+    let body = agent
+        .get(url)
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("User-Agent", UA)
+        .call()
+        .map_err(|e| e.to_string())?
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| e.to_string())?;
+    serde_json::from_str(&body).map_err(|e| e.to_string())
+}

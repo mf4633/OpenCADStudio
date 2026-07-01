@@ -77,7 +77,7 @@ impl OpenCADStudio {
         // viewport draws the layout's own geometry (white sheet + entities +
         // borders) and the floating content viewports blit on top.
         let viewport_3d: Element<'_, Message> = if tab.is_start {
-            start_page_view()
+            start_page_view(&self.patrons)
         } else if is_paper {
             shader(ViewportPane::model(
                 &tab.scene,
@@ -1871,7 +1871,7 @@ fn pane_mouse_area<'a>(idx: usize) -> Element<'a, Message> {
         .into()
 }
 
-pub(super) fn start_page_view<'a>() -> Element<'a, Message> {
+pub(super) fn start_page_view<'a>(patrons: &'a [(String, i64)]) -> Element<'a, Message> {
     const TEXT: Color = Color {
         r: 0.94,
         g: 0.93,
@@ -2199,7 +2199,86 @@ pub(super) fn start_page_view<'a>() -> Element<'a, Message> {
         b: 0.085,
         a: 1.0,
     };
-    container(content)
+    // Right rail: Patreon supporters, fetched at boot. When the list is empty
+    // (no token configured / offline) only the "Support on Patreon" button
+    // shows, so the rail always invites support.
+    let supporters: Element<'a, Message> = {
+        const NAME_COLOR: Color = Color {
+            r: 0.78,
+            g: 0.78,
+            b: 0.80,
+            a: 1.0,
+        };
+        let mut list = column![
+            text("Supporters").size(15).color(TEXT),
+            Space::new().height(iced::Length::Fixed(12.0)),
+        ]
+        .spacing(6)
+        .width(Fill);
+        for (name, cents) in patrons {
+            // Cents → the campaign currency's main unit. Symbol assumed "$";
+            // adjust if the campaign bills in another currency.
+            let amount = format!("${:.2}", *cents as f64 / 100.0);
+            list = list.push(
+                iced::widget::row![
+                    text(name).size(12).color(NAME_COLOR).width(Fill),
+                    text(amount).size(12).color(NAME_COLOR),
+                ]
+                .spacing(6),
+            );
+        }
+        let support_btn = mouse_area(
+            container(
+                text("♥  Support on Patreon")
+                    .size(12)
+                    .color(Color::WHITE),
+            )
+            .padding([6, 10])
+            .width(Fill)
+            .center_x(Fill)
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color {
+                    r: 0.90,
+                    g: 0.28,
+                    b: 0.30,
+                    a: 1.0,
+                })),
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            }),
+        )
+        .interaction(iced::mouse::Interaction::Pointer)
+        .on_press(Message::OpenUrl(
+            "https://patreon.com/HakanSeven12".to_string(),
+        ));
+        container(column![
+            iced::widget::scrollable(list).height(Fill),
+            Space::new().height(iced::Length::Fixed(12.0)),
+            support_btn,
+        ])
+        .width(iced::Length::Fixed(240.0))
+        .height(Fill)
+        .padding(20)
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(CARD_BG)),
+            border: Border {
+                color: CARD_BORDER,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+    };
+
+    container(iced::widget::row![
+        container(content).width(Fill).height(Fill),
+        supporters,
+    ])
         .style(|_: &Theme| container::Style {
             background: Some(Background::Color(PAGE_BG)),
             ..Default::default()

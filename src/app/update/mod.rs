@@ -2592,6 +2592,13 @@ impl OpenCADStudio {
                 self.marketplace_status = format!("Registry: {e}");
                 Task::none()
             }
+            Message::PatronsFetched(Ok(names)) => {
+                self.patrons = names;
+                Task::none()
+            }
+            // No token / offline: leave the list empty (Start page shows a
+            // "Support on Patreon" prompt instead).
+            Message::PatronsFetched(Err(_)) => Task::none(),
             Message::PluginReleasesFetched(repo, Ok(tags)) => {
                 if let Some(first) = tags.first() {
                     self.repo_selected_tag

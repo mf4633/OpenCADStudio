@@ -7,6 +7,7 @@ pub mod command;
 pub mod entities;
 pub mod io;
 pub mod modules;
+pub mod patreon;
 pub mod plugin;
 pub mod scene;
 pub mod snap;

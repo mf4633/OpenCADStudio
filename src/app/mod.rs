@@ -194,6 +194,9 @@ pub(super) struct OpenCADStudio {
     ribbon: Ribbon,
     app_menu: AppMenu,
     command_line: CommandLine,
+    /// Paying Patreon supporters shown on the Start page (name, pledge cents),
+    /// fetched once at boot, highest pledge first.
+    patrons: Vec<(String, i64)>,
     /// Read-only editor buffer backing the command-line history dropdown, so
     /// the log can be drag-selected across lines and copied (issue #232).
     /// Rebuilt from the history each time the dropdown is opened.
@@ -1537,6 +1540,8 @@ pub enum Message {
     PluginRepoRemove(String),
     /// The curated registry was fetched.
     PluginRegistryFetched(Result<Vec<crate::plugin::external::RegistryEntry>, String>),
+    /// Patreon supporters fetched at boot for the Start page (name, pledge cents).
+    PatronsFetched(Result<Vec<(String, i64)>, String>),
     /// Installable release tags fetched for `owner/repo`.
     PluginReleasesFetched(String, Result<Vec<String>, String>),
     /// Choose a release tag for a repo (`repo`, `tag`).
@@ -1924,6 +1929,7 @@ impl OpenCADStudio {
             ribbon: Ribbon::new(),
             app_menu,
             command_line: CommandLine::new(),
+            patrons: Vec::new(),
             history_content: iced::widget::text_editor::Content::new(),
             status_bar: StatusBar::new(),
             cursor_pos: Point::ORIGIN,
@@ -2293,6 +2299,14 @@ impl OpenCADStudio {
         if !s.default_assoc_prompted {
             s.active_modal = Some(ModalKind::AssocPrompt);
         }
+        // Fetch the Patreon supporters list once at boot for the Start page.
+        #[cfg(not(target_arch = "wasm32"))]
+        let patrons_fetch = Task::perform(
+            async { crate::patreon::fetch_patrons() },
+            Message::PatronsFetched,
+        );
+        #[cfg(target_arch = "wasm32")]
+        let patrons_fetch = Task::none();
         (
             s,
             Task::batch([
@@ -2302,6 +2316,7 @@ impl OpenCADStudio {
                 cli_open,
                 script,
                 assoc_prompt,
+                patrons_fetch,
             ]),
         )
     }

@@ -27,6 +27,8 @@ jobs:
             librsvg2-bin fuse libfuse2
 
       - name: Build
+        env:
+          OCS_PATREON_TOKEN: ${{ secrets.OCS_PATREON_TOKEN }}
         run: cargo build --release
 
       - name: Prepare AppDir
@@ -92,6 +94,8 @@ jobs:
             packaging/windows/AppIcon.ico
 
       - name: Build
+        env:
+          OCS_PATREON_TOKEN: ${{ secrets.OCS_PATREON_TOKEN }}
         run: cargo build --release
 
       - name: Sign executable (Azure Trusted Signing)
@@ -215,6 +219,8 @@ jobs:
         run: brew install librsvg
 
       - name: Build
+        env:
+          OCS_PATREON_TOKEN: ${{ secrets.OCS_PATREON_TOKEN }}
         run: cargo build --release --target aarch64-apple-darwin
 
       - name: Build .icns from SVG

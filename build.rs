@@ -7,6 +7,12 @@
 use std::path::Path;
 
 fn main() {
+    // The Patreon token is baked in at compile time via `option_env!` in
+    // src/patreon.rs. `option_env!` is not tracked by Cargo, so without this a
+    // token change wouldn't trigger a rebuild — declare the dependency so an
+    // updated OCS_PATREON_TOKEN re-bakes the binary. (#229-adjacent)
+    println!("cargo:rerun-if-env-changed=OCS_PATREON_TOKEN");
+
     // Windows: embed AppIcon.ico into the .exe so the executable carries its
     // own icon (Explorer, taskbar, Start-menu tile, file associations). The
     // .ico is produced from assets/logo.svg by the release workflow before the
