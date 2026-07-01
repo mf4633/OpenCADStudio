@@ -196,13 +196,33 @@ impl OpenCADStudio {
                 self.tabs[i].active_cmd = Some(Box::new(cmd_obj));
             }
 
-            // Bare ATTEDIT (and the ATE alias) launch the interactive attribute
-            // editor; the command-line -ATTEDIT form is handled in the draw family.
+            // Bare ATTEDIT (and the ATE alias) open the attribute editor dialog.
+            // If a single block with attributes is already selected it opens on
+            // that block; otherwise the pick command runs and the editor opens
+            // once a block is chosen (see `command_driver`).
             "ATTEDIT" | "ATE" => {
-                use crate::modules::draw::modify::attedit::AtteditCommand;
-                let cmd_obj = AtteditCommand::new();
-                self.command_line.push_info(&cmd_obj.prompt());
-                self.tabs[i].active_cmd = Some(Box::new(cmd_obj));
+                let selected_attr_insert = {
+                    let sel = self.tabs[i].scene.selected_entities();
+                    if sel.len() == 1 {
+                        let (h, e) = sel[0];
+                        match e {
+                            acadrust::EntityType::Insert(ins) if !ins.attributes.is_empty() => {
+                                Some(h)
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if let Some(handle) = selected_attr_insert {
+                    self.open_attribute_editor(handle);
+                } else {
+                    use crate::modules::draw::modify::attedit::AtteditCommand;
+                    let cmd_obj = AtteditCommand::new();
+                    self.command_line.push_info(&cmd_obj.prompt());
+                    self.tabs[i].active_cmd = Some(Box::new(cmd_obj));
+                }
             }
 
             // ── REFEDIT — in-place block editing ─────────────────────────────

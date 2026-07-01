@@ -27,6 +27,10 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                 if self.tabs.get(idx).map_or(false, |t| t.is_start) {
                     return Task::none();
                 }
+                // Closing a tab shifts indices / the active tab. The attribute
+                // editor holds a document-local handle into one tab, so drop it
+                // now rather than risk it applying to a different tab's document.
+                self.cancel_attr_editor();
                 if self.tabs.get(idx).map_or(false, |t| t.dirty) {
                     self.pending_close = Some(crate::app::PendingClose::Tab(idx));
                     return self.open_unsaved_dialog_window();
@@ -1201,6 +1205,104 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
         }
         self.invalidate_property_targets(i, &handles);
         self.tabs[i].dirty = true;
+        self.refresh_properties();
+        Task::none()
+    }
+
+    /// Open the attribute editor dialog for the given INSERT, loading a working
+    /// copy of its attribute values. No-op (with a hint) when the block has no
+    /// attributes. Entry points: double-clicking such a block, or ATTEDIT.
+    pub(crate) fn open_attribute_editor(&mut self, handle: acadrust::Handle) {
+        let i = self.active_tab;
+        let loaded = match self.tabs[i].scene.document.get_entity(handle) {
+            Some(acadrust::EntityType::Insert(ins)) if !ins.attributes.is_empty() => {
+                let block = ins.block_name.clone();
+                let fields = ins
+                    .attributes
+                    .iter()
+                    .map(|a| (a.tag.clone(), a.get_value().to_string()))
+                    .collect::<Vec<_>>();
+                Some((block, fields))
+            }
+            Some(acadrust::EntityType::Insert(_)) => {
+                self.command_line
+                    .push_error("ATTEDIT  This block has no attributes.");
+                None
+            }
+            _ => {
+                self.command_line
+                    .push_error("ATTEDIT  Select a block with attributes.");
+                None
+            }
+        };
+        if let Some((block, fields)) = loaded {
+            self.attr_editor_block = block;
+            self.attr_editor_fields = fields;
+            self.attr_editor_handle = Some(handle);
+            self.active_modal = Some(crate::app::ModalKind::AttributeEditor);
+            self.modal_offset = iced::Vector::ZERO;
+        }
+    }
+
+    /// Close the attribute editor without applying, if it is open. Used when
+    /// the tab it belongs to closes or the active tab switches — its handle is
+    /// document-local and must not outlive its tab.
+    pub(super) fn cancel_attr_editor(&mut self) {
+        if self.active_modal == Some(crate::app::ModalKind::AttributeEditor) {
+            self.active_modal = None;
+            self.modal_offset = iced::Vector::ZERO;
+        }
+        self.attr_editor_handle = None;
+        self.attr_editor_block.clear();
+        self.attr_editor_fields.clear();
+    }
+
+    /// Apply every edited attribute value back to the block and close the
+    /// editor (OK). Values are written verbatim (attribute text is free-form).
+    /// The edits are positional — same order the dialog was populated in — so
+    /// blocks with duplicate tags stay correct; a tag-based fallback covers the
+    /// unlikely case the attribute list changed underneath the open dialog.
+    pub(super) fn on_attr_editor_ok(&mut self) -> Task<Message> {
+        let i = self.active_tab;
+        let Some(handle) = self.attr_editor_handle.take() else {
+            self.active_modal = None;
+            return Task::none();
+        };
+        let fields = std::mem::take(&mut self.attr_editor_fields);
+        self.attr_editor_block.clear();
+        self.active_modal = None;
+        self.modal_offset = iced::Vector::ZERO;
+
+        self.push_undo_snapshot(i, "ATTEDIT");
+        let mut changed = false;
+        if let Some(acadrust::EntityType::Insert(ins)) =
+            self.tabs[i].scene.document.get_entity_mut(handle)
+        {
+            if fields.len() == ins.attributes.len() {
+                for (attr, (_, val)) in ins.attributes.iter_mut().zip(fields.iter()) {
+                    if attr.get_value() != val {
+                        attr.set_value(val.clone());
+                        changed = true;
+                    }
+                }
+            } else {
+                for (tag, val) in &fields {
+                    if let Some(attr) = ins.attributes.iter_mut().find(|a| &a.tag == tag) {
+                        if attr.get_value() != val {
+                            attr.set_value(val.clone());
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if changed {
+            self.invalidate_property_targets(i, &[handle]);
+            self.tabs[i].dirty = true;
+        } else {
+            // Nothing changed — drop the snapshot pushed a moment ago.
+            let _ = self.tabs[i].history.undo_stack.pop();
+        }
         self.refresh_properties();
         Task::none()
     }

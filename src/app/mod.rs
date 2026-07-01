@@ -356,6 +356,14 @@ pub(super) struct OpenCADStudio {
     modal_drag_last: Option<Point>,
     /// True while the modal title bar is held (a drag is in progress).
     modal_dragging: bool,
+    // ── Attribute editor dialog (ATTEDIT / double-click a block) ───────────
+    /// INSERT whose attributes the editor modal is editing (`None` = closed).
+    attr_editor_handle: Option<acadrust::Handle>,
+    /// Block name shown in the editor's title bar.
+    attr_editor_block: String,
+    /// Working copy of the block's attributes as `(tag, value)`, in the same
+    /// order as `Insert::attributes`. Edited live; written back on OK.
+    attr_editor_fields: Vec<(String, String)>,
     /// Plugin ids the user turned off in the Plugin Manager. Disabled plugins
     /// keep their manifest listed but drop their ribbon tab and command
     /// dispatch. Persisted via [`settings::UserSettings::disabled_plugins`].
@@ -944,6 +952,7 @@ pub enum ModalKind {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     AssocPrompt,
     PointStyle,
+    AttributeEditor,
 }
 
 /// Identifies a DimStyle field that can be edited in the dialog.
@@ -1442,6 +1451,13 @@ pub enum Message {
     AboutOpen,
     /// Close whatever in-canvas modal dialog is open (Plan B).
     CloseModal,
+    // ── Attribute editor dialog ───────────────────────────────────────────
+    /// Open the attribute editor for an INSERT (double-click / ATTEDIT).
+    AttrEditorOpen(acadrust::Handle),
+    /// Live edit of the attribute value at row `idx` in the editor dialog.
+    AttrEditorInput { idx: usize, value: String },
+    /// Apply every attribute edit to the block and close the dialog (OK).
+    AttrEditorOk,
     /// Title-bar pressed: begin dragging the active modal.
     ModalGrab,
     /// Cursor moved while dragging the modal title bar.
@@ -1914,6 +1930,9 @@ impl OpenCADStudio {
             modal_offset: iced::Vector::ZERO,
             modal_drag_last: None,
             modal_dragging: false,
+            attr_editor_handle: None,
+            attr_editor_block: String::new(),
+            attr_editor_fields: Vec::new(),
             disabled_plugins: rustc_hash::FxHashSet::default(),
             external_plugins: Vec::new(),
             loaded_plugin_ids: rustc_hash::FxHashSet::default(),

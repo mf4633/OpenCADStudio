@@ -104,6 +104,12 @@ impl OpenCADStudio {
             // Dismissing these via ✕ is the cancel/decline path.
             Some(Unsaved) => self.pending_close = None,
             Some(AssocPrompt) => self.mark_assoc_prompted(),
+            // Cancel: drop the working copy without touching the block.
+            Some(AttributeEditor) => {
+                self.attr_editor_handle = None;
+                self.attr_editor_block.clear();
+                self.attr_editor_fields.clear();
+            }
             _ => {}
         }
         self.active_modal = None;
@@ -645,6 +651,11 @@ impl OpenCADStudio {
 
             Message::TabSwitch(idx) => {
                 if idx < self.tabs.len() {
+                    if idx != self.active_tab {
+                        // The attribute editor is tab-scoped; leaving its tab
+                        // drops it (its handle is that document's, not this one's).
+                        self.cancel_attr_editor();
+                    }
                     self.active_tab = idx;
                     self.sync_ribbon_layers();
                     self.sync_ribbon_styles();
@@ -2253,6 +2264,17 @@ impl OpenCADStudio {
                 self.close_active_modal();
                 Task::none()
             }
+            Message::AttrEditorOpen(handle) => {
+                self.open_attribute_editor(handle);
+                Task::none()
+            }
+            Message::AttrEditorInput { idx, value } => {
+                if let Some(field) = self.attr_editor_fields.get_mut(idx) {
+                    field.1 = value;
+                }
+                Task::none()
+            }
+            Message::AttrEditorOk => self.on_attr_editor_ok(),
             Message::ModalGrab => {
                 // Start a drag; the first ModalDragMove seeds the reference.
                 self.modal_dragging = true;

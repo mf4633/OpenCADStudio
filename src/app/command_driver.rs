@@ -172,35 +172,17 @@ impl OpenCADStudio {
         let i = self.active_tab;
         match result {
             CmdResult::NeedPoint => {
-                // If ATTEDIT just completed entity pick, inject attribute data.
+                // ATTEDIT finished its entity pick: hand the chosen block off to
+                // the attribute editor dialog and end the command (open_attribute
+                // _editor reports "no attributes" / "select a block" as needed).
                 let attedit_handle = self.tabs[i]
                     .active_cmd
                     .as_ref()
                     .and_then(|c| c.attedit_pending_handle());
                 if let Some(ins_handle) = attedit_handle {
-                    if let Some(acadrust::EntityType::Insert(ins)) =
-                        self.tabs[i].scene.document.get_entity(ins_handle)
-                    {
-                        let attrs: Vec<(String, String)> = ins
-                            .attributes
-                            .iter()
-                            .map(|a| (a.tag.clone(), a.get_value().to_string()))
-                            .collect();
-                        if attrs.is_empty() {
-                            self.command_line
-                                .push_error("ATTEDIT  This INSERT has no attributes.");
-                            self.tabs[i].active_cmd = None;
-                            return Task::none();
-                        }
-                        if let Some(cmd) = &mut self.tabs[i].active_cmd {
-                            cmd.attedit_set_attrs(attrs);
-                        }
-                    } else {
-                        self.command_line
-                            .push_error("ATTEDIT  Please select an INSERT entity with attributes.");
-                        self.tabs[i].active_cmd = None;
-                        return Task::none();
-                    }
+                    self.tabs[i].active_cmd = None;
+                    self.open_attribute_editor(ins_handle);
+                    return Task::none();
                 }
                 let prompt = self.tabs[i].active_cmd.as_ref().map(|c| c.prompt());
                 if let Some(p) = prompt {
@@ -458,28 +440,6 @@ impl OpenCADStudio {
                 self.refresh_properties();
             }
             CmdResult::ReplaceEntity(handle, new_entities) => {
-                // Detect ATTEDIT sentinel.
-                if new_entities.len() == 1 {
-                    if let acadrust::EntityType::XLine(ref xl) = new_entities[0] {
-                        let layer = xl.common.layer.clone();
-                        if let Some(encoded) = layer.strip_prefix("__ATTEDIT__") {
-                            let label = self.history_label_from_active_cmd(i, "ATTEDIT");
-                            self.push_undo_snapshot(i, label);
-                            crate::modules::draw::modify::attedit::apply_attedit(
-                                &mut self.tabs[i].scene.document,
-                                handle,
-                                encoded,
-                            );
-                            self.tabs[i].dirty = true;
-                            self.tabs[i].active_cmd = None;
-                            self.tabs[i].snap_result = None;
-                            self.command_line
-                                .push_output("ATTEDIT  Attribute values updated.");
-                            return Task::none();
-                        }
-                    }
-                }
-
                 // Detect SPLINEDIT sentinel: a single XLine with a magic layer name.
                 if new_entities.len() == 1 {
                     if let acadrust::EntityType::XLine(ref xl) = new_entities[0] {

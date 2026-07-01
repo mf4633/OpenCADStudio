@@ -511,6 +511,14 @@ impl OpenCADStudio {
                 360,
                 470,
             ),
+            super::super::ModalKind::AttributeEditor => sized(
+                crate::ui::window::attribute_editor::view_window(
+                    &self.attr_editor_block,
+                    &self.attr_editor_fields,
+                ),
+                460,
+                440,
+            ),
             super::super::ModalKind::SaveDialog => sized(
                 save_as_dialog_window(
                     &self.save_dialog_filename,

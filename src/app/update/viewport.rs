@@ -2437,9 +2437,18 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                             if is_editable_text {
                                 return self.begin_text_edit(handle);
                             }
-                            // Double-clicking a block reference enters in-place
-                            // block edit (REFEDIT), so its geometry can be edited
-                            // and the change reflects in every instance. (#136)
+                            // Double-clicking a block with attributes opens the
+                            // attribute editor (edit its values); a block with
+                            // no attributes enters in-place block edit (REFEDIT),
+                            // so its geometry can be edited and the change
+                            // reflects in every instance. (#136, #192)
+                            let insert_has_attrs = matches!(
+                                self.tabs[i].scene.document.get_entity(handle),
+                                Some(AcadEntityType::Insert(ins)) if !ins.attributes.is_empty()
+                            );
+                            if insert_has_attrs {
+                                return Task::done(Message::AttrEditorOpen(handle));
+                            }
                             let is_insert = matches!(
                                 self.tabs[i].scene.document.get_entity(handle),
                                 Some(AcadEntityType::Insert(_))

@@ -667,14 +667,11 @@ pub trait CadCommand: Send {
         None
     }
 
-    /// If this command needs attribute data injected (ATTEDIT), returns the
-    /// INSERT handle awaiting attr initialization; else None.
+    /// The block reference an ATTEDIT pick has resolved to, awaiting the
+    /// attribute editor dialog; else None.
     fn attedit_pending_handle(&self) -> Option<acadrust::Handle> {
         None
     }
-
-    /// Inject attribute (tag, value) pairs into the command after entity pick.
-    fn attedit_set_attrs(&mut self, _attrs: Vec<(String, String)>) {}
 
     /// Inject attribute definitions (tag, prompt, default_value) for ATTREQ
     /// attr-filling after INSERT point is picked.
