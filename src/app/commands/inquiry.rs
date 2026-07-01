@@ -16,6 +16,8 @@ impl OpenCADStudio {
                     .entity_wires()
                     .iter()
                     .filter_map(|w| Scene::handle_from_wire_name(&w.name))
+                    // Objects on a locked layer aren't selectable.
+                    .filter(|&h| !self.tabs[i].scene.is_layer_locked(h))
                     .collect();
                 let count = handles.len();
                 for h in handles {

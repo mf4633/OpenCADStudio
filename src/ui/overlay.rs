@@ -190,6 +190,7 @@ pub fn selection_overlay<'a>(
     pane_drop_rect: Option<iced::Rectangle>,
     pan_mode: bool,
     suppressed: bool,
+    hover_locked: bool,
 ) -> Element<'a, Message> {
     canvas(SelectionCanvas {
         selection,
@@ -204,6 +205,7 @@ pub fn selection_overlay<'a>(
         pane_drop_rect,
         pan_mode,
         suppressed,
+        hover_locked,
     })
     .width(Length::Fill)
     .height(Length::Fill)
@@ -236,6 +238,9 @@ struct SelectionCanvas {
     /// crosshair is not drawn and the OS cursor is shown normally so the panel
     /// is usable instead of the cursor vanishing over it. (#227)
     suppressed: bool,
+    /// The entity under the crosshair is on a locked layer — draw a small lock
+    /// badge by the cursor so the user knows it can't be selected/edited.
+    hover_locked: bool,
 }
 
 impl SelectionCanvas {
@@ -883,6 +888,42 @@ impl canvas::Program<Message> for SelectionCanvas {
                 frame.stroke(&v_top, stroke.clone());
                 frame.stroke(&v_bot, stroke.clone());
                 frame.stroke(&square, stroke);
+
+                // Locked-layer badge: a small padlock beside the crosshair when
+                // the hovered object sits on a locked layer (issue: locked
+                // objects are visible + snappable but not selectable/editable).
+                if self.hover_locked {
+                    let amber = Color { r: 0.96, g: 0.76, b: 0.26, a: 0.98 };
+                    let dark = Color { r: 0.12, g: 0.10, b: 0.04, a: 1.0 };
+                    let bx = cp.x + sq + 7.0;
+                    let by = cp.y - sq - 13.0;
+                    // Lock body (filled).
+                    let body = canvas::Path::rectangle(
+                        Point::new(bx, by + 6.0),
+                        Size::new(12.0, 9.0),
+                    );
+                    frame.fill(&body, amber);
+                    // Shackle: an inverted-U above the body (squared so the
+                    // shape is unambiguous regardless of arc winding).
+                    let shackle = canvas::Path::new(|b| {
+                        b.move_to(Point::new(bx + 2.5, by + 6.0));
+                        b.line_to(Point::new(bx + 2.5, by + 2.5));
+                        b.line_to(Point::new(bx + 9.5, by + 2.5));
+                        b.line_to(Point::new(bx + 9.5, by + 6.0));
+                    });
+                    frame.stroke(
+                        &shackle,
+                        canvas::Stroke {
+                            width: 1.8,
+                            style: canvas::Style::Solid(amber),
+                            line_join: canvas::LineJoin::Round,
+                            ..Default::default()
+                        },
+                    );
+                    // Keyhole.
+                    let hole = canvas::Path::circle(Point::new(bx + 6.0, by + 10.5), 1.4);
+                    frame.fill(&hole, dark);
+                }
             }
         } // end !over_viewcube
 

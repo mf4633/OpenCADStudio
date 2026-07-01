@@ -389,6 +389,11 @@ impl OpenCADStudio {
                 _ => (None, None),
             };
 
+            let hover_locked = tab
+                .scene
+                .hover_highlight
+                .map(|h| tab.scene.is_layer_locked(h))
+                .unwrap_or(false);
             crate::ui::overlay::selection_overlay(
                 sel,
                 snap_info,
@@ -402,6 +407,7 @@ impl OpenCADStudio {
                 pane_drop_rect,
                 tab.pan_mode,
                 self.ribbon.open_dropdown.is_some(),
+                hover_locked,
             )
         };
 

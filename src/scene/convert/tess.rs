@@ -1,6 +1,22 @@
 // Auto-split from scene/mod.rs. Pure text-move; behaviour unchanged.
 use super::super::*;
 
+/// Dim an already-bg-adapted colour toward the background when the entity's
+/// layer is locked, so locked objects read as non-editable (they stay visible
+/// and snappable). No-op for unlocked layers.
+fn fade_if_locked(
+    document: &acadrust::CadDocument,
+    e: &EntityType,
+    color: [f32; 4],
+    bg: [f32; 4],
+) -> [f32; 4] {
+    if view::render::layer_locked(document, e) {
+        crate::scene::cache::block_cache::fade_toward_bg(color, bg)
+    } else {
+        color
+    }
+}
+
 // ── Parallel tessellation free function ──────────────────────────────────────
 //
 // Takes only the `Send + Sync` data needed for tessellation so that
@@ -107,6 +123,7 @@ pub(crate) fn tessellate_entity(
                             let (entity_color, _, _, _, aci_idx) =
                                 view::render::render_style_for(document, e);
                             let entity_color = view::render::adapt_to_bg(entity_color, bg_color);
+                            let entity_color = fade_if_locked(document, e, entity_color, bg_color);
                             if is_3d_entity {
                                 // `ab` is already in the local frame
                                 // (entity_aabb subtracted world_offset
@@ -190,6 +207,7 @@ pub(crate) fn tessellate_entity(
     let (entity_color, pattern_length, pattern, line_weight_px, aci) =
         view::render::render_style_for(document, e);
     let entity_color = view::render::adapt_to_bg(entity_color, bg_color);
+    let entity_color = fade_if_locked(document, e, entity_color, bg_color);
     let lt_scale = document.header.linetype_scale as f32 * e.common().linetype_scale as f32;
     let lt_name = view::render::linetype_name_for(document, e);
     // PSLTSCALE: scale linetype dashes by viewport anno_scale so they appear uniform in paper space.

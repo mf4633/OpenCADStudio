@@ -130,6 +130,16 @@ impl Scene {
             let Some(e) = self.document.get_entity(h) else {
                 continue;
             };
+            // Never quick-select objects on a locked layer.
+            if self
+                .document
+                .layers
+                .get(&e.common().layer)
+                .map(|l| l.is_locked())
+                .unwrap_or(false)
+            {
+                continue;
+            }
             if let Some(t) = type_name {
                 if entity_type_name(e) != t {
                     continue;
@@ -316,6 +326,10 @@ impl Scene {
 
     pub fn erase_entities(&mut self, handles: &[Handle]) {
         for &h in handles {
+            // Objects on a locked layer can't be erased.
+            if self.is_layer_locked(h) {
+                continue;
+            }
             self.document.remove_entity(h);
             self.selected.remove(&h);
             self.hatches.remove(&h);

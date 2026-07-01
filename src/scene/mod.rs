@@ -2296,6 +2296,24 @@ impl Scene {
             .unwrap_or(false)
     }
 
+    /// True when `handle`'s entity sits on a locked layer. Locked objects stay
+    /// visible and snappable but cannot be selected or modified — callers in
+    /// the pick / modify paths consult this to skip them.
+    pub fn is_layer_locked(&self, handle: Handle) -> bool {
+        self.document
+            .get_entity(handle)
+            .map(|e| e.common().layer.clone())
+            .and_then(|name| self.document.layers.get(&name).map(|l| l.is_locked()))
+            .unwrap_or(false)
+    }
+
+    /// The name of the locked layer `handle` sits on, if any (for messages).
+    pub fn locked_layer_name(&self, handle: Handle) -> Option<String> {
+        let name = self.document.get_entity(handle).map(|e| e.common().layer.clone())?;
+        let locked = self.document.layers.get(&name).map(|l| l.is_locked()).unwrap_or(false);
+        locked.then_some(name)
+    }
+
     /// Visibility test for a solid mesh entity, mirroring the 2D wire path:
     /// honour the invisible flag, the isolate/hide set, and the layer's
     /// off/frozen state.

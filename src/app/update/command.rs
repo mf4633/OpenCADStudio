@@ -1153,6 +1153,10 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                             }
                         } else {
                             for &handle in &handles {
+                                // Skip objects on a locked layer.
+                                if self.tabs[i].scene.is_layer_locked(handle) {
+                                    continue;
+                                }
                                 if let Some(entity) =
                                     self.tabs[i].scene.document.get_entity_mut(handle)
                                 {

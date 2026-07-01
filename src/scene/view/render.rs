@@ -483,8 +483,26 @@ impl Scene {
         } else {
             self.paper_bg_color
         };
-        (adapt_to_bg(color, bg), pl, pat, lw, aci)
+        // Objects on a locked layer are dimmed toward the background so they
+        // read as "not editable" (they stay visible and snappable).
+        let adapted = adapt_to_bg(color, bg);
+        let final_color = if layer_locked(&self.document, e) {
+            crate::scene::cache::block_cache::fade_toward_bg(adapted, bg)
+        } else {
+            adapted
+        };
+        (final_color, pl, pat, lw, aci)
     }
+}
+
+/// Whether an entity sits on a locked layer (via the document's layer table).
+/// Document-only so it is safe from the parallel tessellation path.
+pub(in crate::scene) fn layer_locked(document: &CadDocument, e: &EntityType) -> bool {
+    document
+        .layers
+        .get(&e.common().layer)
+        .map(|l| l.is_locked())
+        .unwrap_or(false)
 }
 
 // ── Document-only render-style helpers (no &self, safe to call from parallel contexts) ──

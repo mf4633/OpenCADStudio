@@ -5,6 +5,11 @@ impl Scene {
     // ── Modify (transform / copy) ─────────────────────────────────────────
 
     pub fn transform_entities(&mut self, handles: &[Handle], t: &EntityTransform) {
+        // Never transform objects on a locked layer (defense-in-depth: the pick
+        // path already excludes them, but programmatic callers may not).
+        let handles: Vec<Handle> =
+            handles.iter().copied().filter(|&h| !self.is_layer_locked(h)).collect();
+        let handles = &handles[..];
         // MIRRTEXT (header.mirror_text): when false AutoCAD positions text /
         // mtext / shape by the mirror but keeps the original rotation +
         // oblique so the text stays right-reading. Capture before the
@@ -254,6 +259,10 @@ impl Scene {
     // ── Grip editing ──────────────────────────────────────────────────────
 
     pub fn apply_grip(&mut self, handle: Handle, grip_id: usize, apply: GripApply) {
+        // Objects on a locked layer can't be grip-edited.
+        if self.is_layer_locked(handle) {
+            return;
+        }
         // For Solid3D / Region / Body, record the old point_of_reference so we
         // can translate the pre-tessellated MeshModel by the same delta after
         // the grip is applied (the ACIS data itself is not modified).

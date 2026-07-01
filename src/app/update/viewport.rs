@@ -2133,6 +2133,8 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                                 handles.extend(self.tabs[i].scene.block_mesh_box_hit(
                                     a, p, crossing, view_rot, eye, bounds,
                                 ));
+                                // Objects on a locked layer aren't selectable.
+                                handles.retain(|&h| !self.tabs[i].scene.is_layer_locked(h));
                                 // Box/lasso accumulates like individual picks
                                 // (issue #83): a plain box adds to the current
                                 // selection, Shift+box removes the boxed
@@ -2193,6 +2195,8 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                             ));
                             // Selection filter: keep only allowed types.
                             handles.retain(|&h| self.tabs[i].scene.passes_selection_filter(h));
+                            // Objects on a locked layer aren't selectable.
+                            handles.retain(|&h| !self.tabs[i].scene.is_layer_locked(h));
                             // Accumulate like the box path (issue #83): plain
                             // lasso adds, Shift+lasso removes. An empty lasso
                             // leaves the current selection untouched so a stray
@@ -2238,6 +2242,7 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                                 .into_iter()
                                 .filter_map(|s| Scene::handle_from_wire_name(s))
                                 .filter(|&h| self.tabs[i].scene.passes_selection_filter(h))
+                                .filter(|&h| !self.tabs[i].scene.is_layer_locked(h))
                                 .collect();
                                 if cands.len() >= 2 {
                                     // Overlap: open the list box at the cursor.
@@ -2285,7 +2290,15 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                                     // each plain click adds to the selection,
                                     // Shift+click removes the picked entity.
                                     // Esc / empty-space click clears.
-                                    if self.shift_down {
+                                    if let Some(layer) =
+                                        self.tabs[i].scene.locked_layer_name(handle)
+                                    {
+                                        // Locked layer: visible + snappable, but
+                                        // not selectable. Tell the user why.
+                                        self.command_line.push_info(&format!(
+                                            "Object is on locked layer \"{layer}\" — unlock the layer to select or edit it."
+                                        ));
+                                    } else if self.shift_down {
                                         self.tabs[i].scene.deselect_entity(handle);
                                     } else {
                                         self.tabs[i].scene.select_entity(handle, false);
@@ -2341,6 +2354,8 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                             ));
                             // Selection filter: keep only allowed types.
                             handles.retain(|&h| self.tabs[i].scene.passes_selection_filter(h));
+                            // Objects on a locked layer aren't selectable.
+                            handles.retain(|&h| !self.tabs[i].scene.is_layer_locked(h));
                             // Accumulate (issue #83): a plain box adds to the
                             // current selection, Shift+box removes the boxed
                             // entities. An empty box leaves the selection alone

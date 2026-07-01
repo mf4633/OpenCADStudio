@@ -94,5 +94,7 @@ impl Scene {
         if let Some(layer) = self.document.layers.get_mut(name) {
             layer.flags.locked = !layer.flags.locked;
         }
+        // Re-tessellate so the locked-layer dim (fade) appears/clears at once.
+        self.bump_geometry();
     }
 }
