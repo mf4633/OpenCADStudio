@@ -2057,14 +2057,16 @@ pub(super) fn start_page_view<'a>() -> Element<'a, Message> {
     }
     let secondary_row = secondary_row.spacing(12).align_y(iced::Center);
 
-    // Intro video: a clickable thumbnail with a play badge. Native iced has no
-    // embedded web player, so a click opens the video in the system browser.
+    // Intro videos: clickable thumbnails with a play badge, side by side.
+    // Native iced has no embedded web player, so a click opens the video in the
+    // system browser.
     const INTRO_VIDEO_URL: &str = "https://youtu.be/uN9zxM7p_fc";
-    // Build the image Handle ONCE — `Handle::from_bytes` mints a fresh unique id
-    // on every call, so doing it per-view re-decodes + re-uploads the JPEG each
-    // frame (the thumbnail appeared only after a long delay). A cached Handle
-    // decodes once; cloning it per view shares the id + bytes.
-    let thumb_handle = {
+    const INTRO_VIDEO_URL_2: &str = "https://youtu.be/4_glyJFo0qI";
+    // Build each image Handle ONCE — `Handle::from_bytes` mints a fresh unique
+    // id on every call, so doing it per-view re-decodes + re-uploads the JPEG
+    // each frame (the thumbnail then appears only after a long delay). A cached
+    // Handle decodes once; cloning it per view shares the id + bytes.
+    fn intro_thumb_1() -> iced::widget::image::Handle {
         use std::sync::OnceLock;
         static H: OnceLock<iced::widget::image::Handle> = OnceLock::new();
         H.get_or_init(|| {
@@ -2073,45 +2075,56 @@ pub(super) fn start_page_view<'a>() -> Element<'a, Message> {
             )
         })
         .clone()
-    };
-    let thumb = iced::widget::image(thumb_handle)
-        .width(Fill)
-        .height(Fill)
-        .content_fit(iced::ContentFit::Cover);
-    // White play triangle on a translucent dark disc, centred over the thumb.
-    let play_badge = container(
-        container(crate::ui::icons::arrow_right(30.0, Color::WHITE))
-            .width(iced::Length::Fixed(72.0))
-            .height(iced::Length::Fixed(72.0))
-            .center_x(iced::Length::Fixed(72.0))
-            .center_y(iced::Length::Fixed(72.0))
-            .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(Color {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.55,
-                })),
-                border: Border {
-                    color: Color {
-                        r: 1.0,
-                        g: 1.0,
-                        b: 1.0,
-                        a: 0.85,
+    }
+    fn intro_thumb_2() -> iced::widget::image::Handle {
+        use std::sync::OnceLock;
+        static H: OnceLock<iced::widget::image::Handle> = OnceLock::new();
+        H.get_or_init(|| {
+            iced::widget::image::Handle::from_bytes(
+                include_bytes!("../../../assets/intro_thumb2.jpg").to_vec(),
+            )
+        })
+        .clone()
+    }
+    // One clickable video card: cover-fitted thumbnail with a white play triangle
+    // on a translucent disc, opening `url` in the browser on click.
+    let video_card = |handle: iced::widget::image::Handle, url: &str| {
+        let thumb = iced::widget::image(handle)
+            .width(Fill)
+            .height(Fill)
+            .content_fit(iced::ContentFit::Cover);
+        let play_badge = container(
+            container(crate::ui::icons::arrow_right(24.0, Color::WHITE))
+                .width(iced::Length::Fixed(56.0))
+                .height(iced::Length::Fixed(56.0))
+                .center_x(iced::Length::Fixed(56.0))
+                .center_y(iced::Length::Fixed(56.0))
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.55,
+                    })),
+                    border: Border {
+                        color: Color {
+                            r: 1.0,
+                            g: 1.0,
+                            b: 1.0,
+                            a: 0.85,
+                        },
+                        width: 2.0,
+                        radius: 28.0.into(),
                     },
-                    width: 2.0,
-                    radius: 36.0.into(),
-                },
-                ..Default::default()
-            }),
-    )
-    .center_x(Fill)
-    .center_y(Fill);
-    let cards = container(
+                    ..Default::default()
+                }),
+        )
+        .center_x(Fill)
+        .center_y(Fill);
         mouse_area(
             container(iced::widget::stack![thumb, play_badge])
-                .width(iced::Length::Fixed(720.0))
-                .height(iced::Length::Fixed(405.0))
+                .width(iced::Length::Fixed(352.0))
+                .height(iced::Length::Fixed(198.0))
                 .style(|_: &Theme| container::Style {
                     background: Some(Background::Color(CARD_BG)),
                     border: Border {
@@ -2124,7 +2137,14 @@ pub(super) fn start_page_view<'a>() -> Element<'a, Message> {
                 .clip(true),
         )
         .interaction(iced::mouse::Interaction::Pointer)
-        .on_press(Message::OpenUrl(INTRO_VIDEO_URL.to_string())),
+        .on_press(Message::OpenUrl(url.to_string()))
+    };
+    let cards = container(
+        iced::widget::row![
+            video_card(intro_thumb_1(), INTRO_VIDEO_URL),
+            video_card(intro_thumb_2(), INTRO_VIDEO_URL_2),
+        ]
+        .spacing(12),
     )
     .center_x(Fill);
 
