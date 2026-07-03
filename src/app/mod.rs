@@ -1431,6 +1431,9 @@ pub enum Message {
     },
     /// User committed a geometry/common field edit (Enter pressed).
     PropGeomCommit(&'static str),
+    /// Copy a read-only property value to the system clipboard (click on a
+    /// read-only value cell). Carries the full, un-elided value.
+    PropCopyValue(String),
     /// User is typing in a block-attribute value field (live buffer update),
     /// keyed by the attribute tag.
     PropAttrInput { tag: String, value: String },

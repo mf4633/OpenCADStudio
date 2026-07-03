@@ -13,7 +13,9 @@ use std::fmt;
 use crate::ui::ROW_H;
 use acadrust::types::{Color as AcadColor, LineWeight};
 use acadrust::Handle;
-use iced::widget::{button, column, combo_box, container, row, scrollable, text, text_input};
+use iced::widget::{
+    button, column, combo_box, container, mouse_area, row, scrollable, text, text_input,
+};
 use iced::{Background, Border, Color, Element, Length, Padding, Theme};
 
 // ── Row-height-derived constants ─────────────────────────────────────────
@@ -865,7 +867,7 @@ fn render_bool_row<'a>(label: &'a str, field: &'static str, value: bool) -> Elem
 }
 
 fn render_ro_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
-    let value = crate::ui::text_util::elide(value, 22);
+    let display = crate::ui::text_util::elide(value, 22);
     let label_col = container(text(crate::ui::text_util::elide(label, 18)).size(FONT_SZ).color(LABEL_COLOR))
         .style(|_: &Theme| container::Style {
             background: Some(Background::Color(LABEL_BG)),
@@ -880,7 +882,7 @@ fn render_ro_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
             left: 6.0,
             right: 6.0,
         });
-    let value_col = container(text(value).size(FONT_SZ).color(VALUE_COLOR))
+    let value_inner = container(text(display).size(FONT_SZ).color(VALUE_COLOR))
         .style(|_: &Theme| container::Style {
             background: Some(Background::Color(VALUE_BG)),
             ..Default::default()
@@ -894,6 +896,16 @@ fn render_ro_row<'a>(label: &'a str, value: &'a str) -> Element<'a, Message> {
             left: 6.0,
             right: 6.0,
         });
+    // A read-only value is still copyable: click the value cell to copy the
+    // full (un-elided) text to the clipboard.
+    let value_col: Element<'a, Message> = if value.is_empty() {
+        value_inner.into()
+    } else {
+        mouse_area(value_inner)
+            .on_press(Message::PropCopyValue(value.to_string()))
+            .interaction(iced::mouse::Interaction::Copy)
+            .into()
+    };
     container(row![label_col, value_col])
         .height(Length::Fixed(ROW_H))
         .style(|_: &Theme| container::Style {
