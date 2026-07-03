@@ -1,6 +1,57 @@
 // Auto-split from scene/mod.rs. Pure text-move; behaviour unchanged.
 use super::*;
 
+/// Orientation fields of a text-like entity, captured so a mirror can keep the
+/// glyphs right-reading when MIRRTEXT (`header.mirror_text`) is off.
+struct TextOrient {
+    rotation: f64,
+    oblique: f64,
+    x_scale: f64,
+}
+
+/// Snapshot the orientation of a text / mtext / shape entity, or `None` for any
+/// other kind.
+fn capture_text_orient(e: &EntityType) -> Option<TextOrient> {
+    match e {
+        EntityType::Text(t) => Some(TextOrient {
+            rotation: t.rotation,
+            oblique: t.oblique_angle,
+            x_scale: 0.0,
+        }),
+        EntityType::MText(m) => Some(TextOrient {
+            rotation: m.rotation,
+            oblique: 0.0,
+            x_scale: 0.0,
+        }),
+        EntityType::Shape(s) => Some(TextOrient {
+            rotation: s.rotation,
+            oblique: s.oblique_angle,
+            x_scale: s.relative_x_scale,
+        }),
+        _ => None,
+    }
+}
+
+/// Re-apply a captured orientation after a transform (the position stays
+/// mirrored, only the rotation / oblique / x-scale are restored).
+fn restore_text_orient(e: &mut EntityType, o: &TextOrient) {
+    match e {
+        EntityType::Text(t) => {
+            t.rotation = o.rotation;
+            t.oblique_angle = o.oblique;
+        }
+        EntityType::MText(m) => {
+            m.rotation = o.rotation;
+        }
+        EntityType::Shape(s) => {
+            s.rotation = o.rotation;
+            s.oblique_angle = o.oblique;
+            s.relative_x_scale = o.x_scale;
+        }
+        _ => {}
+    }
+}
+
 impl Scene {
     // ── Modify (transform / copy) ─────────────────────────────────────────
 
@@ -16,24 +67,12 @@ impl Scene {
         // transform and re-apply afterwards.
         let preserve_text_orientation =
             matches!(t, EntityTransform::Mirror { .. }) && !self.document.header.mirror_text;
-        let mut text_orient_backup: Vec<(Handle, f64, f64, f64)> = Vec::new();
+        let mut text_orient_backup: Vec<(Handle, TextOrient)> = Vec::new();
         if preserve_text_orientation {
             for &h in handles {
                 if let Some(entity) = self.document.get_entity(h) {
-                    match entity {
-                        EntityType::Text(t) => {
-                            text_orient_backup.push((h, t.rotation, t.oblique_angle, 0.0))
-                        }
-                        EntityType::MText(m) => {
-                            text_orient_backup.push((h, m.rotation, 0.0, 0.0))
-                        }
-                        EntityType::Shape(s) => text_orient_backup.push((
-                            h,
-                            s.rotation,
-                            s.oblique_angle,
-                            s.relative_x_scale,
-                        )),
-                        _ => {}
+                    if let Some(o) = capture_text_orient(entity) {
+                        text_orient_backup.push((h, o));
                     }
                 }
             }
@@ -87,23 +126,9 @@ impl Scene {
             }
         }
         if preserve_text_orientation {
-            for (h, rot, oblique, x_scale) in text_orient_backup {
+            for (h, o) in text_orient_backup {
                 if let Some(entity) = self.document.get_entity_mut(h) {
-                    match entity {
-                        EntityType::Text(t) => {
-                            t.rotation = rot;
-                            t.oblique_angle = oblique;
-                        }
-                        EntityType::MText(m) => {
-                            m.rotation = rot;
-                        }
-                        EntityType::Shape(s) => {
-                            s.rotation = rot;
-                            s.oblique_angle = oblique;
-                            s.relative_x_scale = x_scale;
-                        }
-                        _ => {}
-                    }
+                    restore_text_orient(entity, &o);
                 }
             }
         }
@@ -215,9 +240,22 @@ impl Scene {
             .filter(|&&h| !self.is_layer_locked(h))
             .filter_map(|&h| self.document.get_entity(h).cloned())
             .collect();
+        // MIRRTEXT also governs the copy path (default MIRROR keeps the source
+        // and adds a mirrored copy): keep the copied text right-reading when the
+        // header flag is off.
+        let preserve_text_orientation =
+            matches!(t, EntityTransform::Mirror { .. }) && !self.document.header.mirror_text;
         let mut new_handles = Vec::with_capacity(clones.len());
         for mut entity in clones {
+            let text_orient = if preserve_text_orientation {
+                capture_text_orient(&entity)
+            } else {
+                None
+            };
             view::dispatch::apply_transform(&mut entity, t);
+            if let Some(o) = &text_orient {
+                restore_text_orient(&mut entity, o);
+            }
             // A dimension draws from its baked `*D` block; give the copy its own
             // transformed block so it lands at the copy position rather than
             // rendering on top of the source. (#161)
