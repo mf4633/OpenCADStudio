@@ -170,7 +170,6 @@ fn properties(arc: &Arc) -> Vec<PropSection> {
             edit("Normal X", "normal_x", arc.normal.x),
             edit("Normal Y", "normal_y", arc.normal.y),
             edit("Normal Z", "normal_z", arc.normal.z),
-            edit("Thickness", "thickness", arc.thickness),
         ],
     }]
 }
@@ -189,7 +188,6 @@ fn apply_geom_prop(arc: &mut Arc, field: &str, value: &str) {
         "normal_x" => arc.normal.x = v,
         "normal_y" => arc.normal.y = v,
         "normal_z" => arc.normal.z = v,
-        "thickness" => arc.thickness = v,
         _ => {}
     }
 }

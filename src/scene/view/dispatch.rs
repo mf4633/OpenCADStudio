@@ -56,6 +56,49 @@ pub fn apply_common_prop(entity: &mut EntityType, field: &str, value: &str) {
                     .set_transparency(Transparency::new(alpha));
             }
         }
+        "thickness" => {
+            if let Ok(v) = value.trim().parse::<f64>() {
+                set_entity_thickness(entity, v);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The extrusion thickness (DXF 39) of the entities that carry one, or `None`
+/// for entity types that have none. Thickness is a per-entity field but is
+/// surfaced in the General group (as in a standard properties palette), so
+/// this bridges the two.
+pub fn entity_thickness(entity: &EntityType) -> Option<f64> {
+    Some(match entity {
+        EntityType::Arc(e) => e.thickness,
+        EntityType::Circle(e) => e.thickness,
+        EntityType::Line(e) => e.thickness,
+        EntityType::LwPolyline(e) => e.thickness,
+        EntityType::Point(e) => e.thickness,
+        EntityType::PolyfaceMesh(e) => e.thickness,
+        EntityType::Polyline2D(e) => e.thickness,
+        EntityType::Shape(e) => e.thickness,
+        EntityType::Solid(e) => e.thickness,
+        EntityType::Text(e) => e.thickness,
+        _ => return None,
+    })
+}
+
+/// Set the extrusion thickness on the entity types that carry one; no-op for
+/// the rest.
+pub fn set_entity_thickness(entity: &mut EntityType, v: f64) {
+    match entity {
+        EntityType::Arc(e) => e.thickness = v,
+        EntityType::Circle(e) => e.thickness = v,
+        EntityType::Line(e) => e.thickness = v,
+        EntityType::LwPolyline(e) => e.thickness = v,
+        EntityType::Point(e) => e.thickness = v,
+        EntityType::PolyfaceMesh(e) => e.thickness = v,
+        EntityType::Polyline2D(e) => e.thickness = v,
+        EntityType::Shape(e) => e.thickness = v,
+        EntityType::Solid(e) => e.thickness = v,
+        EntityType::Text(e) => e.thickness = v,
         _ => {}
     }
 }

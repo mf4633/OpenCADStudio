@@ -138,7 +138,6 @@ fn properties(circle: &Circle) -> Vec<PropSection> {
             edit("Normal X", "normal_x", circle.normal.x),
             edit("Normal Y", "normal_y", circle.normal.y),
             edit("Normal Z", "normal_z", circle.normal.z),
-            edit("Thickness", "thickness", circle.thickness),
         ],
     }]
 }
@@ -155,7 +154,6 @@ fn apply_geom_prop(circle: &mut Circle, field: &str, value: &str) {
         "normal_x" => circle.normal.x = v,
         "normal_y" => circle.normal.y = v,
         "normal_z" => circle.normal.z = v,
-        "thickness" => circle.thickness = v,
         _ => {}
     }
 }

@@ -23,7 +23,7 @@ pub fn general_section(entity: &EntityType) -> PropSection {
         })
         .unwrap_or_default();
 
-    PropSection {
+    let mut section = PropSection {
         title: "General".into(),
         props: vec![
             Property {
@@ -78,16 +78,28 @@ pub fn general_section(entity: &EntityType) -> PropSection {
                 field: "hyperlink",
                 value: PropValue::ReadOnly(hyperlink),
             },
-            Property {
-                label: "Invisible".into(),
-                field: "invisible",
-                value: PropValue::BoolToggle {
-                    field: "invisible",
-                    value: common.invisible,
-                },
-            },
         ],
+    };
+
+    // Thickness (DXF 39) is a General-group property, but only the entity
+    // types that carry an extrusion thickness expose it (line, circle, arc,
+    // polyline, text, 2D solid, …). Show it right after Hyperlink for those.
+    if let Some(t) = crate::scene::view::dispatch::entity_thickness(entity) {
+        section
+            .props
+            .push(crate::entities::common::edit_prop("Thickness", "thickness", t));
     }
+
+    section.props.push(Property {
+        label: "Invisible".into(),
+        field: "invisible",
+        value: PropValue::BoolToggle {
+            field: "invisible",
+            value: common.invisible,
+        },
+    });
+
+    section
 }
 
 /// The "3D Visualization" group (Material + Shadow display), common to every

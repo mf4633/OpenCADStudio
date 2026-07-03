@@ -117,7 +117,6 @@ impl PropertyEditable for Solid {
                 edit("Point 4 Y", "sl_p4y", self.fourth_corner.y),
                 edit("Point 4 Z", "sl_p4z", self.fourth_corner.z),
                 ro("Elevation", "sl_elev", format!("{:.4}", elevation)),
-                edit("Thickness", "sl_thick", self.thickness),
             ],
         }]
     }
@@ -139,7 +138,6 @@ impl PropertyEditable for Solid {
             "sl_p4x" => self.fourth_corner.x = v,
             "sl_p4y" => self.fourth_corner.y = v,
             "sl_p4z" => self.fourth_corner.z = v,
-            "sl_thick" => self.thickness = v,
             _ => {}
         }
     }
