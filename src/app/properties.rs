@@ -256,30 +256,6 @@ impl OpenCADStudio {
                         }
                     }
 
-                    // Block attributes: expose each attribute tag as an
-                    // editable value row so a block reference's attributes can
-                    // be read and changed directly from the panel.
-                    if let acadrust::EntityType::Insert(ins) = entity {
-                        if !ins.attributes.is_empty() {
-                            let props = ins
-                                .attributes
-                                .iter()
-                                .map(|a| crate::scene::model::object::Property {
-                                    label: a.tag.clone(),
-                                    field: "attr",
-                                    value: crate::scene::model::object::PropValue::AttrText {
-                                        tag: a.tag.clone(),
-                                        value: a.get_value().to_string(),
-                                    },
-                                })
-                                .collect();
-                            sections.push(crate::scene::model::object::PropSection {
-                                title: "Attributes".to_string(),
-                                props,
-                            });
-                        }
-                    }
-
                     // ── Doc-dependent property rows ──────────────────────────
                     // Rows whose value lives on another object (a block record,
                     // an underlay definition, a dimension / multileader style)
