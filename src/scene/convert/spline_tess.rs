@@ -8,9 +8,46 @@
 // and sample its parametric grid into triangles.
 
 use acadrust::entities::acis::{SatDocument, SatFace, SatRecord, SatToken};
-use truck_modeling::{BSplineSurface, KnotVec, ParametricSurface, ParametricSurface3D, Point3};
+use truck_modeling::base::{Vector3, Vector4};
+use truck_modeling::{
+    BSplineSurface, KnotVec, NurbsSurface, ParametricSurface, ParametricSurface3D, Point3,
+};
 
 use crate::scene::convert::solid3d_tess::LodConfig;
+
+/// A `spline-surface` block is either a non-rational `nubs` (control points are
+/// plain xyz) or a rational `nurbs` (control points carry a weight). They share
+/// the parametric-surface interface, so tessellation treats them uniformly.
+enum SplineSurf {
+    Bs(BSplineSurface<Point3>),
+    Nurbs(NurbsSurface<Vector4>),
+}
+
+impl SplineSurf {
+    fn parameter_range(
+        &self,
+    ) -> (
+        (std::ops::Bound<f64>, std::ops::Bound<f64>),
+        (std::ops::Bound<f64>, std::ops::Bound<f64>),
+    ) {
+        match self {
+            SplineSurf::Bs(s) => s.parameter_range(),
+            SplineSurf::Nurbs(s) => s.parameter_range(),
+        }
+    }
+    fn subs(&self, u: f64, v: f64) -> Point3 {
+        match self {
+            SplineSurf::Bs(s) => s.subs(u, v),
+            SplineSurf::Nurbs(s) => s.subs(u, v),
+        }
+    }
+    fn normal(&self, u: f64, v: f64) -> Vector3 {
+        match self {
+            SplineSurf::Bs(s) => s.normal(u, v),
+            SplineSurf::Nurbs(s) => s.normal(u, v),
+        }
+    }
+}
 
 /// Tessellate one `spline-surface` face by sampling its B-spline surface.
 /// Appends triangles to the shared mesh buffers; a no-op when the surface
@@ -26,7 +63,7 @@ pub fn tess_spline_face(
     let Some(surf_rec) = sat.resolve(face.surface()) else {
         return;
     };
-    let Some(surface) = build_bspline_surface(surf_rec) else {
+    let Some(surface) = build_spline_surface(surf_rec) else {
         return;
     };
 
@@ -83,13 +120,16 @@ fn range_bounds(r: (std::ops::Bound<f64>, std::ops::Bound<f64>)) -> (f64, f64) {
 
 /// Parse the `nubs` control net + knot vectors out of a `spline-surface`
 /// record's token stream into a truck `BSplineSurface`.
-fn build_bspline_surface(rec: &SatRecord) -> Option<BSplineSurface<Point3>> {
+fn build_spline_surface(rec: &SatRecord) -> Option<SplineSurf> {
     let toks = &rec.tokens;
     // Locate the real B-spline block. `nullbs` placeholders (for absent
-    // rail/path surfaces) precede it; the actual surface is `nubs`.
-    let start = toks.iter().position(|t| {
-        matches!(t, SatToken::Ident(s) if s == "nubs" || s == "nurbs")
-    })?;
+    // rail/path surfaces) precede it; the actual surface is `nubs` (plain xyz
+    // control points) or `nurbs` (rational — each control point carries a
+    // weight, so it is stored as xyzw).
+    let start = toks
+        .iter()
+        .position(|t| matches!(t, SatToken::Ident(s) if s == "nubs" || s == "nurbs"))?;
+    let rational = matches!(&toks[start], SatToken::Ident(s) if s == "nurbs");
 
     let mut p = start + 1;
     let deg_u = read_int(toks, &mut p)? as usize;
@@ -113,23 +153,45 @@ fn build_bspline_surface(rec: &SatRecord) -> Option<BSplineSurface<Point3>> {
     // Control points are stored row-major with u varying fastest (a full row
     // of u control points per v step). truck wants `ctrl[i_u][j_v]`.
     let total = n_ctrl_u * n_ctrl_v;
-    let mut flat: Vec<Point3> = Vec::with_capacity(total);
-    for _ in 0..total {
-        let x = read_float(toks, &mut p)?;
-        let y = read_float(toks, &mut p)?;
-        let z = read_float(toks, &mut p)?;
-        flat.push(Point3::new(x, y, z));
-    }
-    let mut ctrl = vec![Vec::with_capacity(n_ctrl_v); n_ctrl_u];
-    for v in 0..n_ctrl_v {
-        for u in 0..n_ctrl_u {
-            ctrl[u].push(flat[v * n_ctrl_u + u]);
-        }
-    }
-
     let uk = KnotVec::from(u_knots);
     let vk = KnotVec::from(v_knots);
-    BSplineSurface::try_new((uk, vk), ctrl).ok()
+
+    if rational {
+        // Rational: read x, y, z, w and store the homogeneous point (xw, yw,
+        // zw, w) that truck's `NurbsSurface` expects.
+        let mut flat: Vec<Vector4> = Vec::with_capacity(total);
+        for _ in 0..total {
+            let x = read_float(toks, &mut p)?;
+            let y = read_float(toks, &mut p)?;
+            let z = read_float(toks, &mut p)?;
+            let w = read_float(toks, &mut p)?;
+            flat.push(Vector4::new(x * w, y * w, z * w, w));
+        }
+        let mut ctrl = vec![Vec::with_capacity(n_ctrl_v); n_ctrl_u];
+        for v in 0..n_ctrl_v {
+            for u in 0..n_ctrl_u {
+                ctrl[u].push(flat[v * n_ctrl_u + u]);
+            }
+        }
+        let bs = BSplineSurface::try_new((uk, vk), ctrl).ok()?;
+        Some(SplineSurf::Nurbs(NurbsSurface::new(bs)))
+    } else {
+        let mut flat: Vec<Point3> = Vec::with_capacity(total);
+        for _ in 0..total {
+            let x = read_float(toks, &mut p)?;
+            let y = read_float(toks, &mut p)?;
+            let z = read_float(toks, &mut p)?;
+            flat.push(Point3::new(x, y, z));
+        }
+        let mut ctrl = vec![Vec::with_capacity(n_ctrl_v); n_ctrl_u];
+        for v in 0..n_ctrl_v {
+            for u in 0..n_ctrl_u {
+                ctrl[u].push(flat[v * n_ctrl_u + u]);
+            }
+        }
+        let bs = BSplineSurface::try_new((uk, vk), ctrl).ok()?;
+        Some(SplineSurf::Bs(bs))
+    }
 }
 
 /// Read `count` `(knot value, multiplicity)` pairs into an expanded knot
