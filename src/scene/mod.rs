@@ -567,6 +567,21 @@ fn offset_mesh_lod_set(mut set: MeshLodSet) -> MeshLodSet {
             if hy > max_y { max_y = hy; }
         }
     }
+    // Re-split the feature edges the same way so they track the mesh at scale.
+    {
+        let n = set.edge_verts.len();
+        if set.edge_verts_low.len() != n {
+            set.edge_verts_low = vec![[0.0; 3]; n];
+        }
+        for (v, vl) in set.edge_verts.iter_mut().zip(set.edge_verts_low.iter_mut()) {
+            let ax = v[0] as f64 + vl[0] as f64;
+            let ay = v[1] as f64 + vl[1] as f64;
+            let az = v[2] as f64 + vl[2] as f64;
+            let (hx, hy, hz) = (ax as f32, ay as f32, az as f32);
+            *v = [hx, hy, hz];
+            *vl = [(ax - hx as f64) as f32, (ay - hy as f64) as f32, (az - hz as f64) as f32];
+        }
+    }
     if min_x.is_finite() {
         set.world_aabb = [min_x, min_y, max_x, max_y];
     }
@@ -622,6 +637,23 @@ fn transform_block_mesh_lod_set(
                 n[1] = (d.y / len) as f32;
                 n[2] = (d.z / len) as f32;
             }
+        }
+    }
+    // Apply the same INSERT transform to the feature edges.
+    {
+        let n = out.edge_verts.len();
+        if out.edge_verts_low.len() != n {
+            out.edge_verts_low = vec![[0.0; 3]; n];
+        }
+        for (v, vl) in out.edge_verts.iter_mut().zip(out.edge_verts_low.iter_mut()) {
+            let w = xform.apply(Vector3::new(
+                v[0] as f64 + vl[0] as f64,
+                v[1] as f64 + vl[1] as f64,
+                v[2] as f64 + vl[2] as f64,
+            ));
+            let (hx, hy, hz) = (w.x as f32, w.y as f32, w.z as f32);
+            *v = [hx, hy, hz];
+            *vl = [(w.x - hx as f64) as f32, (w.y - hy as f64) as f32, (w.z - hz as f64) as f32];
         }
     }
     if min_x.is_finite() {

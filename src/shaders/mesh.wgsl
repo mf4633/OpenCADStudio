@@ -79,3 +79,17 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let rgb = in.color.rgb * clamp(diff, 0.0, 1.0);
     return vec4<f32>(rgb, in.color.a);
 }
+
+// Edge fragment (LineList): flat entity colour, no lighting. Used for the
+// wireframe and hidden-line edge passes so lines read at their true colour.
+@fragment
+fn fs_edge(in: VertexOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(in.color.rgb, 1.0);
+}
+
+// Edge fragment for filled render modes: force black so edges frame the shaded
+// fill regardless of the solid's colour.
+@fragment
+fn fs_edge_black(in: VertexOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+}

@@ -39,6 +39,13 @@ pub struct MeshModel {
 #[derive(Clone, Debug)]
 pub struct MeshLodSet {
     pub lods: Vec<MeshModel>,
+    /// Feature-edge line list (LOD-independent): pairs of endpoints, high half
+    /// of the double-single. Populated for ACIS solids (the B-rep face-boundary
+    /// edges) so their wireframe shows real edges rather than the triangulation.
+    /// Empty for plain meshes — those fall back to triangle edges at batch time.
+    pub edge_verts: Vec<[f32; 3]>,
+    /// Low residual paired with `edge_verts`.
+    pub edge_verts_low: Vec<[f32; 3]>,
     /// World XY AABB `[min_x, min_y, max_x, max_y]` of the mesh — used
     /// by the per-frame LOD selector to compute the projected pixel
     /// diagonal.
@@ -76,7 +83,13 @@ impl MeshLodSet {
     /// Build a set from its LODs, computing the 3D AABB.
     pub fn from_lods(lods: Vec<MeshModel>) -> Self {
         let (world_aabb, z_aabb) = compute_mesh_aabb(&lods);
-        Self { lods, world_aabb, z_aabb }
+        Self {
+            lods,
+            edge_verts: Vec::new(),
+            edge_verts_low: Vec::new(),
+            world_aabb,
+            z_aabb,
+        }
     }
 
     /// Wrap a single MeshModel as a one-LOD set. Used by interactive

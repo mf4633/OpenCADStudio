@@ -142,20 +142,101 @@ fn tessellate_acis(
     color: [f32; 4],
     facet_res: f64,
 ) -> Option<MeshLodSet> {
-    if let Some(set) = crate::scene::convert::acis_to_truck::tessellate_sat_truck(sat, name.clone(), color, facet_res) {
-        if std::env::var_os("OCS_TESS_DEBUG").is_some() {
-            let tris = set.lods.first().map(|m| m.indices.len() / 3).unwrap_or(0);
-            eprintln!("acis_tess[{name}]: truck ({tris} tris)");
+    let mut set =
+        if let Some(set) = crate::scene::convert::acis_to_truck::tessellate_sat_truck(sat, name.clone(), color, facet_res) {
+            if std::env::var_os("OCS_TESS_DEBUG").is_some() {
+                let tris = set.lods.first().map(|m| m.indices.len() / 3).unwrap_or(0);
+                eprintln!("acis_tess[{name}]: truck ({tris} tris)");
+            }
+            set
+        } else {
+            // truck couldn't rebuild the shell — fall back to the bespoke sampler.
+            let fallback = tessellate_sat_lods(sat, name.clone(), color, facet_res);
+            eprintln!(
+                "acis_tess[{name}]: manual fallback ({})",
+                if fallback.is_some() { "ok" } else { "empty" }
+            );
+            fallback?
+        };
+    // Attach the B-rep face-boundary edges (body-transformed, split into the
+    // double-single pair) so the solid's wireframe shows real edges.
+    attach_feature_edges(&mut set, sat);
+    Some(set)
+}
+
+/// Collect the ACIS `edge` records as world-space polyline segments (pairs of
+/// endpoints), body-transform them, and store them on the set as the
+/// double-single `edge_verts` / `edge_verts_low`.
+fn attach_feature_edges(set: &mut MeshLodSet, sat: &SatDocument) {
+    let xform = body_transform(sat);
+    let seg_pts = collect_feature_edges(sat);
+    set.edge_verts.reserve(seg_pts.len());
+    set.edge_verts_low.reserve(seg_pts.len());
+    for p in seg_pts {
+        let (mut x, mut y, mut z) = (p[0], p[1], p[2]);
+        if let Some((m, tr, scale)) = xform {
+            let (lx, ly, lz) = (x, y, z);
+            x = scale * (lx * m[0] + ly * m[3] + lz * m[6]) + tr[0];
+            y = scale * (lx * m[1] + ly * m[4] + lz * m[7]) + tr[1];
+            z = scale * (lx * m[2] + ly * m[5] + lz * m[8]) + tr[2];
         }
-        return Some(set);
+        let (hx, hy, hz) = (x as f32, y as f32, z as f32);
+        set.edge_verts.push([hx, hy, hz]);
+        set.edge_verts_low
+            .push([(x - hx as f64) as f32, (y - hy as f64) as f32, (z - hz as f64) as f32]);
     }
-    // truck couldn't rebuild the shell — fall back to the bespoke sampler.
-    let fallback = tessellate_sat_lods(sat, name.clone(), color, facet_res);
-    eprintln!(
-        "acis_tess[{name}]: manual fallback ({})",
-        if fallback.is_some() { "ok" } else { "empty" }
-    );
-    fallback
+}
+
+/// Line-list endpoints (pairs) for every `edge` record: straight edges emit
+/// their two vertex endpoints; ellipse/circle edges are sampled along their
+/// bounded parametric arc. Points are in body-local space (pre-transform).
+fn collect_feature_edges(sat: &SatDocument) -> Vec<[f64; 3]> {
+    const EDGE_SEGS: usize = 48;
+    let mut out: Vec<[f64; 3]> = Vec::new();
+    for er in sat.records_of_type("edge") {
+        let Some(edge) = SatEdge::from_record(er) else {
+            continue;
+        };
+        // Ordered points along the edge (≥2).
+        let mut pts: Vec<[f64; 3]> = Vec::new();
+        if let Some(cr) = sat.resolve(edge.curve()) {
+            if let Some(ellipse) = SatEllipseCurve::from_record(cr) {
+                pts = sample_ellipse_arc(&ellipse, edge.start_param(), edge.end_param(), EDGE_SEGS);
+                // sample_ellipse_arc drops the end param; append the true end so
+                // the polyline closes onto the shared vertex.
+                if let Some(p) = vertex_point(sat, edge.end_vertex()) {
+                    pts.push(p);
+                }
+            }
+        }
+        if pts.len() < 2 {
+            // Straight edge (or unsampled curve): connect the two vertices.
+            pts.clear();
+            if let (Some(a), Some(b)) = (
+                vertex_point(sat, edge.start_vertex()),
+                vertex_point(sat, edge.end_vertex()),
+            ) {
+                pts.push(a);
+                pts.push(b);
+            }
+        }
+        // Emit consecutive points as line-list segment pairs.
+        for w in pts.windows(2) {
+            out.push(w[0]);
+            out.push(w[1]);
+        }
+    }
+    out
+}
+
+/// Resolve a vertex pointer to its point coordinates.
+fn vertex_point(sat: &SatDocument, vptr: SatPointer) -> Option<[f64; 3]> {
+    let vrec = sat.resolve(vptr)?;
+    let vertex = SatVertex::from_record(vrec)?;
+    let prec = sat.resolve(vertex.point())?;
+    let point = SatPoint::from_record(prec)?;
+    let (x, y, z) = point.position();
+    Some([x, y, z])
 }
 
 /// Tessellate a SAT document at all three LODs and bundle them into a
@@ -1015,4 +1096,5 @@ fn norm3(v: [f64; 3]) -> [f64; 3] {
         [v[0] / len, v[1] / len, v[2] / len]
     }
 }
+
 

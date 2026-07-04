@@ -120,8 +120,14 @@ pub struct MeshBatchChunk {
     /// erase — the geometry behind them.
     pub transp_index_buffer: wgpu::Buffer,
     pub transp_index_count: u32,
+    /// Triangle-edge line list (into `vertex_buffer`) for plain meshes that
+    /// carry no B-rep edges — the tessellation wireframe.
     pub wire_index_buffer: wgpu::Buffer,
     pub wire_index_count: u32,
+    /// B-rep feature edges of ACIS solids, as a standalone LineList vertex
+    /// buffer (pairs of endpoints), drawn non-indexed. Empty for plain meshes.
+    pub edge_vertex_buffer: wgpu::Buffer,
+    pub edge_vertex_count: u32,
 }
 
 fn make_chunk(
@@ -130,6 +136,7 @@ fn make_chunk(
     indices: &[u32],
     transp_indices: &[u32],
     wire_indices: &[u32],
+    edge_verts: &[MeshVertex],
 ) -> MeshBatchChunk {
     // `create_buffer_init` with an empty slice yields a zero-sized buffer that
     // some backends reject for INDEX usage; a chunk can legitimately hold only
@@ -144,19 +151,30 @@ fn make_chunk(
             usage: wgpu::BufferUsages::INDEX,
         })
     };
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mesh.batch.vbuf"),
-        contents: bytemuck::cast_slice(verts),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
+    let mk_vertex = |data: &[MeshVertex], label: &'static str| {
+        let stub = [MeshVertex {
+            position: [0.0; 3],
+            normal: [0.0, 1.0, 0.0],
+            color: [0.0; 4],
+            position_low: [0.0; 3],
+        }];
+        let src = if data.is_empty() { &stub[..] } else { data };
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(src),
+            usage: wgpu::BufferUsages::VERTEX,
+        })
+    };
     MeshBatchChunk {
-        vertex_buffer,
+        vertex_buffer: mk_vertex(verts, "mesh.batch.vbuf"),
         index_buffer: mk_index(indices, "mesh.batch.ibuf"),
         index_count: indices.len() as u32,
         transp_index_buffer: mk_index(transp_indices, "mesh.batch.transp_ibuf"),
         transp_index_count: transp_indices.len() as u32,
         wire_index_buffer: mk_index(wire_indices, "mesh.batch.wire_ibuf"),
         wire_index_count: wire_indices.len() as u32,
+        edge_vertex_buffer: mk_vertex(edge_verts, "mesh.batch.edge_vbuf"),
+        edge_vertex_count: edge_verts.len() as u32,
     }
 }
 
@@ -182,6 +200,7 @@ pub fn build_mesh_batch(device: &wgpu::Device, sets: &[MeshLodSet]) -> (Vec<Mesh
     let mut indices: Vec<u32> = Vec::new();
     let mut transp_indices: Vec<u32> = Vec::new();
     let mut wire_indices: Vec<u32> = Vec::new();
+    let mut edge_verts: Vec<MeshVertex> = Vec::new();
     let mut total_tris = 0u64;
     for set in sets {
         let Some(mesh) = set.lods.iter().find(|m| !m.indices.is_empty()) else {
@@ -200,15 +219,38 @@ pub fn build_mesh_batch(device: &wgpu::Device, sets: &[MeshLodSet]) -> (Vec<Mesh
         let mesh_tris = mesh.indices.len() / 3;
         total_tris += mesh_tris as u64;
 
+        // Feature edges present (ACIS solid) → emit the B-rep edges as a line
+        // list and skip the triangulation wireframe. Absent (plain mesh) → keep
+        // the triangle edges so the mesh still shows a wireframe.
+        let has_feat = !set.edge_verts.is_empty();
+        if has_feat {
+            for i in 0..set.edge_verts.len() {
+                edge_verts.push(MeshVertex {
+                    position: set.edge_verts[i],
+                    normal: [0.0, 1.0, 0.0],
+                    color: mesh.color,
+                    position_low: set.edge_verts_low.get(i).copied().unwrap_or([0.0; 3]),
+                });
+            }
+        }
+
         // A single mesh larger than a whole chunk: emit as triangle-soup
         // sub-chunks (corners expanded, no vertex sharing) so each buffer fits.
         if mesh.verts.len() > max_verts || mesh_tris > max_tris {
-            if !verts.is_empty() {
-                chunks.push(make_chunk(device, &verts, &indices, &transp_indices, &wire_indices));
+            if !verts.is_empty() || !edge_verts.is_empty() {
+                chunks.push(make_chunk(
+                    device,
+                    &verts,
+                    &indices,
+                    &transp_indices,
+                    &wire_indices,
+                    &edge_verts,
+                ));
                 verts.clear();
                 indices.clear();
                 transp_indices.clear();
                 wire_indices.clear();
+                edge_verts.clear();
             }
             let tris_per = (max_verts / 3).min(max_tris).max(1);
             let mut t = 0;
@@ -222,14 +264,16 @@ pub fn build_mesh_batch(device: &wgpu::Device, sets: &[MeshLodSet]) -> (Vec<Mesh
                     sv.push(vtx(ix[1] as usize));
                     sv.push(vtx(ix[2] as usize));
                     si.extend_from_slice(&[b, b + 1, b + 2]);
-                    swi.extend_from_slice(&[b, b + 1, b + 1, b + 2, b + 2, b]);
+                    if !has_feat {
+                        swi.extend_from_slice(&[b, b + 1, b + 1, b + 2, b + 2, b]);
+                    }
                 }
                 // The whole mesh shares one colour, so a sub-chunk is entirely
                 // opaque or entirely transparent.
                 if is_transp {
-                    chunks.push(make_chunk(device, &sv, &[], &si, &swi));
+                    chunks.push(make_chunk(device, &sv, &[], &si, &swi, &[]));
                 } else {
-                    chunks.push(make_chunk(device, &sv, &si, &[], &swi));
+                    chunks.push(make_chunk(device, &sv, &si, &[], &swi, &[]));
                 }
                 t = end;
             }
@@ -242,11 +286,19 @@ pub fn build_mesh_batch(device: &wgpu::Device, sets: &[MeshLodSet]) -> (Vec<Mesh
             && (verts.len() + mesh.verts.len() > max_verts
                 || wire_indices.len() / 6 + mesh_tris > max_tris)
         {
-            chunks.push(make_chunk(device, &verts, &indices, &transp_indices, &wire_indices));
+            chunks.push(make_chunk(
+                device,
+                &verts,
+                &indices,
+                &transp_indices,
+                &wire_indices,
+                &edge_verts,
+            ));
             verts.clear();
             indices.clear();
             transp_indices.clear();
             wire_indices.clear();
+            edge_verts.clear();
         }
         let base = verts.len() as u32;
         for i in 0..mesh.verts.len() {
@@ -256,13 +308,22 @@ pub fn build_mesh_batch(device: &wgpu::Device, sets: &[MeshLodSet]) -> (Vec<Mesh
         for &idx in &mesh.indices {
             fill.push(base + idx);
         }
-        for tri in mesh.indices.chunks_exact(3) {
-            let (a, b, c) = (base + tri[0], base + tri[1], base + tri[2]);
-            wire_indices.extend_from_slice(&[a, b, b, c, c, a]);
+        if !has_feat {
+            for tri in mesh.indices.chunks_exact(3) {
+                let (a, b, c) = (base + tri[0], base + tri[1], base + tri[2]);
+                wire_indices.extend_from_slice(&[a, b, b, c, c, a]);
+            }
         }
     }
-    if !indices.is_empty() || !transp_indices.is_empty() {
-        chunks.push(make_chunk(device, &verts, &indices, &transp_indices, &wire_indices));
+    if !indices.is_empty() || !transp_indices.is_empty() || !edge_verts.is_empty() {
+        chunks.push(make_chunk(
+            device,
+            &verts,
+            &indices,
+            &transp_indices,
+            &wire_indices,
+            &edge_verts,
+        ));
     }
     (chunks, total_tris)
 }

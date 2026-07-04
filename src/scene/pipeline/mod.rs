@@ -53,6 +53,8 @@ pub struct Pipeline {
     /// Wireframe 2D or Wireframe 3D so 3D solids draw as their
     /// triangle edges instead of filled faces.
     mesh_wireframe_pipeline: wgpu::RenderPipeline,
+    /// Edge pipeline that forces black, for the edge overlay in filled modes.
+    mesh_edge_black_pipeline: wgpu::RenderPipeline,
     /// Depth-only variant of the mesh pipeline (TriangleList, no color
     /// writes, writes depth). Used in HiddenLine mode so 3D solids
     /// occlude wires behind them without painting visible pixels.
@@ -631,9 +633,12 @@ impl Pipeline {
         // only the input topology changes (LineList) and back-face
         // culling drops out (each triangle edge is shared between two
         // faces, one of which would otherwise hide the edge).
-        let mesh_wireframe_pipeline =
+        // Edge/wireframe pipeline (LineList). `fs_edge` outputs the flat entity
+        // colour — no lighting — for the lines-only modes. A `fs_edge_black`
+        // twin (below) forces black for the edge overlay in filled modes.
+        let make_edge_pipeline = |label: &'static str, fs: &'static str| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("mesh.wireframe.pipeline"),
+                label: Some(label),
                 layout: Some(&mesh_layout),
                 vertex: wgpu::VertexState {
                     module: &mesh_shader,
@@ -660,7 +665,7 @@ impl Pipeline {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &mesh_shader,
-                    entry_point: Some("fs_main"),
+                    entry_point: Some(fs),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
                         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -670,7 +675,10 @@ impl Pipeline {
                 }),
                 multiview: None,
                 cache: None,
-            });
+            })
+        };
+        let mesh_wireframe_pipeline = make_edge_pipeline("mesh.wireframe.pipeline", "fs_edge");
+        let mesh_edge_black_pipeline = make_edge_pipeline("mesh.edge_black.pipeline", "fs_edge_black");
 
         // Depth-only variant — TriangleList, back-face culling stays on
         // (we only want front-facing fragments to write depth so wires
@@ -1057,6 +1065,7 @@ impl Pipeline {
             mesh_transparent_pipeline,
             mesh_highlight_pipeline,
             mesh_wireframe_pipeline,
+            mesh_edge_black_pipeline,
             mesh_depth_pipeline,
             face3d_pipeline,
             face3d_depth_pipeline,
@@ -1642,29 +1651,37 @@ impl Pipeline {
                 }
                 pass.set_pipeline(&self.mesh_wireframe_pipeline);
                 for c in &self.gpu_mesh_batch {
-                    if c.wire_index_count == 0 {
-                        continue;
-                    }
-                    pass.set_vertex_buffer(0, c.vertex_buffer.slice(..));
-                    pass.set_index_buffer(
-                        c.wire_index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    pass.draw_indexed(0..c.wire_index_count, 0, 0..1);
-                }
-            } else {
-                if mesh_wireframe {
-                    pass.set_pipeline(&self.mesh_wireframe_pipeline);
-                    for c in &self.gpu_mesh_batch {
-                        if c.wire_index_count == 0 {
-                            continue;
-                        }
+                    // Plain-mesh triangulation edges.
+                    if c.wire_index_count != 0 {
                         pass.set_vertex_buffer(0, c.vertex_buffer.slice(..));
                         pass.set_index_buffer(
                             c.wire_index_buffer.slice(..),
                             wgpu::IndexFormat::Uint32,
                         );
                         pass.draw_indexed(0..c.wire_index_count, 0, 0..1);
+                    }
+                    // ACIS solid B-rep feature edges (LineList, non-indexed).
+                    if c.edge_vertex_count != 0 {
+                        pass.set_vertex_buffer(0, c.edge_vertex_buffer.slice(..));
+                        pass.draw(0..c.edge_vertex_count, 0..1);
+                    }
+                }
+            } else {
+                if mesh_wireframe {
+                    pass.set_pipeline(&self.mesh_wireframe_pipeline);
+                    for c in &self.gpu_mesh_batch {
+                        if c.wire_index_count != 0 {
+                            pass.set_vertex_buffer(0, c.vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                c.wire_index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..c.wire_index_count, 0, 0..1);
+                        }
+                        if c.edge_vertex_count != 0 {
+                            pass.set_vertex_buffer(0, c.edge_vertex_buffer.slice(..));
+                            pass.draw(0..c.edge_vertex_count, 0..1);
+                        }
                     }
                 } else {
                     // Opaque fills first (they write depth).
@@ -1707,21 +1724,24 @@ impl Pipeline {
                         pass.draw_indexed(0..g.index_count, 0, 0..1);
                     }
                 }
-                // *WithEdges variants: overlay wire-edge segments on top of the
-                // shaded fill. The LessEqual depth test on the wireframe pipeline
-                // keeps the edges visible over the fragments the solid pass wrote.
+                // *WithEdges variants: overlay edge segments on top of the shaded
+                // fill in black (mesh_edge_black_pipeline). The LessEqual depth
+                // test keeps the edges visible over the fragments the fill wrote.
                 if want_solid_with_edges {
-                    pass.set_pipeline(&self.mesh_wireframe_pipeline);
+                    pass.set_pipeline(&self.mesh_edge_black_pipeline);
                     for c in &self.gpu_mesh_batch {
-                        if c.wire_index_count == 0 {
-                            continue;
+                        if c.wire_index_count != 0 {
+                            pass.set_vertex_buffer(0, c.vertex_buffer.slice(..));
+                            pass.set_index_buffer(
+                                c.wire_index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            pass.draw_indexed(0..c.wire_index_count, 0, 0..1);
                         }
-                        pass.set_vertex_buffer(0, c.vertex_buffer.slice(..));
-                        pass.set_index_buffer(
-                            c.wire_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        pass.draw_indexed(0..c.wire_index_count, 0, 0..1);
+                        if c.edge_vertex_count != 0 {
+                            pass.set_vertex_buffer(0, c.edge_vertex_buffer.slice(..));
+                            pass.draw(0..c.edge_vertex_count, 0..1);
+                        }
                     }
                 }
             }
