@@ -194,6 +194,7 @@ pub(super) fn dyn_component_value(
     w: glam::Vec3,
     base: Option<glam::Vec3>,
     xf: &super::super::helpers::UcsXform,
+    comma_cartesian: bool,
 ) -> String {
     if let Some(b) = &f.buffer {
         return b.clone();
@@ -211,8 +212,12 @@ pub(super) fn dyn_component_value(
     // coordinate use the same frame. See #35.
     let has_base = base.is_some();
     // Width / Height read as unsigned magnitudes (the sign is taken from the
-    // cursor side on commit), matching the rectangle's two-edge entry.
-    let wh = matches!(f.role, crate::command::DynRole::Width | crate::command::DynRole::Height);
+    // cursor side on commit), matching the rectangle's two-edge entry. But once
+    // the user separates the values with `,` the entry is a cartesian
+    // coordinate pair, so the fields read as signed X/Y deltas to match the
+    // committed point (#269).
+    let wh = matches!(f.role, crate::command::DynRole::Width | crate::command::DynRole::Height)
+        && !comma_cartesian;
     match f.component {
         DynComponent::X if has_base => format!("{:.4}", if wh { dx.abs() } else { dx }),
         DynComponent::Y if has_base => format!("{:.4}", if wh { dy.abs() } else { dy }),

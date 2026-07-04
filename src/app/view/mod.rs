@@ -524,7 +524,13 @@ impl OpenCADStudio {
                             {
                                 format!("{lv:.4}")
                             }
-                            _ => dyn_component_value(f, w, base, &tab.ucs_xform()),
+                            _ => dyn_component_value(
+                                f,
+                                w,
+                                base,
+                                &tab.ucs_xform(),
+                                self.dyn_user_reshaped,
+                            ),
                         };
                         crate::ui::overlay::DynBox {
                             label: f.role.label().to_string(),

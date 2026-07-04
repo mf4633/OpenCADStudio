@@ -212,8 +212,15 @@ impl OpenCADStudio {
             .unwrap_or(glam::Vec3::ZERO);
         // Buffer value parsed as f32 (de-scaled by the role so a typed diameter
         // becomes a radius), or the supplied geometric live value. Width/Height
-        // are shown unsigned, so a typed value takes the sign of the cursor's
-        // delta on that axis (`live` is the signed delta in the cartesian arms).
+        // are shown unsigned, so a typed value normally takes the sign of the
+        // cursor's delta on that axis (`live` is the signed delta in the
+        // cartesian arms). But once the user separates the two values with `,`
+        // — e.g. the rectangle opposite corner entered as "50,50" — the entry
+        // is a cartesian coordinate pair, not cursor-signed W/H dimensions, so
+        // the typed sign must stay literal. `,` is the only thing that sets
+        // `dyn_user_reshaped`, so it cleanly distinguishes comma-cartesian entry
+        // from Tab-separated dimension entry (#269).
+        let comma_cartesian = self.dyn_user_reshaped;
         let val = |idx: usize, live: f32| -> f32 {
             match fields[idx]
                 .buffer
@@ -226,7 +233,8 @@ impl OpenCADStudio {
                     if matches!(
                         fields[idx].role,
                         crate::command::DynRole::Width | crate::command::DynRole::Height
-                    ) {
+                    ) && !comma_cartesian
+                    {
                         v.abs().copysign(live)
                     } else {
                         v
