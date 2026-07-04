@@ -1209,8 +1209,28 @@ impl Scene {
     /// Called after loading a document or after undo/redo so that every
     /// `Solid3D` entity is represented in the mesh cache.
     pub fn populate_meshes_from_document(&mut self) {
-        self.meshes.clear();
-        self.block_meshes.clear();
+        self.populate_meshes_impl(false);
+    }
+
+    /// Like [`populate_meshes_from_document`] but tessellates only solids
+    /// whose handle is not already cached — the existing meshes are kept.
+    ///
+    /// Used after an XREF merge: the host document's solids were already
+    /// tessellated by the background loader, and the merge assigns brand-new
+    /// handles to every imported xref entity (see `merge_xref_into_block`),
+    /// so cached handles are guaranteed to be host solids. This turns the
+    /// post-xref pass from "re-tessellate host + all xrefs" into "tessellate
+    /// only the newly merged xref solids" — the dominant cost when a drawing
+    /// attaches several large xrefs. (#203)
+    pub fn populate_missing_meshes_from_document(&mut self) {
+        self.populate_meshes_impl(true);
+    }
+
+    fn populate_meshes_impl(&mut self, incremental: bool) {
+        if !incremental {
+            self.meshes.clear();
+            self.block_meshes.clear();
+        }
         // BLOCK-entity handles of the layout (model + paper) blocks. A solid
         // owned by one of these is top-level; anything else lives in a block
         // definition and is instanced per INSERT instead. (#123)
@@ -1234,9 +1254,17 @@ impl Scene {
             .entities()
             .filter_map(|e| match e {
                 EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_) | EntityType::Surface(_) => {
+                    let handle = e.common().handle;
+                    // Incremental (post-xref) pass: leave already-tessellated
+                    // host solids untouched, only build the newly merged ones.
+                    if incremental
+                        && (self.meshes.contains_key(&handle) || self.block_meshes.contains_key(&handle))
+                    {
+                        return None;
+                    }
                     let color = self.render_style(e).0;
                     let top_level = layout_blocks.contains(&e.common().owner_handle);
-                    Some((e.common().handle, e.clone(), color, top_level))
+                    Some((handle, e.clone(), color, top_level))
                 }
                 _ => None,
             })

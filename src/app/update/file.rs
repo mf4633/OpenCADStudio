@@ -394,10 +394,12 @@ pub(super) fn on_open_file(&mut self) -> Task<Message> {
                 // built the mesh caches above, so those caches contain none of
                 // the xref'd geometry. The wire pass rebuilds from the document
                 // each frame (bump_geometry covers it), but 3D-solid meshes are
-                // only tessellated by `populate_meshes_from_document` — re-run it
-                // so xref'd solids (walls, floors, roofs) actually render. (#203)
+                // only tessellated by populate — run the incremental variant so
+                // the already-cached host solids are kept and only the newly
+                // merged xref solids (walls, floors, roofs) are tessellated,
+                // avoiding a full re-tessellation of the whole drawing. (#203)
                 if xref_merged {
-                    self.tabs[i].scene.populate_meshes_from_document();
+                    self.tabs[i].scene.populate_missing_meshes_from_document();
                 }
                 self.tabs[i].scene.selected = rustc_hash::FxHashSet::default();
                 self.tabs[i].scene.preview_wires = vec![];
