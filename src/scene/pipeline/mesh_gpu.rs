@@ -112,8 +112,14 @@ impl Highlight {
 
 pub struct MeshBatchChunk {
     pub vertex_buffer: wgpu::Buffer,
+    /// Opaque triangle indices (mesh colour alpha ≈ 1). Drawn with depth write.
     pub index_buffer: wgpu::Buffer,
     pub index_count: u32,
+    /// Transparent triangle indices (mesh colour alpha < 1). Drawn after the
+    /// opaque fills with depth write disabled so they blend over — rather than
+    /// erase — the geometry behind them.
+    pub transp_index_buffer: wgpu::Buffer,
+    pub transp_index_count: u32,
     pub wire_index_buffer: wgpu::Buffer,
     pub wire_index_count: u32,
 }
@@ -122,28 +128,34 @@ fn make_chunk(
     device: &wgpu::Device,
     verts: &[MeshVertex],
     indices: &[u32],
+    transp_indices: &[u32],
     wire_indices: &[u32],
 ) -> MeshBatchChunk {
+    // `create_buffer_init` with an empty slice yields a zero-sized buffer that
+    // some backends reject for INDEX usage; a chunk can legitimately hold only
+    // opaque or only transparent tris, so fall back to a 1-index stub (count
+    // stays 0, so the draw loop skips it).
+    let mk_index = |data: &[u32], label: &'static str| {
+        let stub = [0u32];
+        let src = if data.is_empty() { &stub[..] } else { data };
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(src),
+            usage: wgpu::BufferUsages::INDEX,
+        })
+    };
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("mesh.batch.vbuf"),
         contents: bytemuck::cast_slice(verts),
         usage: wgpu::BufferUsages::VERTEX,
     });
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mesh.batch.ibuf"),
-        contents: bytemuck::cast_slice(indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-    let wire_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("mesh.batch.wire_ibuf"),
-        contents: bytemuck::cast_slice(wire_indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
     MeshBatchChunk {
         vertex_buffer,
-        index_buffer,
+        index_buffer: mk_index(indices, "mesh.batch.ibuf"),
         index_count: indices.len() as u32,
-        wire_index_buffer,
+        transp_index_buffer: mk_index(transp_indices, "mesh.batch.transp_ibuf"),
+        transp_index_count: transp_indices.len() as u32,
+        wire_index_buffer: mk_index(wire_indices, "mesh.batch.wire_ibuf"),
         wire_index_count: wire_indices.len() as u32,
     }
 }
@@ -168,6 +180,7 @@ pub fn build_mesh_batch(device: &wgpu::Device, sets: &[MeshLodSet]) -> (Vec<Mesh
     let mut chunks = Vec::new();
     let mut verts: Vec<MeshVertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
+    let mut transp_indices: Vec<u32> = Vec::new();
     let mut wire_indices: Vec<u32> = Vec::new();
     let mut total_tris = 0u64;
     for set in sets {
@@ -181,6 +194,9 @@ pub fn build_mesh_batch(device: &wgpu::Device, sets: &[MeshLodSet]) -> (Vec<Mesh
             color: mesh.color,
             position_low: mesh.verts_low.get(vi).copied().unwrap_or([0.0; 3]),
         };
+        // A solid whose baked colour is not fully opaque routes into the
+        // transparent index stream so it is drawn last, without depth writes.
+        let is_transp = mesh.color[3] < 0.999;
         let mesh_tris = mesh.indices.len() / 3;
         total_tris += mesh_tris as u64;
 
@@ -188,9 +204,10 @@ pub fn build_mesh_batch(device: &wgpu::Device, sets: &[MeshLodSet]) -> (Vec<Mesh
         // sub-chunks (corners expanded, no vertex sharing) so each buffer fits.
         if mesh.verts.len() > max_verts || mesh_tris > max_tris {
             if !verts.is_empty() {
-                chunks.push(make_chunk(device, &verts, &indices, &wire_indices));
+                chunks.push(make_chunk(device, &verts, &indices, &transp_indices, &wire_indices));
                 verts.clear();
                 indices.clear();
+                transp_indices.clear();
                 wire_indices.clear();
             }
             let tris_per = (max_verts / 3).min(max_tris).max(1);
@@ -207,7 +224,13 @@ pub fn build_mesh_batch(device: &wgpu::Device, sets: &[MeshLodSet]) -> (Vec<Mesh
                     si.extend_from_slice(&[b, b + 1, b + 2]);
                     swi.extend_from_slice(&[b, b + 1, b + 1, b + 2, b + 2, b]);
                 }
-                chunks.push(make_chunk(device, &sv, &si, &swi));
+                // The whole mesh shares one colour, so a sub-chunk is entirely
+                // opaque or entirely transparent.
+                if is_transp {
+                    chunks.push(make_chunk(device, &sv, &[], &si, &swi));
+                } else {
+                    chunks.push(make_chunk(device, &sv, &si, &[], &swi));
+                }
                 t = end;
             }
             continue;
@@ -219,25 +242,27 @@ pub fn build_mesh_batch(device: &wgpu::Device, sets: &[MeshLodSet]) -> (Vec<Mesh
             && (verts.len() + mesh.verts.len() > max_verts
                 || wire_indices.len() / 6 + mesh_tris > max_tris)
         {
-            chunks.push(make_chunk(device, &verts, &indices, &wire_indices));
+            chunks.push(make_chunk(device, &verts, &indices, &transp_indices, &wire_indices));
             verts.clear();
             indices.clear();
+            transp_indices.clear();
             wire_indices.clear();
         }
         let base = verts.len() as u32;
         for i in 0..mesh.verts.len() {
             verts.push(vtx(i));
         }
+        let fill = if is_transp { &mut transp_indices } else { &mut indices };
         for &idx in &mesh.indices {
-            indices.push(base + idx);
+            fill.push(base + idx);
         }
         for tri in mesh.indices.chunks_exact(3) {
             let (a, b, c) = (base + tri[0], base + tri[1], base + tri[2]);
             wire_indices.extend_from_slice(&[a, b, b, c, c, a]);
         }
     }
-    if !indices.is_empty() {
-        chunks.push(make_chunk(device, &verts, &indices, &wire_indices));
+    if !indices.is_empty() || !transp_indices.is_empty() {
+        chunks.push(make_chunk(device, &verts, &indices, &transp_indices, &wire_indices));
     }
     (chunks, total_tris)
 }

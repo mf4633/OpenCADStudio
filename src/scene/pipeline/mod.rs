@@ -45,6 +45,8 @@ pub struct Pipeline {
     hatch_batched_pipeline: Option<wgpu::RenderPipeline>,
     image_pipeline: wgpu::RenderPipeline,
     mesh_pipeline: wgpu::RenderPipeline,
+    /// Depth-write-disabled variant of `mesh_pipeline` for non-opaque solids.
+    mesh_transparent_pipeline: wgpu::RenderPipeline,
     mesh_highlight_pipeline: wgpu::RenderPipeline,
     /// Wireframe variant of the mesh pipeline (LineList topology, same
     /// vertex layout / shader). Used when the active render mode is
@@ -532,6 +534,55 @@ impl Pipeline {
             cache: None,
         });
 
+        // Transparent variant — identical to `mesh_pipeline` but with depth
+        // writes disabled. Non-opaque solids are drawn after the opaque fills
+        // with this pipeline so they blend over the geometry behind them (which
+        // has already written depth) instead of erasing it.
+        let mesh_transparent_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh.transparent.pipeline"),
+                layout: Some(&mesh_layout),
+                vertex: wgpu::VertexState {
+                    module: &mesh_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[mesh_gpu::MeshVertex::layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState {
+                        constant: 1,
+                        slope_scale: 1.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: MSAA_SAMPLES,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &mesh_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                multiview: None,
+                cache: None,
+            });
+
         // Highlight variant — same shader / vertex layout, but `depth_compare =
         // Always` and no depth write, so a hovered / selected solid's tint is
         // drawn on top of everything (it shows through occluding geometry) and
@@ -1003,6 +1054,7 @@ impl Pipeline {
             hatch_batched_pipeline,
             image_pipeline,
             mesh_pipeline,
+            mesh_transparent_pipeline,
             mesh_highlight_pipeline,
             mesh_wireframe_pipeline,
             mesh_depth_pipeline,
@@ -1568,14 +1620,25 @@ impl Pipeline {
             // per-solid LOD / frustum cull in the batched path (the batch is
             // resident in full); that is reintroduced separately if needed.
             if hidden_line {
+                // Depth-only prepass: every solid surface occludes hidden edges,
+                // so both the opaque and the transparent tris write depth here.
                 pass.set_pipeline(&self.mesh_depth_pipeline);
                 for c in &self.gpu_mesh_batch {
-                    if c.index_count == 0 {
-                        continue;
-                    }
                     pass.set_vertex_buffer(0, c.vertex_buffer.slice(..));
-                    pass.set_index_buffer(c.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..c.index_count, 0, 0..1);
+                    if c.index_count != 0 {
+                        pass.set_index_buffer(
+                            c.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(0..c.index_count, 0, 0..1);
+                    }
+                    if c.transp_index_count != 0 {
+                        pass.set_index_buffer(
+                            c.transp_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(0..c.transp_index_count, 0, 0..1);
+                    }
                 }
                 pass.set_pipeline(&self.mesh_wireframe_pipeline);
                 for c in &self.gpu_mesh_batch {
@@ -1592,21 +1655,43 @@ impl Pipeline {
             } else {
                 if mesh_wireframe {
                     pass.set_pipeline(&self.mesh_wireframe_pipeline);
-                } else {
-                    pass.set_pipeline(&self.mesh_pipeline);
-                }
-                for c in &self.gpu_mesh_batch {
-                    let (ibuf, icount) = if mesh_wireframe {
-                        (&c.wire_index_buffer, c.wire_index_count)
-                    } else {
-                        (&c.index_buffer, c.index_count)
-                    };
-                    if icount == 0 {
-                        continue;
+                    for c in &self.gpu_mesh_batch {
+                        if c.wire_index_count == 0 {
+                            continue;
+                        }
+                        pass.set_vertex_buffer(0, c.vertex_buffer.slice(..));
+                        pass.set_index_buffer(
+                            c.wire_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(0..c.wire_index_count, 0, 0..1);
                     }
-                    pass.set_vertex_buffer(0, c.vertex_buffer.slice(..));
-                    pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..icount, 0, 0..1);
+                } else {
+                    // Opaque fills first (they write depth).
+                    pass.set_pipeline(&self.mesh_pipeline);
+                    for c in &self.gpu_mesh_batch {
+                        if c.index_count == 0 {
+                            continue;
+                        }
+                        pass.set_vertex_buffer(0, c.vertex_buffer.slice(..));
+                        pass.set_index_buffer(c.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed(0..c.index_count, 0, 0..1);
+                    }
+                    // Transparent fills last, with depth writes disabled, so they
+                    // blend over the opaque geometry behind them instead of
+                    // culling it via the depth buffer.
+                    pass.set_pipeline(&self.mesh_transparent_pipeline);
+                    for c in &self.gpu_mesh_batch {
+                        if c.transp_index_count == 0 {
+                            continue;
+                        }
+                        pass.set_vertex_buffer(0, c.vertex_buffer.slice(..));
+                        pass.set_index_buffer(
+                            c.transp_index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(0..c.transp_index_count, 0, 0..1);
+                    }
                 }
                 // Selection / hover highlight: tinted copies of the picked
                 // solids, drawn last with the Always-depth highlight pipeline so
