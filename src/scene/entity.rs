@@ -409,6 +409,55 @@ impl Scene {
         self.bump_geometry();
     }
 
+    /// Whether a block definition holds at least one HATCH, directly or through
+    /// a nested INSERT. Memoized by block-record handle — `None` marks a block
+    /// currently being visited so a cyclic block reference resolves to `false`
+    /// instead of recursing forever. Lets `synced_hatch_models` skip the costly
+    /// explode of hatch-free blocks (a read-only type scan, no entity clones).
+    fn block_contains_hatch(
+        &self,
+        block_handle: Handle,
+        memo: &mut HashMap<Handle, Option<bool>>,
+    ) -> bool {
+        if let Some(v) = memo.get(&block_handle) {
+            return v.unwrap_or(false);
+        }
+        memo.insert(block_handle, None);
+        let mut has = false;
+        if let Some(br) = self
+            .document
+            .block_records
+            .iter()
+            .find(|b| b.handle == block_handle)
+        {
+            for &h in &br.entity_handles {
+                match self.document.get_entity(h) {
+                    Some(EntityType::Hatch(_)) => {
+                        has = true;
+                        break;
+                    }
+                    Some(EntityType::Insert(nins)) => {
+                        let nbh = self
+                            .document
+                            .block_records
+                            .iter()
+                            .find(|b| b.name.eq_ignore_ascii_case(&nins.block_name))
+                            .map(|b| b.handle);
+                        if let Some(nbh) = nbh {
+                            if self.block_contains_hatch(nbh, memo) {
+                                has = true;
+                                break;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        memo.insert(block_handle, Some(has));
+        has
+    }
+
     pub(super) fn synced_hatch_models(&self) -> Vec<HatchModel> {
         let layout_block = self.current_layout_block_handle();
 
@@ -495,6 +544,15 @@ impl Scene {
         } else {
             self.bg_color
         };
+        // Exploding an INSERT materializes (clones) every child of its block —
+        // including 3D solids that each carry megabytes of SAB geometry — just
+        // to scan the result for hatch fills. On xref-heavy drawings whose
+        // blocks hold thousands of solids and NO hatches, that cloned ~all block
+        // content on every open for nothing (~20 s on a 5-xref BIM aggregate).
+        // Pre-scan each block's entity types (no clone) and skip the explode for
+        // blocks that contain no hatch, transitively. Blocks that DO contain a
+        // hatch still explode exactly as before, so the output is unchanged.
+        let mut hatch_block_memo: HashMap<Handle, Option<bool>> = HashMap::default();
         for entity in self.document.entities() {
             let EntityType::Insert(ins) = entity else {
                 continue;
@@ -508,6 +566,17 @@ impl Scene {
                 layout_block,
             ) {
                 continue;
+            }
+            if let Some(bh) = self
+                .document
+                .block_records
+                .iter()
+                .find(|b| b.name.eq_ignore_ascii_case(&ins.block_name))
+                .map(|b| b.handle)
+            {
+                if !self.block_contains_hatch(bh, &mut hatch_block_memo) {
+                    continue;
+                }
             }
             let selected = self.selected.contains(&ins.common.handle);
             // XCLIP: clip this insert's exploded hatch fills to the boundary,
