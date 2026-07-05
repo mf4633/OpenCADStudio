@@ -340,7 +340,7 @@ impl OpenCADStudio {
             // Shared OTRACK projection basis: the active pane's camera + rect
             // (canvas offset included), matching the grips / UCS icon above.
             let otrack_proj: Option<(glam::Mat4, glam::DVec3, iced::Rectangle)> =
-                if self.snapper.tracking_active() {
+                if self.snapper.alignment_active() {
                     Some(
                         if let Some((vp_cam, full)) = tab.scene.viewport_edit_frame((vw, vh)) {
                             (vp_cam.view_proj_rte(full), vp_cam.eye(), full)

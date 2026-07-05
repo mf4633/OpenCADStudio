@@ -906,6 +906,16 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                             bounds,
                             Instant::now(),
                         );
+                        // Parallel snap: acquire the reference line under the
+                        // cursor (independent of OTRACK). (#277)
+                        self.snapper.update_parallel(
+                            cursor_world.as_vec3(),
+                            &all_wires[..],
+                            view_rot,
+                            eye,
+                            bounds,
+                            Instant::now(),
+                        );
                         if self.tabs[i].snap_result.is_none() {
                             let step = if self.polar_mode {
                                 Some(self.polar_increment_deg)
@@ -928,6 +938,27 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                         }
                     };
                     self.otrack_active = otrack_hit.map(|h| (h.base, h.dir));
+
+                    // Parallel snap: with nothing else snapped or tracked, lock
+                    // the point onto the line through last_point parallel to the
+                    // acquired reference, and drive the alignment guide off it.
+                    // (#277)
+                    if self.tabs[i].snap_result.is_none() && otrack_hit.is_none() {
+                        if let Some(par) = self.snapper.parallel_snap(
+                            cursor_world.as_vec3(),
+                            self.last_point,
+                            view_rot,
+                            eye,
+                            bounds,
+                        ) {
+                            if let (Some(base), Some(dir)) =
+                                (self.last_point, self.snapper.parallel_ref)
+                            {
+                                self.otrack_active = Some((base, dir));
+                            }
+                            self.tabs[i].snap_result = Some(par);
+                        }
+                    }
 
                     let effective = {
                         let mut pt: glam::DVec3 = if let Some(h) = otrack_hit {

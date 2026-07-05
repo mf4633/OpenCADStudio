@@ -127,6 +127,14 @@ pub struct Snapper {
     /// segment is genuinely perpendicular to the target — without it, perp
     /// would just give the nearest point on the line. Set before each `snap`.
     pub from_point: Option<Vec3>,
+    /// Parallel snap: the acquired reference line direction (unit, XY plane).
+    /// When the cursor's direction from the command's start point runs parallel
+    /// to this, the point locks onto that parallel line. Works with only the
+    /// Parallel object snap on — independent of OTRACK (#277).
+    pub parallel_ref: Option<Vec3>,
+    /// Dwell state for acquiring `parallel_ref`: the candidate line direction
+    /// under the cursor and when it was first hovered.
+    parallel_dwell: Option<(Vec3, Instant)>,
 }
 
 impl Default for Snapper {
@@ -152,6 +160,8 @@ impl Default for Snapper {
             dwell_since: None,
             dwell_acquired: false,
             from_point: None,
+            parallel_ref: None,
+            parallel_dwell: None,
         }
     }
 }
@@ -172,6 +182,13 @@ impl Snapper {
     /// on/off state (#262).
     pub fn tracking_active(&self) -> bool {
         self.otrack_enabled || (self.snap_enabled && self.is_on(SnapType::Extension))
+    }
+
+    /// Whether an alignment guide may be on screen — tracking (above) OR a
+    /// Parallel lock. Used to gate the guide-line projection; Parallel draws its
+    /// alignment guide without acquiring tracking points. (#277)
+    pub fn alignment_active(&self) -> bool {
+        self.tracking_active() || (self.snap_enabled && self.is_on(SnapType::Parallel))
     }
 
     /// True when `p` coincides with one of the acquired temporary tracking
@@ -581,9 +598,95 @@ impl Snapper {
     pub fn clear_tracking(&mut self) {
         self.tracking_points.clear();
         self.tracking_dirs.clear();
+        self.parallel_ref = None;
+        self.parallel_dwell = None;
         self.last_snap_world = None;
         self.dwell_since = None;
         self.dwell_acquired = false;
+    }
+
+    /// Parallel snap acquisition. When the Parallel object snap is on, hovering
+    /// a line (or polyline segment) for a short dwell acquires its direction as
+    /// the parallel reference; the reference persists once the cursor moves off
+    /// so the user can then draw parallel to it. Curves (circle/arc/ellipse) are
+    /// ignored — "parallel to a curve" is undefined. Call on every viewport move.
+    /// (#277)
+    pub fn update_parallel(
+        &mut self,
+        cursor_world: Vec3,
+        wires: &[WireModel],
+        view_rot: glam::Mat4,
+        eye: glam::DVec3,
+        bounds: iced::Rectangle,
+        now: Instant,
+    ) {
+        if !(self.snap_enabled && self.is_on(SnapType::Parallel)) {
+            self.parallel_ref = None;
+            self.parallel_dwell = None;
+            return;
+        }
+        const PAR_DWELL_MS: u128 = 150;
+        let hovered =
+            nearest_segment_dir(cursor_world, wires, view_rot, eye, bounds, self.osnap_radius_px);
+        match hovered {
+            Some(d) => {
+                // A line and its reverse are the same alignment.
+                let same = self
+                    .parallel_dwell
+                    .map_or(false, |(pd, _)| (pd.x * d.x + pd.y * d.y).abs() > 0.9998);
+                match self.parallel_dwell {
+                    Some((pd, since)) if same => {
+                        if now.duration_since(since).as_millis() >= PAR_DWELL_MS {
+                            self.parallel_ref = Some(pd);
+                        }
+                    }
+                    _ => self.parallel_dwell = Some((d, now)),
+                }
+            }
+            // Off all lines: stop tracking a new candidate but keep the acquired
+            // reference so the user can draw parallel to it.
+            None => self.parallel_dwell = None,
+        }
+    }
+
+    /// Parallel lock: if the cursor's direction from `base` runs parallel to the
+    /// acquired reference, snap the point onto the line through `base` parallel
+    /// to the reference (locking when the cursor sits within the snap aperture
+    /// of that line). Independent of OTRACK. (#277)
+    pub fn parallel_snap(
+        &self,
+        cursor_world: Vec3,
+        base: Option<Vec3>,
+        view_rot: glam::Mat4,
+        eye: glam::DVec3,
+        bounds: iced::Rectangle,
+    ) -> Option<SnapResult> {
+        if !(self.snap_enabled && self.is_on(SnapType::Parallel)) {
+            return None;
+        }
+        let dir = self.parallel_ref?;
+        let base = base?;
+        let d = cursor_world - base;
+        // Need a bit of travel from the base, and the cursor must be pulling
+        // roughly along the reference (not backward-only noise near the base).
+        if (d.x * d.x + d.y * d.y).sqrt() < self.grid_spacing * 0.01 {
+            return None;
+        }
+        let t = d.x * dir.x + d.y * dir.y;
+        let locked = base + dir * t;
+        let sl = world_to_screen(locked.as_dvec3(), view_rot, eye, bounds);
+        let sc = world_to_screen(cursor_world.as_dvec3(), view_rot, eye, bounds);
+        if dist2(sl, sc) > self.osnap_radius_px * self.osnap_radius_px {
+            return None; // cursor not near the parallel line — don't lock
+        }
+        Some(SnapResult {
+            world: locked.as_dvec3(),
+            screen: sl,
+            snap_type: SnapType::Parallel,
+            tangent_obj: None,
+            extension_base: None,
+            extension_base2: None,
+        })
     }
 
     /// Only runs Tangent snap — used when a command needs object picks via tangent.
@@ -613,6 +716,8 @@ impl Snapper {
             dwell_since: None,
             dwell_acquired: false,
             from_point: None,
+            parallel_ref: None,
+            parallel_dwell: None,
         };
         // Tangent-only: Grid is disabled here, so the grid basis is irrelevant.
         tmp.snap(
@@ -1568,6 +1673,53 @@ fn dist2(a: Point, b: Point) -> f32 {
     let dx = a.x - b.x;
     let dy = a.y - b.y;
     dx * dx + dy * dy
+}
+
+/// Direction (unit, XY) of the nearest line / polyline segment under the
+/// cursor, within `aperture_px` in screen space, or None. Tessellated curves
+/// (circle / arc / ellipse) are skipped — they carry a Center snap hint and
+/// "parallel to a curve" is meaningless. Used to acquire the Parallel-snap
+/// reference. (#277)
+fn nearest_segment_dir(
+    cursor_world: Vec3,
+    wires: &[WireModel],
+    view_rot: Mat4,
+    eye: glam::DVec3,
+    bounds: Rectangle,
+    aperture_px: f32,
+) -> Option<Vec3> {
+    let cs = world_to_screen(cursor_world.as_dvec3(), view_rot, eye, bounds);
+    let mut best_d2 = aperture_px * aperture_px;
+    let mut best_dir: Option<Vec3> = None;
+    for wire in wires {
+        if wire
+            .snap_pts
+            .iter()
+            .any(|(_, h)| matches!(h, SnapHint::Center))
+        {
+            continue; // circle / arc / ellipse — no meaningful parallel
+        }
+        for i in 0..wire.points.len().saturating_sub(1) {
+            let a = wp_f64(wire, i);
+            let b = wp_f64(wire, i + 1);
+            if !a.x.is_finite() || !b.x.is_finite() {
+                continue;
+            }
+            let sa = world_to_screen(a, view_rot, eye, bounds);
+            let sb = world_to_screen(b, view_rot, eye, bounds);
+            let d2 = dist2_to_segment(cs, sa, sb);
+            if d2 < best_d2 {
+                let dx = b.x - a.x;
+                let dy = b.y - a.y;
+                let l = (dx * dx + dy * dy).sqrt();
+                if l > 1e-9 {
+                    best_d2 = d2;
+                    best_dir = Some(Vec3::new((dx / l) as f32, (dy / l) as f32, 0.0));
+                }
+            }
+        }
+    }
+    best_dir
 }
 
 /// Squared distance from point p to line segment [a, b] in screen space.
