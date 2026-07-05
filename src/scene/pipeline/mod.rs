@@ -178,6 +178,19 @@ pub struct Pipeline {
     /// gather just the highlighted entity's wires (`O(highlighted)`) instead of
     /// scanning and string-parsing every wire on each hover change.
     wire_handle_index: rustc_hash::FxHashMap<u64, Vec<u32>>,
+    /// Signature of the last frame's rendered scene (camera uniforms, geometry
+    /// / selection generations, wire content id, render-mode flags, clip size,
+    /// live preview). When the next frame's signature matches, the image is
+    /// pixel-identical, so `render` skips every geometry pass + the MSAA
+    /// resolve and only re-blits the resolve texture (which still holds it).
+    /// This turns a pure cursor move over a large drawing from an O(N)
+    /// re-rasterization into a single fullscreen blit. `u64::MAX` = nothing
+    /// rendered yet (forces the first frame to render fully).
+    pub render_sig: u64,
+    /// Set by `prepare` each frame: `true` when this frame's signature matched
+    /// `render_sig`, so `render` may skip the geometry passes. Read (never
+    /// written) by `render`, which always runs after `prepare` for the frame.
+    pub skip_geometry: bool,
 }
 
 impl Pipeline {
@@ -1156,6 +1169,8 @@ impl Pipeline {
             cached_mesh_key: (u64::MAX, u64::MAX),
             cached_face3d_key: (u64::MAX, false),
             wire_handle_index: rustc_hash::FxHashMap::default(),
+            render_sig: u64::MAX,
+            skip_geometry: false,
         }
     }
 
@@ -1553,6 +1568,13 @@ impl Pipeline {
             a: a as f64,
         };
 
+        // Scene-render cache: when `prepare` found this frame pixel-identical
+        // to the last (unchanged view / geometry / selection / preview), the
+        // resolve texture already holds the image. Skip every geometry pass +
+        // the MSAA resolve and fall straight through to the blit below. This
+        // is what makes a pure cursor move cost one fullscreen blit instead of
+        // re-rasterizing the whole drawing every frame.
+        if !self.skip_geometry {
         // ── Pass 1: hatch fills ────────────────────────────────────────────
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2101,6 +2123,7 @@ impl Pipeline {
             });
             // No draw calls — the pass itself triggers the MSAA resolve.
         }
+        } // end `if !self.skip_geometry`
 
         // ── Blit resolve texture → surface target at surface_dest position ──
         // The viewport maps the NDC quad to exactly `surface_dest` in the

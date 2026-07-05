@@ -235,6 +235,35 @@ impl shader::Primitive for Primitive {
             let (uo_y, us_y) = uv_crop_axis(sr.y, sr.height);
             inner.upload_blit_uv(queue, [uo_x, uo_y], [us_x, us_y]);
             inner.upload_uniforms(queue, &vp.uniforms);
+
+            // ── Scene-render cache ────────────────────────────────────────
+            // A pure cursor move — or any frame where the view, geometry,
+            // selection and live preview are all unchanged — produces a
+            // pixel-identical image. The resolve texture still holds it, so we
+            // skip every geometry pass + the MSAA resolve (in `Pipeline::render`
+            // via `skip_geometry`) and its per-frame O(N) scissor / LOD
+            // recompute below, letting the frame reduce to a single blit. This
+            // is the main fix for the per-mouse-move stall that scales with
+            // drawing size. The ViewCube is excluded from the signature and
+            // keeps updating in its own always-on pass, so cube hover still
+            // tracks while the scene is cached.
+            let sig = render_signature(vp, clip_size.width, clip_size.height);
+            let skip = inner.render_sig != u64::MAX && sig == inner.render_sig;
+            inner.render_sig = sig;
+            inner.skip_geometry = skip;
+            if skip {
+                if vp.show_viewcube {
+                    inner.viewcube.upload(
+                        queue,
+                        vp.cam_rotation,
+                        vp.compass_rotation,
+                        (vp.screen_rect.width * bounds.width) as u32,
+                        (vp.screen_rect.height * bounds.height) as u32,
+                        vp.hover_region,
+                    );
+                }
+                continue;
+            }
             // Third component is the *selected-set* signature (not
             // selection_generation, which also bumps on hover) so a rollover
             // doesn't re-upload the static hatch / face3d buffers.
@@ -430,6 +459,50 @@ impl shader::Primitive for Primitive {
             }
         }
     }
+}
+
+/// Hash of everything that determines one viewport's rendered scene image.
+/// Two consecutive frames with the same signature are pixel-identical, so the
+/// second may skip the geometry passes and re-blit the resolve texture (see the
+/// scene-render cache in `Primitive::prepare` / `Pipeline::render`).
+///
+/// Deliberately EXCLUDES `hover_region` — the ViewCube highlight renders in its
+/// own always-on pass, so cube hover must not force a full scene re-render. The
+/// live preview IS included (its coordinates), so a rubber-band tracking the
+/// cursor still renders, and the frame where the preview clears erases it
+/// instead of freezing the last overlay on screen.
+fn render_signature(vp: &ViewportData, clip_w: u32, clip_h: u32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    // Camera + per-view shading flags all live in the uniforms (view_rot, eye
+    // high/low, viewport size, lineweight, flat_shade, transparency) — hashing
+    // the raw POD bytes captures every pan / zoom / orbit / twist and toggle in
+    // one shot. Identical camera state recomputes to identical bits, so a still
+    // view never spuriously misses the cache.
+    bytemuck::bytes_of(&vp.uniforms).hash(&mut h);
+    vp.geometry_epoch.hash(&mut h);
+    vp.selection_generation.hash(&mut h);
+    vp.selected_sig.hash(&mut h);
+    vp.wire_content_id.hash(&mut h);
+    vp.fill_mode.hash(&mut h);
+    vp.view_wireframe.hash(&mut h);
+    vp.mesh_fill.hash(&mut h);
+    vp.show_3d_edges.hash(&mut h);
+    vp.hidden_line.hash(&mut h);
+    clip_w.hash(&mut h);
+    clip_h.hash(&mut h);
+    // Live overlay (command preview / interim / grip drag). Small — a handful
+    // of wires — so hashing its coordinates is cheap and catches the endpoint
+    // moving with the cursor as well as the preview appearing / clearing.
+    for w in vp.preview_wires.iter() {
+        w.points.len().hash(&mut h);
+        for p in &w.points {
+            p[0].to_bits().hash(&mut h);
+            p[1].to_bits().hash(&mut h);
+            p[2].to_bits().hash(&mut h);
+        }
+    }
+    h.finish()
 }
 
 /// On-canvas-visible UV crop on one axis. `pos` and `size` are in the
