@@ -2020,10 +2020,30 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                         self.dyn_user_reshaped = false;
                         self.sync_dyn_fields();
                         self.reset_tracking_after_point();
-                        self.tabs[i]
+                        // A running Tangent snap may carry a tangent object; a
+                        // command can consume it to resolve a deferred tangent
+                        // (LINE tangent to two circles, which needs both). When
+                        // it does, sync last_point to the command's resolved
+                        // anchor since it replaced the picked coordinate.
+                        let handled = self.tabs[i]
                             .active_cmd
                             .as_mut()
-                            .map(|c| c.on_point(world_pt))
+                            .and_then(|c| c.on_point_with_tangent(world_pt, tangent_obj_at_click));
+                        if handled.is_some() {
+                            if let Some(a) = self.tabs[i]
+                                .active_cmd
+                                .as_ref()
+                                .and_then(|c| c.resolved_anchor())
+                            {
+                                self.last_point = Some(a.as_vec3());
+                            }
+                            handled
+                        } else {
+                            self.tabs[i]
+                                .active_cmd
+                                .as_mut()
+                                .map(|c| c.on_point(world_pt))
+                        }
                     };
 
                     if let Some(r) = result {

@@ -692,6 +692,29 @@ pub trait CadCommand: Send {
         self.on_point(hit)
     }
 
+    /// Commit a picked point that may carry a running Tangent-snap reference
+    /// (the object under the cursor when Tangent won). The default ignores the
+    /// tangent, so only commands that opt in see it — LINE uses it to resolve a
+    /// deferred tangent-to-tangent line between two circles, which needs both
+    /// objects and so can't be computed at a single pick. Returning `None`
+    /// means "not handled — fall back to `on_point`". (#274)
+    fn on_point_with_tangent(
+        &mut self,
+        _pt: DVec3,
+        _tangent: Option<TangentObject>,
+    ) -> Option<CmdResult> {
+        None
+    }
+
+    /// The command's current anchor (rubber-band origin) after a commit, so the
+    /// host can sync `last_point` when the command replaced the picked
+    /// coordinate — e.g. LINE resolving a deferred tangent to the true tangent
+    /// point. `None` keeps the picked point. Only consulted after
+    /// `on_point_with_tangent` handled the pick. (#274)
+    fn resolved_anchor(&self) -> Option<DVec3> {
+        None
+    }
+
     /// When true, `update.rs` injects the picked entity before calling
     /// `on_entity_pick` (required when the pick handler reads injected state).
     fn inject_before_entity_pick(&self) -> bool {
