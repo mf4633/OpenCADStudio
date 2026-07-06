@@ -134,9 +134,13 @@ fn pattern_hatch_uses_stored_line_spacing() {
 #[test]
 fn far_from_origin_pattern_hatch_still_fills() {
     let mut scene = Scene::new();
-    // Spacing 0.3 at ~4000 units out → k ≈ 4000/0.3·√2 ≈ 18000, well past the
-    // 4096 clamp on both ends.
-    scene.add_entity(EntityType::Hatch(ansi31_stored_at(0.3, 1.0, 4000.0, 4000.0)));
+    // The offset must be PERPENDICULAR to the 45° hatch lines to drive k far
+    // from 0 — a diagonal offset (e.g. (4000,4000)) lies ALONG the lines and
+    // projects to k≈0, so it would not exercise the clamp at all. At (4000,0)
+    // the perpendicular index is |k| ≈ 4000·sin45°/0.3 ≈ 9400, well past the
+    // 4096 clamp on both ends; the old absolute-index clamp inverts the range
+    // (k_lo > k_hi) there and emits nothing.
+    scene.add_entity(EntityType::Hatch(ansi31_stored_at(0.3, 1.0, 4000.0, 0.0)));
     scene.populate_hatches_from_document();
 
     let hatches = scene.paper_canvas_hatches();
@@ -197,5 +201,67 @@ fn textbox_boundary_path_is_not_filled() {
         max_x < 50.0,
         "TEXTBOX rectangle leaked into the fill boundary (max_x={max_x}) — it \
          would paint a phantom bar"
+    );
+}
+
+// A hatch created in-app (HATCH command -> Scene::add_hatch) stores its pattern
+// through build_dxf_pattern and is then rebuilt via hatch_model_from_dxf. The
+// rebuilt spacing must equal the catalog's own spacing — not a rotated,
+// too-dense value. Regression: build_dxf_pattern wrote the pattern line-LOCAL
+// step into the world-frame `offset`, so the prebaked reader inverse-rotated it
+// and ANSI31 at 45° collapsed its spacing by cos(45°) (3.175 -> 2.245) on both
+// the viewport and the PDF/plot export.
+#[test]
+fn app_created_hatch_roundtrips_catalog_spacing() {
+    use std::sync::Arc;
+
+    use OpenCADStudio::scene::model::hatch_model::{HatchModel, PatFamily};
+    use OpenCADStudio::scene::model::hatch_patterns;
+
+    // Effective perpendicular spacing of a family, exactly as pattern_segments
+    // computes it: rotate the local step out by the angle, project onto the
+    // line-perpendicular direction.
+    fn perp_spacing(f: &PatFamily, scale: f32) -> f32 {
+        let a = f.angle_deg.to_radians();
+        let (ca, sa) = (a.cos(), a.sin());
+        let step_x = (f.dx * ca - f.dy * sa) * scale;
+        let step_y = (f.dx * sa + f.dy * ca) * scale;
+        (step_x * -sa + step_y * ca).abs()
+    }
+
+    let entry = hatch_patterns::find("ANSI31").expect("ANSI31 in catalog");
+    let HatchPattern::Pattern(cat_fams) = &entry.gpu else {
+        panic!("ANSI31 is a line pattern")
+    };
+    let expected = perp_spacing(&cat_fams[0], 1.0);
+
+    // Build the model the way the HATCH command does: catalog family, scale 1.
+    let mut scene = Scene::new();
+    let boundary: Vec<[f32; 2]> = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+    let model = HatchModel {
+        world_origin: [0.0, 0.0],
+        boundary: Arc::new(boundary),
+        pattern: entry.gpu.clone(),
+        name: "ANSI31".into(),
+        color: [0.75, 0.75, 0.75, 0.85],
+        angle_offset: 0.0,
+        scale: 1.0,
+        vp_scissor: None,
+        draw_depth: 0.0,
+    };
+    scene.add_hatch(model);
+    scene.populate_hatches_from_document();
+
+    let hatches = scene.paper_canvas_hatches();
+    let m = hatches
+        .iter()
+        .find(|m| matches!(m.pattern, HatchPattern::Pattern(_)))
+        .expect("pattern hatch present after round-trip");
+    let HatchPattern::Pattern(fams) = &m.pattern else { unreachable!() };
+    let got = perp_spacing(&fams[0], m.scale);
+    assert!(
+        (got - expected).abs() < expected * 0.02,
+        "app-created ANSI31 round-tripped to spacing {got}, expected ~{expected} \
+         — build_dxf_pattern must store the world-frame offset, not the local step"
     );
 }

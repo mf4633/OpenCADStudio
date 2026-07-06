@@ -45,10 +45,20 @@ pub fn build_dxf_pattern(entry: &PatternEntry) -> DxfPattern {
     pat.description = entry.description.clone();
     for ln in &entry.pat_lines {
         let angle_rad = (ln.angle_deg as f64).to_radians();
+        // The catalog stores the step (dx = shift along the line, dy =
+        // perpendicular spacing) in the pattern LINE-LOCAL frame. The DWG
+        // `HatchPatternLine.offset` is a WORLD-space vector — that is how real
+        // files store it and how `family_from_stored_line` reads it back (it
+        // inverse-rotates by the line angle). Emitting the raw local step here
+        // made the reader recover a rotated, too-dense spacing (e.g. ANSI31 at
+        // 45° collapsed 3.175 → 2.245). Rotate local → world by the line angle
+        // so the offset is format-correct and round-trips to the exact spacing.
+        let (ca, sa) = (angle_rad.cos(), angle_rad.sin());
+        let (ldx, ldy) = (ln.dx as f64, ln.dy as f64);
         pat.lines.push(HatchPatternLine {
             angle: angle_rad,
             base_point: Vector2::new(ln.x0 as f64, ln.y0 as f64),
-            offset: Vector2::new(ln.dx as f64, ln.dy as f64),
+            offset: Vector2::new(ldx * ca - ldy * sa, ldx * sa + ldy * ca),
             dash_lengths: ln.dashes.iter().map(|&d| d as f64).collect(),
         });
     }
