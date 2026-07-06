@@ -329,412 +329,138 @@ impl MTextLine {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-struct ParagraphProps {
-    align: Option<ParagraphAlign>,
-    indent_first: f32,
-    indent_left: f32,
-    indent_right: f32,
-    tab_stops: Vec<TabStop>,
+
+/// Font-name stem: drop any path and extension, so a `\F` font path like
+/// `C:\\fonts\\arial.ttf` and a plain `\f` name `arial` resolve to the same font.
+fn font_stem(name: &str) -> String {
+    name.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(name)
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .to_string()
 }
 
-/// Parse a `\p...;` body. Comma-separated tokens, each with a single-letter
-/// kind prefix. Unknown tokens are skipped — anything we don't understand is
-/// silently dropped rather than poisoning the rest of the paragraph.
-fn parse_paragraph_block(body: &str, props: &mut ParagraphProps) {
-    // The legacy AutoCAD writer prefixes the block with a redundant `x`; skip
-    // it so it doesn't confuse the kind matcher.
-    let body = body.strip_prefix('x').unwrap_or(body);
-    for token in body.split(',') {
-        let token = token.trim();
-        let mut chars = token.chars();
-        let Some(kind) = chars.next() else { continue };
-        let rest: String = chars.collect();
-        match kind {
-            'q' | 'Q' => {
-                let sel = rest.chars().next().map(|c| c.to_ascii_lowercase());
-                props.align = match sel {
-                    Some('l') => Some(ParagraphAlign::Left),
-                    Some('c') => Some(ParagraphAlign::Center),
-                    Some('r') => Some(ParagraphAlign::Right),
-                    Some('j') => Some(ParagraphAlign::Justify),
-                    Some('d') => Some(ParagraphAlign::Distribute),
-                    _ => props.align,
-                };
-            }
-            'i' => {
-                if let Ok(v) = rest.parse::<f32>() {
-                    props.indent_first = v;
-                }
-            }
-            'l' => {
-                if let Ok(v) = rest.parse::<f32>() {
-                    props.indent_left = v;
-                }
-            }
-            'r' => {
-                if let Ok(v) = rest.parse::<f32>() {
-                    props.indent_right = v;
-                }
-            }
-            't' => {
-                // Tab list. Each entry may be prefixed with L / C / R to
-                // pick the tab kind; default is Left. The remainder is the
-                // position in drawing units.
-                props.tab_stops.clear();
-                for entry in rest.split(',') {
-                    let entry = entry.trim();
-                    if entry.is_empty() {
-                        continue;
-                    }
-                    let (kind, num_str) = match entry.chars().next() {
-                        Some(c @ ('L' | 'l')) => (TabKind::Left, &entry[c.len_utf8()..]),
-                        Some(c @ ('C' | 'c')) => (TabKind::Center, &entry[c.len_utf8()..]),
-                        Some(c @ ('R' | 'r')) => (TabKind::Right, &entry[c.len_utf8()..]),
-                        _ => (TabKind::Left, entry),
-                    };
-                    if let Ok(p) = num_str.parse::<f32>() {
-                        props.tab_stops.push(TabStop { position: p, kind });
-                    }
-                }
-            }
-            's' => {} // space-before — affects line spacing; ignored for now
-            _ => {}
-        }
-    }
-}
-
-/// Parse an unsigned 24-bit true-colour value into linear-ish [r,g,b] floats.
-/// AutoCAD packs `\c` as a 24-bit decimal: high byte = R, mid = G, low = B.
-fn parse_true_color(s: &str) -> Option<InlineColor> {
-    let n: u32 = s.trim().parse().ok()?;
-    let r = ((n >> 16) & 0xFF) as f32 / 255.0;
-    let g = ((n >> 8) & 0xFF) as f32 / 255.0;
-    let b = (n & 0xFF) as f32 / 255.0;
-    Some(InlineColor::True([r, g, b]))
-}
-
-/// Parse `\H` / `\W` / `\T` value. Returns `(value, is_relative)`; a trailing
-/// `x` marks a multiplier on the current state, otherwise the value is the
-/// absolute target (interpreted by the caller against entity defaults).
-fn parse_scalar_with_x_suffix(body: &str) -> Option<(f32, bool)> {
-    let body = body.trim();
-    let (num, is_rel) = if let Some(stripped) = body.strip_suffix('x').or_else(|| body.strip_suffix('X')) {
-        (stripped, true)
-    } else {
-        (body, false)
-    };
-    Some((num.trim().parse::<f32>().ok()?, is_rel))
-}
-
-/// Flush the glyph buffer as a `Glyphs` run on `line` using a snapshot of
-/// `state`. Resolves DXF `%%x` specials (degree / diameter / `%%nnn` literal
-/// unicode) so the renderer sees fully decoded text.
-fn flush_glyph_buf(line: &mut MTextLine, buf: &mut String, state: &RunState) {
-    if buf.is_empty() {
-        return;
-    }
-    let text = resolve_dxf_special_chars(&std::mem::take(buf));
-    line.runs.push(MTextRun {
-        kind: MTextRunKind::Glyphs(text),
-        state: state.clone(),
-    });
-}
-
-/// Walk the MTEXT value string and produce one [`MTextLine`] per visible
-/// paragraph (after stripping leading / trailing blank lines, as the legacy
-/// `split_mtext_lines` does). Every inline format code listed in the module
-/// header is recognised; unknown semicolon-terminated codes are stripped
-/// silently so future / vendor-specific extensions don't pollute the text.
+/// Parse an MTEXT string into the layout's `Vec<MTextLine>`, using acadrust's
+/// structured `mtext_format::parse_mtext` — OCS keeps only the layout engine
+/// (`layout_mtext` and callers read `MTextLine`/`RunState`), not a second MTEXT
+/// inline parser.
 ///
-/// `entity_height` is needed to translate absolute `\H<v>;` declarations into
-/// the height-multiplier representation carried in [`RunState`]; pass the
-/// MTEXT entity's `height` field.
-pub fn parse_mtext_paragraphs(s: &str, entity_height: f32) -> Vec<MTextLine> {
-    parse_mtext_paragraphs_ex(s, entity_height, true)
-}
-
-/// Like [`parse_mtext_paragraphs`] but with control over blank-edge trimming.
-///
-/// `trim_blank_edges` drops leading and trailing blank paragraphs (the
-/// rendering default, so a stray trailing `\P` adds no empty space). The MText
-/// editor passes `false` so a freshly inserted newline keeps its empty
-/// paragraph and the caret can sit on the new line.
-pub fn parse_mtext_paragraphs_ex(
+/// Representation notes:
+///  - DXF `%%d`/`%%p`/`%%c` arrive already resolved to Unicode from acadrust;
+///    the stroke tokenizer treats those as ordinary glyphs.
+///  - Stacking (`\S`) is flattened inline to `num<sep>den` (`^` for limit, else
+///    `/`) since the stroke path has no fraction layout.
+///  - `\H`: a relative factor (`\Hx`) applies directly; an absolute height is
+///    divided by the entity height. See `acadrust::…::MTextScalar`.
+pub fn adapt_mtext_paragraphs(
     s: &str,
     entity_height: f32,
     trim_blank_edges: bool,
 ) -> Vec<MTextLine> {
-    let mut lines: Vec<MTextLine> = Vec::new();
-    let mut current = MTextLine::default();
-    let mut buf = String::new();
-    let mut state = RunState::default();
-    let mut state_stack: Vec<RunState> = Vec::new();
-    let mut props = ParagraphProps::default();
-    // No props_stack — paragraph props persist across braces by design.
-    let entity_height = entity_height.max(1e-6);
-
-    let mut chars = s.chars().peekable();
-
-    let read_until_semi = |chars: &mut std::iter::Peekable<std::str::Chars>| -> String {
-        let mut out = String::new();
-        for c in chars.by_ref() {
-            if c == ';' {
-                break;
-            }
-            out.push(c);
-        }
-        out
+    use acadrust::entities::mtext_format::{
+        parse_mtext, MTextColor, MTextLineAlignment, MTextParagraphAlignment, MTextScalar,
+        SpanProperties, StackingType,
     };
 
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\\' => match chars.peek().copied() {
-                // ── Line / paragraph break ────────────────────────────────
-                Some('P') | Some('n') | Some('N') => {
-                    chars.next();
-                    flush_glyph_buf(&mut current, &mut buf, &state);
-                    current.align = props.align;
-                    current.indent_first = props.indent_first;
-                    current.indent_left = props.indent_left;
-                    current.indent_right = props.indent_right;
-                    current.tab_stops = props.tab_stops.clone();
-                    lines.push(std::mem::take(&mut current));
-                }
-                // ── Whitespace literals ───────────────────────────────────
-                Some('~') => {
-                    chars.next();
-                    buf.push('\u{00A0}'); // nbsp — treated as a regular space by the wrap pass
-                }
-                Some('t') => {
-                    chars.next();
-                    flush_glyph_buf(&mut current, &mut buf, &state);
-                    current.runs.push(MTextRun {
-                        kind: MTextRunKind::Tab,
-                        state: state.clone(),
-                    });
-                }
-                // ── Unicode by hex code point ────────────────────────────
-                Some('U') | Some('u') => {
-                    chars.next();
-                    if chars.peek() == Some(&'+') {
-                        chars.next();
-                        // A `\U+XXXX` escape is exactly four hex digits (a BMP
-                        // code point). Reading more greedily swallows the
-                        // following literal characters — e.g. the diameter
-                        // value `\U+220520` ("⌀20") was parsed as code point
-                        // 0x220520, which is out of range, so the whole text
-                        // vanished. (#139)
-                        let mut hex = String::with_capacity(4);
-                        for _ in 0..4 {
-                            match chars.peek() {
-                                Some(&c) if c.is_ascii_hexdigit() => {
-                                    hex.push(chars.next().unwrap());
-                                }
-                                _ => break,
-                            }
-                        }
-                        if chars.peek() == Some(&';') {
-                            chars.next();
-                        }
-                        if let Ok(n) = u32::from_str_radix(&hex, 16) {
-                            if let Some(c) = char::from_u32(n) {
-                                buf.push(c);
-                                continue;
-                            }
-                        }
-                    } else {
-                        // Bare `\U` / `\u` — strip to next `;`
-                        let _ = read_until_semi(&mut chars);
-                    }
-                }
-                // ── Stacked text \S<u><sep><l>; ──────────────────────────
-                Some('S') | Some('s') => {
-                    chars.next();
-                    let mut upper = String::new();
-                    let mut lower = String::new();
-                    let mut sep = '/';
-                    let mut in_lower = false;
-                    for c in chars.by_ref() {
-                        if c == ';' {
-                            break;
-                        }
-                        if !in_lower && (c == '/' || c == '^' || c == '#') {
-                            sep = c;
-                            in_lower = true;
-                        } else if in_lower {
-                            lower.push(c);
-                        } else {
-                            upper.push(c);
-                        }
-                    }
-                    buf.push_str(&upper);
-                    if !lower.is_empty() {
-                        buf.push(if sep == '#' { '/' } else { sep });
-                        buf.push_str(&lower);
-                    }
-                }
-                // ── Decoration toggles (state, not markers) ──────────────
-                Some('L') => { chars.next(); flush_glyph_buf(&mut current, &mut buf, &state); state.underline = true; }
-                Some('l') => { chars.next(); flush_glyph_buf(&mut current, &mut buf, &state); state.underline = false; }
-                Some('O') => { chars.next(); flush_glyph_buf(&mut current, &mut buf, &state); state.overline = true; }
-                Some('o') => { chars.next(); flush_glyph_buf(&mut current, &mut buf, &state); state.overline = false; }
-                Some('K') => { chars.next(); flush_glyph_buf(&mut current, &mut buf, &state); state.strike = true; }
-                Some('k') => { chars.next(); flush_glyph_buf(&mut current, &mut buf, &state); state.strike = false; }
-                // ── Literal backslash / braces ───────────────────────────
-                Some('\\') => { chars.next(); buf.push('\\'); }
-                Some('{') | Some('}') => { buf.push(chars.next().unwrap()); }
-                // ── Paragraph props ──────────────────────────────────────
-                Some('p') => {
-                    chars.next();
-                    let body = read_until_semi(&mut chars);
-                    parse_paragraph_block(&body, &mut props);
-                }
-                // ── Height ───────────────────────────────────────────────
-                Some('H') => {
-                    chars.next();
-                    let body = read_until_semi(&mut chars);
-                    if let Some((v, is_rel)) = parse_scalar_with_x_suffix(&body) {
-                        flush_glyph_buf(&mut current, &mut buf, &state);
-                        if is_rel {
-                            state.height_mul *= v;
-                        } else {
-                            state.height_mul = v / entity_height;
-                        }
-                    }
-                }
-                // ── Width factor ─────────────────────────────────────────
-                Some('W') => {
-                    chars.next();
-                    let body = read_until_semi(&mut chars);
-                    if let Some((v, is_rel)) = parse_scalar_with_x_suffix(&body) {
-                        flush_glyph_buf(&mut current, &mut buf, &state);
-                        if is_rel {
-                            state.width_mul *= v;
-                        } else {
-                            state.width_mul = v;
-                        }
-                    }
-                }
-                // ── Oblique angle (degrees → radians) ────────────────────
-                Some('Q') => {
-                    chars.next();
-                    let body = read_until_semi(&mut chars);
-                    if let Ok(deg) = body.trim().parse::<f32>() {
-                        flush_glyph_buf(&mut current, &mut buf, &state);
-                        state.oblique_rad = deg.to_radians();
-                    }
-                }
-                // ── Tracking ─────────────────────────────────────────────
-                Some('T') => {
-                    chars.next();
-                    let body = read_until_semi(&mut chars);
-                    if let Some((v, is_rel)) = parse_scalar_with_x_suffix(&body) {
-                        flush_glyph_buf(&mut current, &mut buf, &state);
-                        if is_rel {
-                            state.tracking *= v;
-                        } else {
-                            state.tracking = v;
-                        }
-                    }
-                }
-                // ── Vertical alignment ───────────────────────────────────
-                Some('A') => {
-                    chars.next();
-                    let body = read_until_semi(&mut chars);
-                    if let Ok(n) = body.trim().parse::<u8>() {
-                        flush_glyph_buf(&mut current, &mut buf, &state);
-                        state.valign = n.min(2);
-                    }
-                }
-                // ── ACI colour ───────────────────────────────────────────
-                Some('C') => {
-                    chars.next();
-                    let body = read_until_semi(&mut chars);
-                    if let Ok(n) = body.trim().parse::<u32>() {
-                        flush_glyph_buf(&mut current, &mut buf, &state);
-                        state.color = Some(InlineColor::Aci(n.min(255) as u8));
-                    }
-                }
-                // ── True colour ──────────────────────────────────────────
-                Some('c') => {
-                    chars.next();
-                    let body = read_until_semi(&mut chars);
-                    if let Some(col) = parse_true_color(&body) {
-                        flush_glyph_buf(&mut current, &mut buf, &state);
-                        state.color = Some(col);
-                    }
-                }
-                // ── Font (name + b/i/c/p flags) ──────────────────────────
-                Some('f') | Some('F') => {
-                    chars.next();
-                    let body = read_until_semi(&mut chars);
-                    // First `|`-separated field is the font name / file stem.
-                    let name = body.split('|').next().unwrap_or("").trim();
-                    if !name.is_empty() {
-                        flush_glyph_buf(&mut current, &mut buf, &state);
-                        // Strip extension if `\F` passed a file path.
-                        let stem = name
-                            .rsplit(['/', '\\'])
-                            .next()
-                            .unwrap_or(name)
-                            .split('.')
-                            .next()
-                            .unwrap_or(name);
-                        state.font = Some(stem.to_string());
-                    }
-                }
-                // ── Multibyte / codepage marker — strip silently ─────────
-                Some('M') => {
-                    chars.next();
-                    let _ = read_until_semi(&mut chars);
-                }
-                // ── Dimension MTEXT paragraph-end marker — strip silently
-                Some('X') => {
-                    chars.next();
-                }
-                // ── Unknown single-letter escape ─────────────────────────
-                Some(_) => {
-                    chars.next();
-                }
-                None => {}
-            },
-            // Scope push / pop — braces scope *character* state (font,
-            // colour, height, decorations, …). Paragraph properties
-            // (`\p...;`) are intentionally NOT scoped: AutoCAD treats them
-            // as paragraph-level layout that persists across braces, and
-            // real-world files routinely wrap inline `\pxqc;` inside a
-            // `{\fArial;…}` block while expecting the alignment to apply
-            // to the whole paragraph.
-            '{' => {
-                state_stack.push(state.clone());
-            }
-            '}' => {
-                if let Some(prev) = state_stack.pop() {
-                    flush_glyph_buf(&mut current, &mut buf, &state);
-                    state = prev;
-                }
-            }
-            '\r' => {}
-            '\n' => {
-                flush_glyph_buf(&mut current, &mut buf, &state);
-                current.align = props.align;
-                current.indent_first = props.indent_first;
-                current.indent_left = props.indent_left;
-                current.indent_right = props.indent_right;
-                current.tab_stops = props.tab_stops.clone();
-                lines.push(std::mem::take(&mut current));
-            }
-            other => buf.push(other),
+    let entity_height = entity_height.max(1e-6);
+    let doc = parse_mtext(s, true);
+
+    fn map_align(a: MTextParagraphAlignment) -> Option<ParagraphAlign> {
+        match a {
+            MTextParagraphAlignment::Left => Some(ParagraphAlign::Left),
+            MTextParagraphAlignment::Right => Some(ParagraphAlign::Right),
+            MTextParagraphAlignment::Center => Some(ParagraphAlign::Center),
+            MTextParagraphAlignment::Justified => Some(ParagraphAlign::Justify),
+            MTextParagraphAlignment::Distributed => Some(ParagraphAlign::Distribute),
+            MTextParagraphAlignment::Default => None,
         }
     }
-    flush_glyph_buf(&mut current, &mut buf, &state);
-    current.align = props.align;
-    current.indent_first = props.indent_first;
-    current.indent_left = props.indent_left;
-    current.indent_right = props.indent_right;
-    current.tab_stops = props.tab_stops.clone();
-    lines.push(current);
+    fn color_of(p: &SpanProperties) -> Option<InlineColor> {
+        if let Some((r, g, b)) = p.color_rgb {
+            return Some(InlineColor::True([
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+            ]));
+        }
+        match p.color {
+            Some(MTextColor::Index(n)) => Some(InlineColor::Aci(n.min(255) as u8)),
+            _ => None,
+        }
+    }
+
+    let mut lines: Vec<MTextLine> = Vec::new();
+    for para in &doc.paragraphs {
+        let props = &para.properties;
+        let mut line = MTextLine {
+            align: props.alignment.and_then(map_align),
+            indent_first: props.first_line_indent.unwrap_or(0.0) as f32,
+            indent_left: props.left_margin.unwrap_or(0.0) as f32,
+            indent_right: props.right_margin.unwrap_or(0.0) as f32,
+            tab_stops: props
+                .tab_stops
+                .iter()
+                .map(|&p| TabStop {
+                    position: p as f32,
+                    kind: TabKind::Left,
+                })
+                .collect(),
+            runs: Vec::new(),
+        };
+        for span in &para.spans {
+            let p = &span.properties;
+            let state = RunState {
+                // Relative `\H…x;` is a factor applied directly; absolute `\H…;`
+                // is a drawing-unit height resolved against the entity height.
+                height_mul: match p.height {
+                    Some(MTextScalar::Factor(f)) => f as f32,
+                    Some(MTextScalar::Absolute(a)) => a as f32 / entity_height,
+                    None => 1.0,
+                },
+                width_mul: p.width_factor.map(|w| w as f32).unwrap_or(1.0),
+                oblique_rad: p
+                    .oblique_angle
+                    .map(|q| (q as f32).to_radians())
+                    .unwrap_or(0.0),
+                tracking: p.tracking.map(|t| t as f32).unwrap_or(1.0),
+                valign: match p.line_align {
+                    Some(MTextLineAlignment::Middle) => 1,
+                    Some(MTextLineAlignment::Top) => 2,
+                    _ => 0,
+                },
+                font: p.font.as_ref().map(|f| font_stem(&f.name)),
+                color: color_of(p),
+                underline: p.stroke.underline(),
+                overline: p.stroke.overline(),
+                strike: p.stroke.strikethrough(),
+            };
+            let text = match &span.stacking {
+                Some(st) => {
+                    let sep = match st.stacking_type {
+                        StackingType::Limit => '^',
+                        _ => '/',
+                    };
+                    let mut t = st.numerator.clone();
+                    if !st.denominator.is_empty() {
+                        t.push(sep);
+                        t.push_str(&st.denominator);
+                    }
+                    t
+                }
+                None => span.text.clone(),
+            };
+            if text.is_empty() {
+                continue;
+            }
+            line.runs.push(MTextRun {
+                kind: MTextRunKind::Glyphs(text),
+                state,
+            });
+        }
+        lines.push(line);
+    }
 
     if !trim_blank_edges {
         return lines;
@@ -751,10 +477,10 @@ pub fn parse_mtext_paragraphs_ex(
 // Legacy MText helpers (`strip_mtext_codes`, `split_mtext_lines`,
 // `measure_mtext_chars`, `word_wrap`) were removed when every text-bearing
 // entity switched to the run-aware pipeline below. The pipeline now owns
-// stripping, paragraph splitting, per-run width measurement and word-wrap;
-// keep `parse_mtext_paragraphs`, `layout_mtext`, `mtext_line_count`,
-// `text_local_bounds`, and `resolve_dxf_special_chars` as the supported
-// surface for callers.
+// per-run width measurement and word-wrap; MTEXT inline parsing now comes from
+// acadrust via `adapt_mtext_paragraphs`. The supported surface for callers is
+// `adapt_mtext_paragraphs`, `layout_mtext`, `mtext_line_count`,
+// `text_local_bounds`, and `resolve_dxf_special_chars`.
 
 /// Total number of visible lines an MText renders to — explicit `\P` /
 /// `\n` / `\N` breaks plus word-wrap induced sublines when
@@ -774,7 +500,7 @@ pub fn mtext_line_count(
     let base_font_name = resolved.font_name.clone();
     let rect_w = (m.rectangle_width as f32) * anno_scale;
 
-    let paragraphs = parse_mtext_paragraphs(&m.value, entity_h);
+    let paragraphs = adapt_mtext_paragraphs(&m.value, entity_h, true);
     let mut total = 0usize;
     for para in &paragraphs {
         let mut atoms: Vec<LayoutAtom> = Vec::new();
@@ -847,7 +573,7 @@ pub fn mtext_line_count(
 // it carries inline codes).
 //
 // The pipeline mirrors the MTEXT renderer:
-//   1. Parse — via `parse_mtext_paragraphs`.
+//   1. Parse — via `adapt_mtext_paragraphs` (acadrust `parse_mtext`).
 //   2. Atomise — turn each MTextLine.runs into a flat sequence of atoms
 //      (Word / Space / Tab) so the wrapper operates at break boundaries
 //      while keeping per-character formatting state.
@@ -1182,7 +908,7 @@ pub fn layout_mtext(opts: &MTextRenderOpts) -> MTextLayout {
     // ── 1. Parse ─────────────────────────────────────────────────────────
     // The editor (want_glyph_boxes) keeps blank edges so a freshly typed
     // trailing newline yields an empty paragraph the caret can sit on.
-    let paragraphs = parse_mtext_paragraphs_ex(opts.value, entity_h, !opts.want_glyph_boxes);
+    let paragraphs = adapt_mtext_paragraphs(opts.value, entity_h, !opts.want_glyph_boxes);
 
     // ── 2. Atomise + wrap each paragraph into sub-lines ──────────────────
     struct SubLine {
@@ -1917,3 +1643,83 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod adapter_tests {
+    use super::*;
+
+    /// Glyph text + state of the first renderable run.
+    fn first_run(lines: &[MTextLine]) -> (String, RunState) {
+        for l in lines {
+            for r in &l.runs {
+                if let MTextRunKind::Glyphs(t) = &r.kind {
+                    return (t.clone(), r.state.clone());
+                }
+            }
+        }
+        panic!("no glyph run produced");
+    }
+
+    #[test]
+    fn plain_text_is_default_state() {
+        let lines = adapt_mtext_paragraphs("Hello", 2.5, true);
+        assert_eq!(lines.len(), 1);
+        let (t, st) = first_run(&lines);
+        assert_eq!(t, "Hello");
+        assert_eq!(st, RunState::default());
+    }
+
+    #[test]
+    fn relative_height_is_a_factor() {
+        // `\H2x;` multiplies the current height → height_mul 2.0, independent of
+        // the entity height. (This is the case that needed acadrust's MTextScalar.)
+        let (_, st) = first_run(&adapt_mtext_paragraphs("\\H2x;big", 2.5, true));
+        assert!((st.height_mul - 2.0).abs() < 1e-4, "got {}", st.height_mul);
+    }
+
+    #[test]
+    fn absolute_height_resolves_against_entity_height() {
+        // `\H5;` is an absolute height → divided by the entity height (2.5) → 2.0.
+        let (_, st) = first_run(&adapt_mtext_paragraphs("\\H5;abs", 2.5, true));
+        assert!((st.height_mul - 2.0).abs() < 1e-4, "got {}", st.height_mul);
+    }
+
+    #[test]
+    fn color_font_oblique_valign_decoration() {
+        let (_, c) = first_run(&adapt_mtext_paragraphs("\\C1;red", 2.5, true));
+        assert_eq!(c.color, Some(InlineColor::Aci(1)));
+
+        let (_, f) = first_run(&adapt_mtext_paragraphs("\\fArial;x", 2.5, true));
+        assert_eq!(f.font.as_deref(), Some("Arial"));
+
+        let (_, q) = first_run(&adapt_mtext_paragraphs("\\Q15;x", 2.5, true));
+        assert!((q.oblique_rad - 15f32.to_radians()).abs() < 1e-4);
+
+        let (_, w) = first_run(&adapt_mtext_paragraphs("\\W1.5;x", 2.5, true));
+        assert!((w.width_mul - 1.5).abs() < 1e-4);
+
+        let (_, a) = first_run(&adapt_mtext_paragraphs("\\A1;x", 2.5, true));
+        assert_eq!(a.valign, 1);
+
+        let (_, d) = first_run(&adapt_mtext_paragraphs("\\Lunder\\l", 2.5, true));
+        assert!(d.underline);
+    }
+
+    #[test]
+    fn stacking_flattens_like_the_legacy_parser() {
+        let (t, _) = first_run(&adapt_mtext_paragraphs("\\S1/2;", 2.5, true));
+        assert_eq!(t, "1/2");
+        let (t, _) = first_run(&adapt_mtext_paragraphs("\\S1^2;", 2.5, true));
+        assert_eq!(t, "1^2");
+        // Diagonal `#` renders with a `/` separator.
+        let (t, _) = first_run(&adapt_mtext_paragraphs("\\S1#2;", 2.5, true));
+        assert_eq!(t, "1/2");
+    }
+
+    #[test]
+    fn paragraph_breaks_split_lines() {
+        let lines = adapt_mtext_paragraphs("a\\Pb\\Pc", 2.5, true);
+        assert_eq!(lines.len(), 3);
+    }
+}
+
