@@ -210,8 +210,15 @@ impl HatchModel {
             if k_lo > k_hi {
                 std::mem::swap(&mut k_lo, &mut k_hi);
             }
-            k_lo = k_lo.max(-MAX_LINES_PER_FAMILY);
-            k_hi = k_hi.min(MAX_LINES_PER_FAMILY);
+            // Cap the line COUNT (span), not the absolute index. A hatch far
+            // from the pattern origin (0,0) — e.g. a fine-spaced fill at large
+            // drawing coordinates — has large-magnitude k at both ends but a
+            // small span. Clamping the absolute index to ±MAX_LINES_PER_FAMILY
+            // would invert the range (k_lo > k_hi) and emit nothing, silently
+            // dropping the whole fill.
+            if k_hi.saturating_sub(k_lo) > MAX_LINES_PER_FAMILY {
+                k_hi = k_lo.saturating_add(MAX_LINES_PER_FAMILY);
+            }
 
             let period: f32 = family.dashes.iter().map(|d| d.abs()).sum::<f32>() * scale;
             let has_dashes = !family.dashes.is_empty() && period > 1e-6;

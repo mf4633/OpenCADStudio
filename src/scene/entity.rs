@@ -1,6 +1,31 @@
 // Auto-split from scene/mod.rs. Pure text-move; behaviour unchanged.
 use super::*;
 
+/// Convert a HATCH's own resolved pattern line (world-unit `offset` = step to
+/// the next parallel line, plus a base angle) into a render `PatFamily` whose
+/// geometry is already final — the HatchModel that carries it uses scale 1 and
+/// angle_offset 0 (see `prebaked` in `hatch_model_from_dxf`). The world-space
+/// offset is rotated into the line's local frame so `pattern_segments` and the
+/// GPU shader, which rotate `(dx, dy)` back out by the family angle, reproduce
+/// the exact stored step. `x0/y0` stay 0: for an infinite line family the phase
+/// is not observable, and the stored base point is in the source (possibly
+/// block-local) frame anyway.
+fn family_from_stored_line(
+    ln: &acadrust::entities::hatch::HatchPatternLine,
+) -> crate::scene::model::hatch_model::PatFamily {
+    let (ca, sa) = (ln.angle.cos(), ln.angle.sin());
+    let dx = ln.offset.x * ca + ln.offset.y * sa;
+    let dy = -ln.offset.x * sa + ln.offset.y * ca;
+    crate::scene::model::hatch_model::PatFamily {
+        angle_deg: ln.angle.to_degrees() as f32,
+        x0: 0.0,
+        y0: 0.0,
+        dx: dx as f32,
+        dy: dy as f32,
+        dashes: ln.dash_lengths.iter().map(|&d| d as f32).collect(),
+    }
+}
+
 impl Scene {
     // ── Entity management ─────────────────────────────────────────────────
 
@@ -465,7 +490,13 @@ impl Scene {
                     m.color = self.render_style(e).0;
                     if let EntityType::Hatch(dxf) = e {
                         match &mut m.pattern {
-                            model::hatch_model::HatchPattern::Pattern(_) => {
+                            // Pattern built from the hatch's own stored lines is
+                            // already final (scale 1 / angle 0) — don't re-apply
+                            // pattern_scale/angle. Only the catalog-derived path
+                            // (empty stored lines) needs the override.
+                            model::hatch_model::HatchPattern::Pattern(_)
+                                if dxf.pattern.lines.is_empty() =>
+                            {
                                 m.angle_offset = dxf.pattern_angle as f32;
                                 let anno = if self.current_layout == "Model" {
                                     self.annotation_scale
@@ -477,7 +508,8 @@ impl Scene {
                             model::hatch_model::HatchPattern::Gradient { angle_deg, .. } => {
                                 *angle_deg = dxf.pattern_angle.to_degrees() as f32;
                             }
-                            model::hatch_model::HatchPattern::Solid => {}
+                            model::hatch_model::HatchPattern::Pattern(_)
+                            | model::hatch_model::HatchPattern::Solid => {}
                         }
                     }
                 }
@@ -495,6 +527,87 @@ impl Scene {
         } else {
             self.bg_color
         };
+        // Block-internal hatch fills: explode every visible INSERT of this
+        // layout block and materialize its fills at world position. Shared with
+        // the export path so a plot draws them identically. (tint_selected =
+        // true applies the screen selection highlight.)
+        models.extend(self.exploded_insert_hatch_models(layout_block, hatch_bg, true));
+
+        // Wide LWPolyline and Polyline2D fills
+        for entity in self.document.entities() {
+            let (common, fill_origin, fills) = match entity {
+                EntityType::LwPolyline(pl) => {
+                    let (o, f) = crate::entities::lwpolyline::wide_fills(pl);
+                    (&pl.common, o, f)
+                }
+                EntityType::Polyline2D(pl) => {
+                    let (o, f) = crate::entities::polyline::wide_fills(pl);
+                    (&pl.common, o, f)
+                }
+                _ => continue,
+            };
+            if fills.is_empty() {
+                continue;
+            }
+            if common.invisible || layer_hidden(&common.layer) {
+                continue;
+            }
+            if !self.belongs_to_visible_block(common.handle, common.owner_handle, layout_block) {
+                continue;
+            }
+            let base_color = self.render_style(entity).0;
+            let selected = self.selected.contains(&common.handle);
+            let color = if selected {
+                [0.15, 0.55, 1.00, 1.0]
+            } else {
+                base_color
+            };
+            for boundary in fills {
+                models.push(HatchModel {
+                    boundary: Arc::new(boundary),
+                    pattern: model::hatch_model::HatchPattern::Solid,
+                    name: "SOLID".into(),
+                    color,
+                    angle_offset: 0.0,
+                    scale: 1.0,
+                    world_origin: fill_origin,
+                    vp_scissor: None,
+                    draw_depth: depth_map.get(&common.handle.value()).copied().unwrap_or(0.0),
+                });
+            }
+        }
+
+        models
+    }
+
+    /// Materialize the hatch fills that live *inside* the visible INSERTs of
+    /// `layout_block`, baking each INSERT's transform (and nested-INSERT
+    /// transforms) so the fills land in world position with resolved
+    /// ByBlock / layer-0 colours.
+    ///
+    /// Shared by the on-screen hatch set (`synced_hatch_models`) and the
+    /// paper/export hatch set (`paper_canvas_hatches`) so a plot draws
+    /// block-internal hatches identically to the viewport. Without this the
+    /// export path only saw top-level hatches, so any fill nested in a block
+    /// INSERT printed as bare monochrome outlines.
+    ///
+    /// `hatch_bg` adapts pure black/white leaf colours to the target
+    /// background; `tint_selected` re-colours fills of a selected INSERT
+    /// (screen highlight) and should be `false` for export.
+    pub(super) fn exploded_insert_hatch_models(
+        &self,
+        layout_block: Handle,
+        hatch_bg: [f32; 4],
+        tint_selected: bool,
+    ) -> Vec<HatchModel> {
+        let layer_hidden = |layer: &str| {
+            self.document
+                .layers
+                .get(layer)
+                .map(|l| l.flags.off || l.flags.frozen)
+                .unwrap_or(false)
+        };
+        let mut models: Vec<HatchModel> = Vec::new();
         // Exploding an INSERT materializes (clones) every child of its block —
         // including 3D solids that each carry megabytes of SAB geometry — just
         // to scan the result for hatch fills. On xref-heavy drawings whose
@@ -522,7 +635,7 @@ impl Scene {
             if !self.block_has_hatch(&ins.block_name, &mut hatch_block_memo) {
                 continue;
             }
-            let selected = self.selected.contains(&ins.common.handle);
+            let selected = tint_selected && self.selected.contains(&ins.common.handle);
             // XCLIP: clip this insert's exploded hatch fills to the boundary,
             // matching how the line geometry is clipped in expand_insert.
             let clip_poly = pick::xclip::insert_spatial_filter(&self.document, ins)
@@ -632,51 +745,6 @@ impl Scene {
                 }
             }
         }
-
-        // Wide LWPolyline and Polyline2D fills
-        for entity in self.document.entities() {
-            let (common, fill_origin, fills) = match entity {
-                EntityType::LwPolyline(pl) => {
-                    let (o, f) = crate::entities::lwpolyline::wide_fills(pl);
-                    (&pl.common, o, f)
-                }
-                EntityType::Polyline2D(pl) => {
-                    let (o, f) = crate::entities::polyline::wide_fills(pl);
-                    (&pl.common, o, f)
-                }
-                _ => continue,
-            };
-            if fills.is_empty() {
-                continue;
-            }
-            if common.invisible || layer_hidden(&common.layer) {
-                continue;
-            }
-            if !self.belongs_to_visible_block(common.handle, common.owner_handle, layout_block) {
-                continue;
-            }
-            let base_color = self.render_style(entity).0;
-            let selected = self.selected.contains(&common.handle);
-            let color = if selected {
-                [0.15, 0.55, 1.00, 1.0]
-            } else {
-                base_color
-            };
-            for boundary in fills {
-                models.push(HatchModel {
-                    boundary: Arc::new(boundary),
-                    pattern: model::hatch_model::HatchPattern::Solid,
-                    name: "SOLID".into(),
-                    color,
-                    angle_offset: 0.0,
-                    scale: 1.0,
-                    world_origin: fill_origin,
-                    vp_scissor: None,
-                    draw_depth: depth_map.get(&common.handle.value()).copied().unwrap_or(0.0),
-                });
-            }
-        }
-
         models
     }
 
@@ -829,6 +897,13 @@ impl Scene {
         let mut boundary: Vec<[f64; 2]> = Vec::new();
 
         for path in &dxf.paths {
+            // Skip TEXTBOX boundary paths (flag bit 3). These are text
+            // bounding-boxes AutoCAD derives for island detection; they are
+            // never drawn or filled. Treating one as a fill boundary paints its
+            // rectangle solid — a phantom bar AutoCAD never shows.
+            if path.flags.bits() & 8 != 0 {
+                continue;
+            }
             let before_path = boundary.len();
             if !boundary.is_empty() {
                 boundary.push([f64::NAN, f64::NAN]);
@@ -1076,6 +1151,20 @@ impl Scene {
             boundary.truncate(cut);
         }
 
+        // When the HATCH carries its own resolved pattern-line geometry
+        // (angle + world-unit offset, exactly as the DWG stores it), use THAT
+        // instead of re-deriving spacing from the name-matched catalog entry
+        // × pattern_scale. The catalog's base spacing (e.g. metric acadiso
+        // ANSI31 = 3.175) rarely matches what the drawing was authored against
+        // (imperial 0.125), so the catalog path rendered lines up to ~25×
+        // (= inch→mm) too coarse — a dense fill collapsed to a few stray
+        // lines. The stored offset is the authoritative world-unit spacing, so
+        // the resulting families are already final: no pattern_scale / angle
+        // is re-applied (see `prebaked` below and the HatchModel fields).
+        let prebaked = !dxf.is_solid
+            && !dxf.gradient_color.is_enabled()
+            && !dxf.pattern.lines.is_empty();
+
         let pattern = if dxf.gradient_color.is_enabled() {
             let color2 = dxf
                 .gradient_color
@@ -1088,6 +1177,10 @@ impl Scene {
             model::hatch_model::HatchPattern::Gradient { angle_deg, color2 }
         } else if dxf.is_solid {
             model::hatch_model::HatchPattern::Solid
+        } else if prebaked {
+            model::hatch_model::HatchPattern::Pattern(
+                dxf.pattern.lines.iter().map(family_from_stored_line).collect(),
+            )
         } else {
             let pat_name = &dxf.pattern.name;
             if let Some(entry) = crate::scene::model::hatch_patterns::find(pat_name) {
@@ -1176,8 +1269,8 @@ impl Scene {
             pattern,
             name,
             color,
-            angle_offset: dxf.pattern_angle as f32,
-            scale: dxf.pattern_scale as f32,
+            angle_offset: if prebaked { 0.0 } else { dxf.pattern_angle as f32 },
+            scale: if prebaked { 1.0 } else { dxf.pattern_scale as f32 },
             world_origin,
             vp_scissor: None,
             draw_depth: 0.0,

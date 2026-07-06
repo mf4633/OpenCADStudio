@@ -212,9 +212,14 @@ impl Scene {
             let mut m = model.clone();
             m.color = self.render_style(entity).0;
             if let EntityType::Hatch(dxf) = entity {
+                // Only re-apply pattern_scale/angle for catalog-derived patterns
+                // (empty stored lines). A pattern built from the hatch's own
+                // stored lines is already final (scale 1 / angle 0).
                 if let model::hatch_model::HatchPattern::Pattern(_) = &m.pattern {
-                    m.angle_offset = dxf.pattern_angle as f32;
-                    m.scale = dxf.pattern_scale as f32;
+                    if dxf.pattern.lines.is_empty() {
+                        m.angle_offset = dxf.pattern_angle as f32;
+                        m.scale = dxf.pattern_scale as f32;
+                    }
                 }
             }
             if self.selected.contains(&handle) {
@@ -222,6 +227,19 @@ impl Scene {
             }
             models.push(m);
         }
+        // Hatch fills nested inside a block INSERT are owned by the block
+        // record, so the loop above — which only keeps hatches owned by
+        // `layout_block` — never sees them. Explode the layout's visible
+        // INSERTs and materialize their fills at world position, exactly as the
+        // viewport does, so the export carries the block's colours instead of
+        // bare outlines. (No selection tint on export.)
+        let hatch_bg = if self.current_layout != "Model" {
+            self.paper_bg_color
+        } else {
+            self.bg_color
+        };
+        let exploded = self.exploded_insert_hatch_models(layout_block, hatch_bg, false);
+        models.extend(exploded);
         Arc::new(models)
     }
 

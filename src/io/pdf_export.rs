@@ -381,9 +381,28 @@ fn emit_hatch(ops: &mut Vec<Op>, hatch: &HatchModel, ox: f32, oy: f32) {
     if hatch.boundary.is_empty() {
         return;
     }
-    let [r, g, b, a] = hatch.color;
+    let [mut r, mut g, mut b, a] = hatch.color;
     if a < 0.01 {
         return;
+    }
+    // Adapt hatch fills to the white sheet, mirroring the wire pass: colours
+    // arrive adapted to the (dark) screen background, so a white/ACI-7 fill
+    // would vanish white-on-white on paper. Force near-white/near-yellow → black
+    // and near-cyan → dark blue, matching AutoCAD's colour-7-on-white plotting.
+    // Genuine colours are untouched; WIPEOUTS keep their paper-white mask.
+    if hatch.name != "WIPEOUT_FILL" {
+        let is_light = r > 0.80 && g > 0.80 && b > 0.80;
+        let is_yellow = r > 0.80 && g > 0.70 && b < 0.30;
+        let is_cyan = r < 0.30 && g > 0.70 && b > 0.70;
+        if is_light || is_yellow {
+            r = 0.0;
+            g = 0.0;
+            b = 0.0;
+        } else if is_cyan {
+            r = 0.0;
+            g = 0.15;
+            b = 0.50;
+        }
     }
     let world_ox = hatch.world_origin[0] as f32;
     let world_oy = hatch.world_origin[1] as f32;
