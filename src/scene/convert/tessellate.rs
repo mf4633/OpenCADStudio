@@ -198,7 +198,13 @@ pub fn tessellate(
                     };
 
                 let anno = anno_scale as f64;
-                for group in &stroke_groups {
+                // With SDF text on, glyphs render as quads elsewhere — skip
+                // building the stroke geometry so text is not double-drawn.
+                // `bins` stays empty, so the empty-wire path below still emits
+                // the insertion snap point (text stays snappable, no glyph
+                // strokes polluting snap/pick).
+                let sdf_text = crate::scene::text::sdf_atlas::sdf_text_enabled();
+                for group in stroke_groups.iter().filter(|_| !sdf_text) {
                     let lx_v = group.origin[0];
                     let ly_v = group.origin[1];
                     let slx_v = (lx_v - ref_lx_v) * anno + ref_lx_v;

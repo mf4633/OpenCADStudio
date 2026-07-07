@@ -784,7 +784,7 @@ impl Scene {
     pub(in crate::scene) fn sdf_text_vertices(
         &self,
     ) -> Vec<crate::scene::pipeline::text_gpu::TextVertex> {
-        self.sdf_text_vertices_enabled(std::env::var_os("OCS_TEXT_SDF").is_some())
+        self.sdf_text_vertices_enabled(crate::scene::text::sdf_atlas::sdf_text_enabled())
     }
 
     #[allow(dead_code)]
