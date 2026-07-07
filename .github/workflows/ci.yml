@@ -1,0 +1,65 @@
+name: CI
+
+# Build, test, and lint on every push to main and on every pull request.
+# release.yml only runs when a release is published, so nothing guarded the
+# build between releases — a compile break or a failing test could sit on
+# main unnoticed. This workflow closes that gap.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel an in-progress run when a newer commit is pushed to the same ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    name: Build & test (Linux)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (with clippy + rustfmt)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Same system libraries the release AppImage build installs — iced /
+      # wgpu / fontconfig need them to link, even for `cargo test`.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libxkbcommon-dev libwayland-dev libfontconfig1-dev libfreetype6-dev
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Test
+        run: cargo test --workspace
+
+      # Clippy runs without `-D warnings` for now: the codebase has never been
+      # gated on it, so a blanket deny would fail on pre-existing lints. This
+      # step still surfaces clippy findings as annotations and fails on genuine
+      # clippy *errors*. Tighten to `-- -D warnings` once the backlog is clear.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
+
+      # Formatting is intentionally NON-blocking: Open CAD Studio uses
+      # deliberate manual formatting (hand-aligned comment blocks) that
+      # `rustfmt` would rewrite, so a `--check` gate would always be red.
+      # This step reports drift for reviewers without failing the build.
+      - name: Format check (informational)
+        continue-on-error: true
+        run: cargo fmt --all --check
