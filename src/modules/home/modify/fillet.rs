@@ -1842,3 +1842,107 @@ impl CadCommand for ChamferCommand {
 // ── Autocomplete registry ─────────────────────────────────
 inventory::submit!(crate::command::CommandRegistration { names: &["CHA", "CHAMFER"] });  // ChamferCommand
 inventory::submit!(crate::command::CommandRegistration { names: &["F", "FILLET"] });  // FilletCommand
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f64::consts::{FRAC_PI_2, PI, TAU};
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    #[test]
+    fn ll_intersects() {
+        // Ray along +X from origin vs ray along +Y from (2, -1) → meet at (2, 0),
+        // i.e. t = 2 along line 1 and u = 1 along line 2.
+        let (t, u) = ll(0.0, 0.0, 1.0, 0.0, 2.0, -1.0, 0.0, 1.0).unwrap();
+        assert!(close(t, 2.0) && close(u, 1.0));
+    }
+
+    #[test]
+    fn ll_parallel_is_none() {
+        assert!(ll(0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn project_click_is_signed_distance_along_unit() {
+        assert!(close(project_click([3.0, 4.0], [0.0, 0.0], [1.0, 0.0]), 3.0));
+        assert!(close(project_click([3.0, 4.0], [0.0, 0.0], [0.0, 1.0]), 4.0));
+        // Behind the base point along the unit direction → negative.
+        assert!(close(project_click([-2.0, 0.0], [0.0, 0.0], [1.0, 0.0]), -2.0));
+    }
+
+    #[test]
+    fn norm_angle_wraps() {
+        assert!(close(norm_angle(-FRAC_PI_2), 3.0 * FRAC_PI_2));
+        assert!(close(norm_angle(TAU + 0.5), 0.5));
+    }
+
+    #[test]
+    fn arc_span_ccw() {
+        assert!(close(arc_span(0.0, FRAC_PI_2), FRAC_PI_2));
+        // From π/2 back to 0 the CCW way round is 3π/2.
+        assert!(close(arc_span(FRAC_PI_2, 0.0), 3.0 * FRAC_PI_2));
+        // A zero span is treated as a full circle.
+        assert!(close(arc_span(1.0, 1.0), TAU));
+    }
+
+    #[test]
+    fn arc_angle_at_cardinal_points() {
+        assert!(close(arc_angle_at([0.0, 0.0], [1.0, 0.0]), 0.0));
+        assert!(close(arc_angle_at([0.0, 0.0], [0.0, 1.0]), FRAC_PI_2));
+        assert!(close(arc_angle_at([0.0, 0.0], [-1.0, 0.0]), PI));
+        assert!(close(arc_angle_at([0.0, 0.0], [0.0, -1.0]), 3.0 * FRAC_PI_2));
+    }
+
+    #[test]
+    fn clamp_angle_to_arc_snaps_to_nearer_end() {
+        // Upper-half arc, CCW from 0 to π.
+        assert!(close(clamp_angle_to_arc(FRAC_PI_2, 0.0, PI), FRAC_PI_2)); // inside → unchanged
+        assert!(close(clamp_angle_to_arc(PI + 0.1, 0.0, PI), PI)); // just past the end
+        assert!(close(clamp_angle_to_arc(-0.1, 0.0, PI), 0.0)); // just before the start
+    }
+
+    #[test]
+    fn line_circle_ts_two_one_zero_hits() {
+        // Horizontal line through the centre: two crossings at ±r.
+        let ts = line_circle_ts(-10.0, 0.0, 1.0, 0.0, 0.0, 0.0, 5.0);
+        assert_eq!(ts.len(), 2);
+        assert!(close(ts[0], 5.0) && close(ts[1], 15.0));
+        // Tangent line: a single crossing.
+        let t = line_circle_ts(-10.0, 5.0, 1.0, 0.0, 0.0, 0.0, 5.0);
+        assert_eq!(t.len(), 1);
+        assert!(close(t[0], 10.0));
+        // Miss: no crossing.
+        assert!(line_circle_ts(-10.0, 10.0, 1.0, 0.0, 0.0, 0.0, 5.0).is_empty());
+    }
+
+    #[test]
+    fn circle_circle_pts_two_points() {
+        let pts = circle_circle_pts([0.0, 0.0], 5.0, [8.0, 0.0], 5.0);
+        assert_eq!(pts.len(), 2);
+        // Both lie on circle 1 at x = 4, y = ±3.
+        for p in &pts {
+            assert!(close(p[0], 4.0));
+            assert!(close(p[1].abs(), 3.0));
+            assert!(close(p[0] * p[0] + p[1] * p[1], 25.0));
+        }
+    }
+
+    #[test]
+    fn circle_circle_pts_tangent_and_miss() {
+        // Externally tangent (d == r1 + r2): exactly one point.
+        assert_eq!(circle_circle_pts([0.0, 0.0], 5.0, [10.0, 0.0], 5.0).len(), 1);
+        // Too far apart: none.
+        assert!(circle_circle_pts([0.0, 0.0], 1.0, [10.0, 0.0], 1.0).is_empty());
+    }
+
+    #[test]
+    fn compute_bulge_quarter_circle() {
+        // A 90° CCW arc has bulge tan(90°/4) = tan(22.5°) ≈ 0.41421.
+        let b = compute_bulge([1.0, 0.0], [0.0, 1.0], [0.0, 0.0]);
+        assert!(close(b, (PI / 8.0).tan()));
+        assert!(b > 0.0); // CCW → positive
+    }
+}

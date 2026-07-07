@@ -718,3 +718,93 @@ impl CadCommand for OffsetCommand {
 
 // ── Autocomplete registry ─────────────────────────────────
 inventory::submit!(crate::command::CommandRegistration { names: &["O", "OFFSET"] });  // OffsetCommand
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    #[test]
+    fn isect_lines_perpendicular() {
+        // The x-axis crossing a vertical line at x = 2 → (2, 0).
+        let p = isect_lines([0.0, 0.0], [1.0, 0.0], [2.0, -1.0], [2.0, 3.0]).unwrap();
+        assert!(close(p[0], 2.0) && close(p[1], 0.0));
+    }
+
+    #[test]
+    fn isect_lines_diagonal() {
+        // y = x  and  y = 2 - x  meet at (1, 1).
+        let p = isect_lines([0.0, 0.0], [1.0, 1.0], [0.0, 2.0], [1.0, 1.0]).unwrap();
+        assert!(close(p[0], 1.0) && close(p[1], 1.0));
+    }
+
+    #[test]
+    fn isect_lines_parallel_is_none() {
+        assert!(isect_lines([0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]).is_none());
+    }
+
+    #[test]
+    fn norm_rad_wraps_into_range() {
+        assert!(close(norm_rad(0.0), 0.0));
+        assert!(close(norm_rad(TAU), 0.0));
+        assert!(close(norm_rad(-std::f64::consts::PI), std::f64::consts::PI));
+        assert!(close(norm_rad(3.0 * TAU + 1.0), 1.0));
+    }
+
+    #[test]
+    fn offset_line_side_determines_direction() {
+        let l = LineEnt::from_coords(0.0, 0.0, 0.0, 10.0, 0.0, 0.0);
+        // Click above the line → the parallel copy shifts +Y.
+        let up = offset_line(&l, 2.0, Vec3::new(5.0, 5.0, 0.0)).unwrap();
+        let EntityType::Line(nl) = up else {
+            panic!("expected a Line")
+        };
+        assert!(close(nl.start.y, 2.0) && close(nl.end.y, 2.0));
+        assert!(close(nl.start.x, 0.0) && close(nl.end.x, 10.0));
+        // Click below → shifts -Y.
+        let down = offset_line(&l, 2.0, Vec3::new(5.0, -5.0, 0.0)).unwrap();
+        let EntityType::Line(nl) = down else {
+            panic!("expected a Line")
+        };
+        assert!(close(nl.start.y, -2.0) && close(nl.end.y, -2.0));
+    }
+
+    #[test]
+    fn offset_line_degenerate_is_none() {
+        let l = LineEnt::from_coords(1.0, 1.0, 0.0, 1.0, 1.0, 0.0);
+        assert!(offset_line(&l, 2.0, Vec3::new(0.0, 0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn offset_circle_grows_or_shrinks_by_side() {
+        let mut c = CircleEnt::new();
+        c.center.x = 0.0;
+        c.center.y = 0.0;
+        c.radius = 5.0;
+        // Click outside the circle → radius grows by dist.
+        let out = offset_circle(&c, 2.0, Vec3::new(10.0, 0.0, 0.0)).unwrap();
+        let EntityType::Circle(nc) = out else {
+            panic!("expected a Circle")
+        };
+        assert!(close(nc.radius, 7.0));
+        // Click inside → radius shrinks by dist.
+        let inside = offset_circle(&c, 2.0, Vec3::new(1.0, 0.0, 0.0)).unwrap();
+        let EntityType::Circle(nc) = inside else {
+            panic!("expected a Circle")
+        };
+        assert!(close(nc.radius, 3.0));
+    }
+
+    #[test]
+    fn offset_circle_collapsing_is_none() {
+        let mut c = CircleEnt::new();
+        c.center.x = 0.0;
+        c.center.y = 0.0;
+        c.radius = 5.0;
+        // Offsetting inward by the full radius would collapse the circle.
+        assert!(offset_circle(&c, 5.0, Vec3::new(0.5, 0.0, 0.0)).is_none());
+    }
+}
