@@ -1,10 +1,12 @@
 // 2D→3D modelling commands — EXTRUDE, REVOLVE, SWEEP, LOFT.
 //
 // Each picks profile/path entities and emits a `CmdResult` whose handler
-// builds a truck solid and inserts its MeshModel into scene.meshes under a
-// minimal placeholder Solid3D entity (empty ACIS — saving will not restore
-// the mesh). The standalone primitives (BOX/CYLINDER/CONE/SPHERE/WEDGE/TORUS)
-// live in the Model tab (`modules::model::primitive_cmd`).
+// builds a truck solid, tessellates it, and persists the result as a `Mesh`
+// entity (see `scene::mesh_tess`) — truck B-reps can't be written back as
+// ACIS, but their triangle tessellation round-trips through DWG/DXF as an
+// ACAD_MESH and re-tessellates into a shaded mesh on load. The standalone
+// primitives (BOX/CYLINDER/CONE/SPHERE/WEDGE/TORUS) live in the Model tab
+// (`modules::model::primitive_cmd`).
 
 use acadrust::{entities::Solid3D, EntityType};
 use glam::Vec3;

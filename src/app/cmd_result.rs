@@ -1145,7 +1145,6 @@ impl OpenCADStudio {
                 color,
             } => {
                 use crate::entities::traits::EntityTypeOps;
-                use crate::modules::insert::solid3d_cmds::empty_solid3d;
                 use crate::scene::acad_to_truck::TruckObject;
                 use crate::scene::truck_tess;
                 use truck_modeling::builder;
@@ -1182,12 +1181,13 @@ impl OpenCADStudio {
                             _ => None,
                         }
                     });
-                    if let Some(mut mesh) = result {
+                    if let Some(mesh) = result {
                         self.push_undo_snapshot(i, "EXTRUDE");
-                        let new_entity = empty_solid3d();
-                        let new_handle = self.tabs[i].scene.add_entity(new_entity);
-                        mesh.name = format!("{}", new_handle.value());
-                        self.tabs[i].scene.meshes.insert(new_handle, crate::scene::MeshLodSet::from_single(mesh));
+                        // Persist as a Mesh entity so the solid survives save/reload;
+                        // add_entity re-tessellates it into scene.meshes for display.
+                        let woff = self.tabs[i].scene.world_offset;
+                        let entity = crate::scene::mesh_tess::mesh_entity_from_model(&mesh, woff);
+                        self.tabs[i].scene.add_entity(entity);
                         self.tabs[i].dirty = true;
                         self.command_line.push_output("EXTRUDE: solid created.");
                     } else {
@@ -1211,7 +1211,6 @@ impl OpenCADStudio {
                 color,
             } => {
                 use crate::entities::traits::EntityTypeOps;
-                use crate::modules::insert::solid3d_cmds::empty_solid3d;
                 use crate::scene::acad_to_truck::TruckObject;
                 use crate::scene::truck_tess;
                 use truck_modeling::builder;
@@ -1257,12 +1256,13 @@ impl OpenCADStudio {
                             _ => None,
                         }
                     });
-                    if let Some(mut mesh) = result {
+                    if let Some(mesh) = result {
                         self.push_undo_snapshot(i, "REVOLVE");
-                        let new_entity = empty_solid3d();
-                        let new_handle = self.tabs[i].scene.add_entity(new_entity);
-                        mesh.name = format!("{}", new_handle.value());
-                        self.tabs[i].scene.meshes.insert(new_handle, crate::scene::MeshLodSet::from_single(mesh));
+                        // Persist as a Mesh entity so the solid survives save/reload;
+                        // add_entity re-tessellates it into scene.meshes for display.
+                        let woff = self.tabs[i].scene.world_offset;
+                        let entity = crate::scene::mesh_tess::mesh_entity_from_model(&mesh, woff);
+                        self.tabs[i].scene.add_entity(entity);
                         self.tabs[i].dirty = true;
                         self.command_line
                             .push_output(&format!("REVOLVE: solid created ({:.0}°).", angle_deg));
@@ -1286,7 +1286,6 @@ impl OpenCADStudio {
                 color,
             } => {
                 use crate::entities::traits::EntityTypeOps;
-                use crate::modules::insert::solid3d_cmds::empty_solid3d;
                 use crate::scene::acad_to_truck::TruckObject;
                 use crate::scene::truck_tess;
                 use truck_modeling::builder;
@@ -1415,12 +1414,13 @@ impl OpenCADStudio {
                     mesh
                 });
 
-                if let Some(mut mesh) = result {
+                if let Some(mesh) = result {
                     self.push_undo_snapshot(i, "SWEEP");
-                    let new_entity = empty_solid3d();
-                    let new_handle = self.tabs[i].scene.add_entity(new_entity);
-                    mesh.name = format!("{}", new_handle.value());
-                    self.tabs[i].scene.meshes.insert(new_handle, crate::scene::MeshLodSet::from_single(mesh));
+                    // Persist as a Mesh entity so the solid survives save/reload;
+                    // add_entity re-tessellates it into scene.meshes for display.
+                    let woff = self.tabs[i].scene.world_offset;
+                    let entity = crate::scene::mesh_tess::mesh_entity_from_model(&mesh, woff);
+                    self.tabs[i].scene.add_entity(entity);
                     self.tabs[i].dirty = true;
                     self.command_line.push_output("SWEEP: solid created.");
                 } else {
@@ -1435,7 +1435,6 @@ impl OpenCADStudio {
             // ── LOFT ───────────────────────────────────────────────────────
             CmdResult::LoftEntities { handles, color } => {
                 use crate::entities::traits::EntityTypeOps;
-                use crate::modules::insert::solid3d_cmds::empty_solid3d;
                 use crate::scene::acad_to_truck::TruckObject;
                 use crate::scene::truck_tess;
                 use truck_modeling::builder;
@@ -1499,12 +1498,13 @@ impl OpenCADStudio {
                     }
                 })();
 
-                if let Some(mut mesh) = result {
+                if let Some(mesh) = result {
                     self.push_undo_snapshot(i, "LOFT");
-                    let new_entity = empty_solid3d();
-                    let new_handle = self.tabs[i].scene.add_entity(new_entity);
-                    mesh.name = format!("{}", new_handle.value());
-                    self.tabs[i].scene.meshes.insert(new_handle, crate::scene::MeshLodSet::from_single(mesh));
+                    // Persist as a Mesh entity so the solid survives save/reload;
+                    // add_entity re-tessellates it into scene.meshes for display.
+                    let woff = self.tabs[i].scene.world_offset;
+                    let entity = crate::scene::mesh_tess::mesh_entity_from_model(&mesh, woff);
+                    self.tabs[i].scene.add_entity(entity);
                     self.tabs[i].dirty = true;
                     self.command_line.push_output(&format!(
                         "LOFT: solid created from {} profiles.",
