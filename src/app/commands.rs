@@ -5171,6 +5171,11 @@ impl OpenCADStudio {
                 return Task::done(Message::StepExport);
             }
 
+            // ── SVG export ────────────────────────────────────────────────
+            "SVGOUT" | "EXPORTSVG" => {
+                return Task::done(Message::SvgExport);
+            }
+
             // ── Plot Style Editor GUI ─────────────────────────────────────
             "PLOTSTYLEPANEL" | "PLOTSTYLEEDITOR" | "STYLESMANAGER" => {
                 return Task::done(Message::PlotStylePanelOpen);
