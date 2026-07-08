@@ -2225,19 +2225,33 @@ fn format_with_unit(value: f64, unit: i16, dec: usize, dimfrac: i16) -> String {
 fn format_engineering(inches: f64, dec: usize) -> String {
     let sign = if inches < 0.0 { "-" } else { "" };
     let abs = inches.abs();
-    let feet = (abs / 12.0).trunc();
-    let rem_in = abs - feet * 12.0;
+    let mut feet = (abs / 12.0).trunc();
+    let mut rem_in = abs - feet * 12.0;
+    // Round inches to the display precision, then carry 12" → 1' so that
+    // 11.999" at 2 dp prints 1'-0.00" rather than 0'-12.00".
+    let factor = 10f64.powi(dec as i32);
+    rem_in = (rem_in * factor).round() / factor;
+    if rem_in >= 12.0 {
+        rem_in -= 12.0;
+        feet += 1.0;
+    }
     format!("{}{:.0}'-{:.*}\"", sign, feet, dec, rem_in)
 }
 
 fn format_architectural(inches: f64, dimfrac: i16) -> String {
     let sign = if inches < 0.0 { "-" } else { "" };
     let abs = inches.abs();
-    let feet = (abs / 12.0).trunc();
+    let mut feet = (abs / 12.0).trunc();
     let rem_in_total = abs - feet * 12.0;
-    let whole = rem_in_total.trunc();
-    let frac = rem_in_total - whole;
-    let frac_str = fraction_string(frac, dimfrac);
+    let mut whole = rem_in_total.trunc();
+    let (carry, frac_str) = round_fraction(rem_in_total - whole, dimfrac);
+    // A fraction that rounds up to a whole inch carries into inches, which may
+    // in turn carry into feet (e.g. 11.99" → 1'-0" not 0'-12").
+    whole += carry as f64;
+    if whole >= 12.0 {
+        whole -= 12.0;
+        feet += 1.0;
+    }
     if frac_str.is_empty() {
         format!("{}{:.0}'-{:.0}\"", sign, feet, whole)
     } else {
@@ -2248,9 +2262,9 @@ fn format_architectural(inches: f64, dimfrac: i16) -> String {
 fn format_fractional(value: f64, dimfrac: i16) -> String {
     let sign = if value < 0.0 { "-" } else { "" };
     let abs = value.abs();
-    let whole = abs.trunc();
-    let frac = abs - whole;
-    let frac_str = fraction_string(frac, dimfrac);
+    let mut whole = abs.trunc();
+    let (carry, frac_str) = round_fraction(abs - whole, dimfrac);
+    whole += carry as f64;
     if frac_str.is_empty() {
         format!("{}{:.0}", sign, whole)
     } else if whole == 0.0 {
@@ -2260,7 +2274,14 @@ fn format_fractional(value: f64, dimfrac: i16) -> String {
     }
 }
 
-fn fraction_string(frac: f64, dimfrac: i16) -> String {
+/// Round `frac` ∈ [0, 1) to the nearest 1/2^k (`k` from DIMFRAC) and reduce.
+/// Returns `(carry, frac_str)`: `carry == 1` when the value rounds up to a
+/// whole unit (the caller must add it to the whole part), and `frac_str` is
+/// the reduced "n/d" — empty when it rounds to 0 or carries to a whole.
+// `% 2 == 0` (not `is_multiple_of`) keeps the crate's stated Rust 1.75+ MSRV;
+// `u64::is_multiple_of` only stabilised in 1.87.
+#[allow(clippy::manual_is_multiple_of)]
+fn round_fraction(frac: f64, dimfrac: i16) -> (i64, String) {
     // DIMFRAC denominator: AutoCAD encodes this on DIMSTYLE via DIMLUNIT
     // pairing — the value we accept is the *power-of-2* exponent (1..=6 ish).
     // Pick a sensible cap so the printed fraction stays readable.
@@ -2268,7 +2289,10 @@ fn fraction_string(frac: f64, dimfrac: i16) -> String {
     let denom = 1u64 << exp;
     let numer = (frac * denom as f64).round() as i64;
     if numer <= 0 {
-        return String::new();
+        return (0, String::new());
+    }
+    if numer as u64 >= denom {
+        return (1, String::new()); // rounded up to a whole unit
     }
     let mut n = numer as u64;
     let mut d = denom;
@@ -2276,13 +2300,7 @@ fn fraction_string(frac: f64, dimfrac: i16) -> String {
         n /= 2;
         d /= 2;
     }
-    if n == 0 {
-        String::new()
-    } else if d == 1 {
-        format!("{}", n) // whole-number overflow back to caller
-    } else {
-        format!("{}/{}", n, d)
-    }
+    (0, format!("{}/{}", n, d))
 }
 
 /// Format an angular measurement (input in degrees as Dimension::measurement
@@ -2319,11 +2337,23 @@ fn format_angular_value(measurement_deg: f64, style: Option<&DimStyle>) -> Strin
 fn format_dms(deg: f64, sec_dec: usize, azin: i16) -> String {
     let sign = if deg < 0.0 { "-" } else { "" };
     let abs = deg.abs();
-    let d = abs.floor();
+    let mut d = abs.floor();
     let m_full = (abs - d) * 60.0;
-    let m = m_full.floor();
+    let mut m = m_full.floor();
     let s = (m_full - m) * 60.0;
-    let s_str = format!("{:.*}", sec_dec, s);
+    // Round seconds to the display precision, then carry 60" → 1', 60' → 1°.
+    // Without the carry, 0.99999° prints "0°59'60"" instead of "1°0'0"".
+    let factor = 10f64.powi(sec_dec as i32);
+    let mut s_rounded = (s * factor).round() / factor;
+    if s_rounded >= 60.0 {
+        s_rounded -= 60.0;
+        m += 1.0;
+        if m >= 60.0 {
+            m -= 60.0;
+            d += 1.0;
+        }
+    }
+    let s_str = format!("{:.*}", sec_dec, s_rounded);
     let mut out = format!("{}{:.0}°{:.0}'{}\"", sign, d, m, s_str);
     if azin & 4 != 0 {
         // suppress 0° / 0' parts
@@ -2598,13 +2628,41 @@ mod tests {
 
     #[test]
     fn fractional_reduces_to_lowest_terms() {
-        assert_eq!(fraction_string(0.25, 2), "1/4");
-        assert_eq!(fraction_string(0.5, 2), "1/2");
-        assert_eq!(fraction_string(0.0, 2), "");
+        assert_eq!(round_fraction(0.25, 2), (0, "1/4".to_string()));
+        assert_eq!(round_fraction(0.5, 2), (0, "1/2".to_string()));
+        assert_eq!(round_fraction(0.0, 2), (0, String::new()));
         assert_eq!(format_fractional(2.5, 2), "2 1/2");
         assert_eq!(format_fractional(0.25, 2), "1/4"); // whole part omitted
         assert_eq!(format_fractional(3.0, 2), "3"); // no fraction
         assert_eq!(format_fractional(-2.5, 2), "-2 1/2");
+    }
+
+    #[test]
+    fn round_fraction_carries_to_whole() {
+        // A value that rounds up to the whole unit reports a carry, no fraction.
+        assert_eq!(round_fraction(0.999, 2), (1, String::new()));
+        // …and the callers must apply that carry rather than print "n 1".
+        assert_eq!(format_fractional(6.999, 2), "7");
+        assert_eq!(format_architectural(6.999, 2), "0'-7\"");
+        // Carry that ripples inches → feet.
+        assert_eq!(format_architectural(11.999, 2), "1'-0\"");
+    }
+
+    #[test]
+    fn dms_seconds_carry() {
+        // 0.99999° must not print "0°59'60"".
+        assert_eq!(format_dms(0.99999, 0, 0), "1°0'0\"");
+        // A clean angle is unaffected.
+        assert_eq!(format_dms(30.5, 0, 0), "30°30'0\"");
+        // Negative sign preserved.
+        assert_eq!(format_dms(-0.99999, 0, 0), "-1°0'0\"");
+    }
+
+    #[test]
+    fn engineering_inches_carry() {
+        // 11.999" at 2 dp must carry to 1'-0.00", not 0'-12.00".
+        assert_eq!(format_engineering(11.999, 2), "1'-0.00\"");
+        assert_eq!(format_engineering(18.0, 2), "1'-6.00\"");
     }
 }
 
