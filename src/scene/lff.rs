@@ -396,7 +396,7 @@ pub fn tessellate_text_run(
                             None => continue,
                         }
                     } else {
-                        cursor_x += (6.0 + font.letter_spacing * tracking) * wf;
+                        cursor_x += 6.0 + font.letter_spacing * tracking;
                         continue;
                     }
                 }
@@ -424,11 +424,17 @@ pub fn tessellate_text_run(
                     }
                     out.push(stroke.iter().map(|&[gx, gy]| xform(gx, gy, cursor_x)).collect());
                 }
-                cursor_x += (glyph.advance + font.letter_spacing * tracking) * wf;
+                // The cursor advances in glyph units; the width factor is
+                // applied once in `xform` (matching text_support::
+                // text_local_bounds and measure_word). Scaling the advance by
+                // `wf` here too double-applied it to the cursor, spreading
+                // glyphs super-linearly (a 2× factor gave ~3.5× spacing) and
+                // overflowing the width the MText layout allotted.
+                cursor_x += glyph.advance + font.letter_spacing * tracking;
             }
             None => {
                 warn_missing_glyph(font_name, render_ch);
-                cursor_x += (6.0 + font.letter_spacing * tracking) * wf;
+                cursor_x += 6.0 + font.letter_spacing * tracking;
             }
         }
     }
@@ -710,16 +716,35 @@ mod tests {
     }
 
     #[test]
-    fn width_factor_widens_without_changing_height() {
+    fn width_factor_scales_x_linearly() {
         let one = bbox(&run([0.0, 0.0], 0.0, 1.0, "MMM"));
         let two = bbox(&run([0.0, 0.0], 0.0, 2.0, "MMM"));
         let w1 = one[2] - one[0];
         let w2 = two[2] - two[0];
-        // A larger width factor widens the run but leaves the cap height alone.
-        // (The exact horizontal scaling law is intentionally not asserted — see
-        // the super-linear cursor/width-factor interaction in tessellate_text_run.)
-        assert!(w2 > w1 * 1.5, "wf=2 should widen: w1 {w1:.2} w2 {w2:.2}");
+        // The width factor scales the horizontal extent linearly (a 2× factor
+        // → 2× width) and leaves the cap height untouched. A regression here
+        // would mean wf is being applied more than once to the cursor.
+        assert!((w2 / w1 - 2.0).abs() < 0.02, "w1 {w1:.2} w2 {w2:.2}");
         assert!(((two[3] - two[1]) - (one[3] - one[1])).abs() < 1e-2, "height changed");
+    }
+
+    #[test]
+    fn render_width_matches_bounds_path() {
+        // tessellate_text_run (render) and text_local_bounds (measurement /
+        // MText layout) must agree on the horizontal extent for a non-unit
+        // width factor — the two disagreed while the render path double-applied
+        // the width factor.
+        use crate::entities::text_support::text_local_bounds;
+        for &wf in &[0.5, 1.0, 2.0, 3.0] {
+            let rendered = bbox(&run([0.0, 0.0], 0.0, wf, "MMM"));
+            let (bmin, bmax) = text_local_bounds("standard", "MMM", 9.0, wf, 0.0).unwrap();
+            let render_w = rendered[2] - rendered[0];
+            let bounds_w = bmax[0] - bmin[0];
+            assert!(
+                (render_w - bounds_w).abs() < 1e-2,
+                "wf {wf}: render {render_w:.3} vs bounds {bounds_w:.3}"
+            );
+        }
     }
 
     #[test]
