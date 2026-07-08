@@ -501,12 +501,31 @@ impl OpenCADStudio {
 
             Message::SvgExportPath(Some(path)) => {
                 let i = self.active_tab;
-                let wires = self.tabs[i].scene.entity_wires();
-                let hatches = self.tabs[i].scene.entity_hatches();
-                // Match the on-screen model background so the (already
-                // bg-adapted) wire/hatch colours read correctly in the export.
-                let [br, bg, bb, _] = self.tabs[i].scene.bg_color;
-                let svg = crate::io::svg::build_svg(&wires, &hatches, Some([br, bg, bb]));
+                let scene = &self.tabs[i].scene;
+                let wires = scene.entity_wires();
+                // Paper-space layout → export at the paper sheet size (white
+                // sheet, print-adapted colours, mm lineweights); model space →
+                // auto-fit the drawing on the model background.
+                let svg = match scene.paper_limits() {
+                    Some(((x0, y0), (x1, y1))) => {
+                        let hatches = scene.paper_canvas_hatches();
+                        let wipeouts = scene.paper_canvas_wipeouts();
+                        crate::io::svg::build_svg_sheet(
+                            &wires,
+                            hatches.as_slice(),
+                            wipeouts.as_slice(),
+                            x0,
+                            y0,
+                            x1 - x0,
+                            y1 - y0,
+                        )
+                    }
+                    None => {
+                        let hatches = scene.entity_hatches();
+                        let [br, bg, bb, _] = scene.bg_color;
+                        crate::io::svg::build_svg(&wires, &hatches, Some([br, bg, bb]))
+                    }
+                };
                 match std::fs::write(&path, svg) {
                     Ok(()) => self
                         .command_line
