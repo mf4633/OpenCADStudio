@@ -29,9 +29,8 @@ pub struct PasteCommand {
     /// clipboards. `on_preview_wires` runs every mouse move and translates every
     /// point of the ghost; for a whole-drawing paste that is O(hundreds of
     /// thousands) per frame and freezes placement. Above a point budget we ghost
-    /// just this 5-point rectangle instead — O(1) per frame — the same way
-    /// AutoCAD rubber-bands a box for a huge selection. `None` = ghost the full
-    /// wires.
+    /// just this 5-point rectangle instead — O(1) per frame. `None` = ghost the
+    /// full wires.
     bbox_wire: Option<WireModel>,
     /// Centroid of the clipboard entities (offset origin for translation).
     centroid: Vec3,
