@@ -424,3 +424,53 @@ fn push_lt_segment(token: &str, out: &mut Vec<LtSegment>) {
         out.push(seg);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_pattern_variants() {
+        assert_eq!(extract_pattern("Dashed __ __ __"), "__ __ __");
+        assert_eq!(extract_pattern("Dot . . . ."), ". . . .");
+        assert_eq!(extract_pattern("Solid"), "Solid");
+    }
+
+    #[test]
+    fn parse_elements_signs_and_dot() {
+        // Positive → dash, negative → space (stored negative), 0 → dot.
+        let els = parse_elements("0.5,-0.25,0");
+        assert_eq!(els.len(), 3);
+        assert!(els[0].is_dash() && (els[0].length - 0.5).abs() < 1e-9);
+        assert!(els[1].is_space() && (els[1].length + 0.25).abs() < 1e-9);
+        assert!(els[2].is_dot());
+    }
+
+    #[test]
+    fn parse_elements_skips_complex_bracket() {
+        // The embedded [ ... ] shape/text element is skipped by the simple
+        // parser, leaving just the two dash/space lengths around it.
+        let els = parse_elements(r#"0.5,["HW",STANDARD,S=0.1],-0.25"#);
+        assert_eq!(els.len(), 2);
+        assert!(els[0].is_dash());
+        assert!(els[1].is_space());
+    }
+
+    #[test]
+    fn parse_builds_linetype_from_lin() {
+        let src = "\
+;; comment
+*DASHED,Dashed __ __ __
+A,0.5,-0.25
+";
+        let lts = parse(src);
+        assert_eq!(lts.len(), 1);
+        let lt = &lts[0];
+        assert_eq!(lt.name, "DASHED");
+        assert_eq!(lt.description, "Dashed __ __ __");
+        assert_eq!(lt.elements.len(), 2);
+        assert!(lt.elements[0].is_dash() && lt.elements[1].is_space());
+        // pattern_length is the sum of absolute element lengths.
+        assert!((lt.pattern_length - 0.75).abs() < 1e-9);
+    }
+}
