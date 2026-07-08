@@ -668,6 +668,72 @@ fn bulge_to_points(p0: [f32; 2], p1: [f32; 2], bulge: f32) -> Vec<[f32; 2]> {
 mod tests {
     use super::*;
 
+    // Bounding box [min_x, min_y, max_x, max_y] of a stroke set.
+    fn bbox(strokes: &[Vec<[f32; 2]>]) -> [f32; 4] {
+        let mut b = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+        for s in strokes {
+            for &[x, y] in s {
+                b[0] = b[0].min(x);
+                b[1] = b[1].min(y);
+                b[2] = b[2].max(x);
+                b[3] = b[3].max(y);
+            }
+        }
+        b
+    }
+
+    fn run(origin: [f32; 2], rot: f32, wf: f32, text: &str) -> Vec<Vec<[f32; 2]>> {
+        tessellate_text_run(origin, 9.0, rot, wf, 0.0, 1.0, "standard", text)
+    }
+
+    #[test]
+    fn empty_or_zero_height_yields_nothing() {
+        assert!(run([0.0, 0.0], 0.0, 1.0, "").is_empty());
+        assert!(tessellate_text_run([0.0, 0.0], 0.0, 0.0, 1.0, 0.0, 1.0, "standard", "AB").is_empty());
+        assert!(!run([0.0, 0.0], 0.0, 1.0, "AB").is_empty());
+    }
+
+    #[test]
+    fn origin_only_translates() {
+        // The same text at two origins differs by exactly the origin delta at
+        // every point — glyph geometry is reused, only the transform changes.
+        let a = run([0.0, 0.0], 0.0, 1.0, "AB");
+        let b = run([10.0, -5.0], 0.0, 1.0, "AB");
+        assert_eq!(a.len(), b.len());
+        for (sa, sb) in a.iter().zip(&b) {
+            assert_eq!(sa.len(), sb.len());
+            for (&[ax, ay], &[bx, by]) in sa.iter().zip(sb) {
+                assert!((bx - ax - 10.0).abs() < 1e-3, "dx {}", bx - ax);
+                assert!((by - ay + 5.0).abs() < 1e-3, "dy {}", by - ay);
+            }
+        }
+    }
+
+    #[test]
+    fn width_factor_widens_without_changing_height() {
+        let one = bbox(&run([0.0, 0.0], 0.0, 1.0, "MMM"));
+        let two = bbox(&run([0.0, 0.0], 0.0, 2.0, "MMM"));
+        let w1 = one[2] - one[0];
+        let w2 = two[2] - two[0];
+        // A larger width factor widens the run but leaves the cap height alone.
+        // (The exact horizontal scaling law is intentionally not asserted — see
+        // the super-linear cursor/width-factor interaction in tessellate_text_run.)
+        assert!(w2 > w1 * 1.5, "wf=2 should widen: w1 {w1:.2} w2 {w2:.2}");
+        assert!(((two[3] - two[1]) - (one[3] - one[1])).abs() < 1e-2, "height changed");
+    }
+
+    #[test]
+    fn rotation_swaps_extents() {
+        // A wide horizontal run becomes tall when rotated 90°.
+        let flat = bbox(&run([0.0, 0.0], 0.0, 1.0, "WIDE TEXT"));
+        let turned = bbox(&run([0.0, 0.0], std::f32::consts::FRAC_PI_2, 1.0, "WIDE TEXT"));
+        assert!(flat[2] - flat[0] > flat[3] - flat[1], "flat run should be wider than tall");
+        assert!(
+            turned[3] - turned[1] > turned[2] - turned[0],
+            "rotated run should be taller than wide"
+        );
+    }
+
     #[test]
     fn fonts_parse_and_resolve() {
         // Straight-stroke glyph.
