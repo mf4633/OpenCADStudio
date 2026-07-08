@@ -75,6 +75,26 @@ pub async fn open_path_with_phase(
             purge_corrupt_entities(&mut doc)
         };
         let purge_ms = t_purge.elapsed().as_millis() as u32;
+
+        // Resolve XREFs here, on the background thread (Roadmap 1.2). It used
+        // to run on the UI thread in the `FileOpened` handler, so a large
+        // external reference (its own file parse + merge) froze the UI. Doing
+        // it before `build_derived_caches` also means xref hatch/image/mesh
+        // entities are folded into the derived caches — the old ordering built
+        // caches first, so merged xref content was missing from them.
+        // `resolve_xrefs` runs the corrupt-entity guard inline as it merges, so
+        // no extra full-document walk is needed. Paths resolve relative to the
+        // opened file's directory; a file with no parent has no xrefs to find.
+        let t_xref = Instant::now();
+        let (xrefs, xref_dropped) = match path2.parent() {
+            Some(base_dir) => {
+                crate::profile_scope!("io::xref");
+                xref::resolve_xrefs(&mut doc, base_dir)
+            }
+            None => (Vec::new(), 0),
+        };
+        let xref_ms = t_xref.elapsed().as_millis() as u32;
+
         phase2.store(PHASE_CACHING, Ordering::Relaxed);
         let t_caches = Instant::now();
         let mut caches = {
@@ -85,8 +105,11 @@ pub async fn open_path_with_phase(
             parse_ms,
             purge_ms,
             caches_ms: t_caches.elapsed().as_millis() as u32,
+            xref_ms,
         };
         caches.corrupt_dropped = dropped;
+        caches.xrefs = xrefs;
+        caches.xref_dropped = xref_dropped;
         phase2.store(PHASE_FINALIZING, Ordering::Relaxed);
         Ok((doc, caches))
     })
