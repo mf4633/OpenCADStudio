@@ -1116,28 +1116,6 @@ impl OpenCADStudio {
                     .push_output(&format!("STRETCH: {count} entity(ies) stretched."));
                 self.refresh_properties();
             }
-            // ── Solid3D creation (BOX / SPHERE / CYLINDER) ────────────────
-            CmdResult::CommitSolid3D { mesh_fn } => {
-                use crate::modules::insert::solid3d_cmds::empty_solid3d;
-                self.push_undo_snapshot(i, "SOLID3D");
-                let entity = empty_solid3d();
-                let handle = self.tabs[i].scene.add_entity(entity);
-                if !handle.is_null() {
-                    let name = format!("{}", handle.value());
-                    let color = [0.6f32, 0.6, 0.8, 1.0]; // default colour; command embedded it
-                    let _ = color; // color is captured inside mesh_fn
-                    if let Some(mesh) = mesh_fn(name) {
-                        self.tabs[i].scene.meshes.insert(handle, crate::scene::MeshLodSet::from_single(mesh));
-                    }
-                    self.tabs[i].dirty = true;
-                    self.command_line.push_output("Solid created.");
-                }
-                self.tabs[i].active_cmd = None;
-                self.tabs[i].snap_result = None;
-                self.tabs[i].scene.clear_preview_wire();
-                self.restore_pre_cmd_tangent();
-            }
-
             // ── EXTRUDE ────────────────────────────────────────────────────
             CmdResult::ExtrudeEntity {
                 handle,

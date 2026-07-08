@@ -8,7 +8,6 @@
 // primitives (BOX/CYLINDER/CONE/SPHERE/WEDGE/TORUS) live in the Model tab
 // (`modules::model::primitive_cmd`).
 
-use acadrust::{entities::Solid3D, EntityType};
 use glam::Vec3;
 
 use crate::command::{CadCommand, CmdResult};
@@ -320,13 +319,6 @@ impl CadCommand for LoftCommand {
             }
         }
     }
-}
-
-// ── Placeholder Solid3D entity construction ────────────────────────────────
-
-/// Create a minimal Solid3D entity with empty ACIS data (placeholder only).
-pub fn empty_solid3d() -> EntityType {
-    EntityType::Solid3D(Solid3D::new())
 }
 
 
