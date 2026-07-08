@@ -39,14 +39,22 @@ walking `doc.entities()` again is a measurable cost.
 **Work:** make `resolve_xrefs` call purge as it merges each xref; remove
 [`update.rs:138`](src/app/update.rs#L138).
 
-### 1.2 Move XREF resolution to the background thread
+### 1.2 Move XREF resolution to the background thread ✅ DONE
 
-[`resolve_xrefs`](src/app/update.rs#L132-L166) runs on the UI thread today —
-large external references freeze the UI. Move it into the
-`open_path_with_phase` worker; have `DerivedCaches` carry the resolved-xref
-list back. The UI thread only emits log lines.
+`resolve_xrefs` used to run on the UI thread in the `FileOpened` handler, so a
+large external reference (its own file parse + entity merge) froze the UI. It
+now runs inside the `open_path_with_phase` worker, between purge and
+`build_derived_caches`. `DerivedCaches` carries the resolved `xrefs` list, the
+`xref_dropped` count, and an `xref_ms` timing back; the UI thread only emits
+the `XREF Loaded/Not found/Unloaded` log lines and the timing breakdown.
 
-**New phase tag:** `PHASE_XREFS` (we already have 3 phases; this is the 4th).
+Resolving **before** the cache build also fixed a latent bug: the old ordering
+built the hatch/image/mesh caches first and merged xref entities afterward, so
+an xref's hatches/images/meshes were missing from the derived caches. They are
+now folded in because the merge happens first.
+
+The FINALIZING phase tag still covers this window, so no 4th phase marker was
+needed — the extra background span is small relative to parse.
 
 ### 1.3 Single-pass entity walk (parse + purge + cache planning)
 
