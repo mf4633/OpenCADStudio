@@ -2462,3 +2462,112 @@ impl CadCommand for ExtendCommand {
 // ── Autocomplete registry ─────────────────────────────────
 inventory::submit!(crate::command::CommandRegistration { names: &["EX", "EXTEND"] });  // ExtendCommand
 inventory::submit!(crate::command::CommandRegistration { names: &["TR", "TRIM"] });  // TrimCommand
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    #[test]
+    fn norm_wraps_into_range() {
+        assert!(close(norm(-PI), PI));
+        assert!(close(norm(TAU + 1.0), 1.0));
+        assert!(close(norm(0.0), 0.0));
+    }
+
+    #[test]
+    fn in_arc_simple_upper_half() {
+        // Arc CCW from 0 to π.
+        assert!(in_arc(FRAC_PI_2, 0.0, PI));
+        assert!(!in_arc(3.0 * FRAC_PI_2, 0.0, PI));
+    }
+
+    #[test]
+    fn in_arc_wrapping_across_zero() {
+        // Arc CCW from 3π/2 to π/2 passes through angle 0.
+        assert!(in_arc(0.0, 3.0 * FRAC_PI_2, FRAC_PI_2));
+        assert!(!in_arc(PI, 3.0 * FRAC_PI_2, FRAC_PI_2));
+    }
+
+    #[test]
+    fn in_arc_full_circle() {
+        // Coincident start/end is treated as the whole circle.
+        assert!(in_arc(1.234, 0.0, 0.0));
+    }
+
+    #[test]
+    fn arc_t_parametrises_ccw() {
+        assert!(close(arc_t(0.0, 0.0, FRAC_PI_2), 0.0));
+        assert!(close(arc_t(FRAC_PI_4, 0.0, FRAC_PI_2), 0.5));
+        assert!(close(arc_t(FRAC_PI_2, 0.0, FRAC_PI_2), 1.0));
+        // Beyond the arc end clamps to 1.
+        assert!(close(arc_t(PI, 0.0, FRAC_PI_2), 1.0));
+    }
+
+    #[test]
+    fn ll_intersects_and_parallel() {
+        let (t, u) = ll(0.0, 0.0, 1.0, 0.0, 2.0, -1.0, 0.0, 1.0).unwrap();
+        assert!(close(t, 2.0) && close(u, 1.0));
+        assert!(ll(0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn lc_line_circle_hits() {
+        let ts = lc(-10.0, 0.0, 1.0, 0.0, 0.0, 0.0, 5.0);
+        assert_eq!(ts.len(), 2);
+        assert!(close(ts[0], 5.0) && close(ts[1], 15.0));
+        assert!(lc(-10.0, 10.0, 1.0, 0.0, 0.0, 0.0, 5.0).is_empty());
+    }
+
+    #[test]
+    fn cc_angles_two_intersections() {
+        let angs = cc_angles(0.0, 0.0, 5.0, 8.0, 0.0, 5.0);
+        assert_eq!(angs.len(), 2);
+        // Each angle maps back to x = 4, y = ±3 on circle 1.
+        for a in &angs {
+            assert!(close(5.0 * a.cos(), 4.0));
+            assert!(close((5.0 * a.sin()).abs(), 3.0));
+        }
+    }
+
+    #[test]
+    fn cc_angles_disjoint_is_empty() {
+        assert!(cc_angles(0.0, 0.0, 1.0, 10.0, 0.0, 1.0).is_empty());
+    }
+
+    #[test]
+    fn trim_intervals_removes_clicked_span() {
+        // One cut at 0.5; clicking the first half keeps the second half.
+        assert_eq!(trim_intervals(&[0.5], 0.25), vec![(0.5, 1.0)]);
+        // Clicking the second half keeps the first.
+        assert_eq!(trim_intervals(&[0.5], 0.75), vec![(0.0, 0.5)]);
+        // Two cuts; clicking the middle span keeps the two outer spans.
+        assert_eq!(trim_intervals(&[0.3, 0.7], 0.5), vec![(0.0, 0.3), (0.7, 1.0)]);
+        // No cuts → the click removes the whole entity.
+        assert!(trim_intervals(&[], 0.5).is_empty());
+    }
+
+    #[test]
+    fn lerp2_interpolates() {
+        assert_eq!(lerp2([0.0, 0.0], [10.0, 20.0], 0.0), [0.0, 0.0]);
+        assert_eq!(lerp2([0.0, 0.0], [10.0, 20.0], 0.5), [5.0, 10.0]);
+        assert_eq!(lerp2([0.0, 0.0], [10.0, 20.0], 1.0), [10.0, 20.0]);
+    }
+
+    #[test]
+    fn trim_line_keeps_unclicked_segment() {
+        let l = LineEnt::from_coords(0.0, 0.0, 0.0, 10.0, 0.0, 0.0);
+        // Cut at the midpoint (t = 0.5, x = 5) and click the first half.
+        let out = trim_line(&l, &[0.5], 0.25);
+        assert_eq!(out.len(), 1);
+        let EntityType::Line(seg) = &out[0] else {
+            panic!("expected a Line")
+        };
+        assert!(close(seg.start.x, 5.0) && close(seg.end.x, 10.0));
+        assert!(close(seg.start.y, 0.0) && close(seg.end.y, 0.0));
+    }
+}

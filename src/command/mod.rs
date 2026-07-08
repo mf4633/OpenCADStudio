@@ -181,11 +181,6 @@ pub enum CmdResult {
         /// Translation vector to apply to vertices inside the window.
         delta: Vec3,
     },
-    /// Create a Solid3D placeholder entity + associated MeshModel.
-    /// `mesh_fn` is called with the entity's handle string to build the mesh.
-    CommitSolid3D {
-        mesh_fn: Box<dyn FnOnce(String) -> Option<crate::scene::mesh_model::MeshModel> + Send>,
-    },
     /// Extrude the profile entity `handle` by `height` along Z.
     ExtrudeEntity {
         handle: Handle,

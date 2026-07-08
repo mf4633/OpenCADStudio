@@ -10,6 +10,7 @@ pub mod hatch_patterns;
 pub mod hit_test;
 pub mod image_model;
 pub mod mesh_model;
+pub mod mesh_tess;
 pub mod model_solid;
 pub mod object;
 pub mod pipeline;
@@ -185,9 +186,10 @@ pub fn build_derived_caches(doc: &CadDocument) -> DerivedCaches {
         match e {
             EntityType::Hatch(_) | EntityType::Solid(_) => hatch_handles.push(h),
             EntityType::RasterImage(_) => image_handles.push(h),
-            EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_) => {
-                mesh_handles.push(h)
-            }
+            EntityType::Solid3D(_)
+            | EntityType::Region(_)
+            | EntityType::Body(_)
+            | EntityType::Mesh(_) => mesh_handles.push(h),
             _ => {}
         }
         if let Some(c) = offset_centroid(e, model_block, &prep) {
@@ -246,8 +248,11 @@ pub fn build_derived_caches(doc: &CadDocument) -> DerivedCaches {
             let e = doc.get_entity(handle)?;
             let (raw, ..) = render::render_style_for(doc, e);
             let color = render::adapt_to_bg(raw, LOAD_BG);
-            crate::entities::solid3d::tessellate_volume(e, color, facet_res)
-                .map(|m| (handle, offset_mesh_lod_set(m, world_offset)))
+            let set = match e {
+                EntityType::Mesh(_) => mesh_tess::tessellate_mesh_entity(e, color),
+                _ => crate::entities::solid3d::tessellate_volume(e, color, facet_res),
+            };
+            set.map(|m| (handle, offset_mesh_lod_set(m, world_offset)))
         })
         .collect();
 
@@ -3393,6 +3398,10 @@ impl Scene {
             let woff = self.world_offset;
             crate::entities::solid3d::tessellate_volume(&entity, color, facet_res)
                 .map(|m| offset_mesh_lod_set(m, woff))
+        } else if matches!(&entity, EntityType::Mesh(_)) {
+            let color = self.render_style(&entity).0;
+            let woff = self.world_offset;
+            mesh_tess::tessellate_mesh_entity(&entity, color).map(|m| offset_mesh_lod_set(m, woff))
         } else {
             None
         };
@@ -4254,7 +4263,10 @@ impl Scene {
             .document
             .entities()
             .filter_map(|e| match e {
-                EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_) => {
+                EntityType::Solid3D(_)
+                | EntityType::Region(_)
+                | EntityType::Body(_)
+                | EntityType::Mesh(_) => {
                     let color = self.render_style(e).0;
                     Some((e.common().handle, e.clone(), color))
                 }
@@ -4268,8 +4280,11 @@ impl Scene {
         self.meshes = entries
             .into_par_iter()
             .filter_map(|(handle, entity, color)| {
-                crate::entities::solid3d::tessellate_volume(&entity, color, facet_res)
-                    .map(|m| (handle, offset_mesh_lod_set(m, woff)))
+                let set = match &entity {
+                    EntityType::Mesh(_) => mesh_tess::tessellate_mesh_entity(&entity, color),
+                    _ => crate::entities::solid3d::tessellate_volume(&entity, color, facet_res),
+                };
+                set.map(|m| (handle, offset_mesh_lod_set(m, woff)))
             })
             .collect();
 

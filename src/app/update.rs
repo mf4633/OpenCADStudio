@@ -562,14 +562,12 @@ impl OpenCADStudio {
                             .unwrap_or_else(|| "obj_mesh".into());
                         mesh.name = file_stem.clone();
                         self.push_undo_snapshot(i, "IMPORTOBJ");
-                        use crate::modules::insert::solid3d_cmds::empty_solid3d;
-                        let entity = empty_solid3d();
+                        // Persist as a Mesh entity so the imported geometry survives
+                        // save/reload; add_entity re-tessellates it into scene.meshes.
+                        let woff = self.tabs[i].scene.world_offset;
+                        let entity = crate::scene::mesh_tess::mesh_entity_from_model(&mesh, woff);
                         let handle = self.tabs[i].scene.add_entity(entity);
                         if !handle.is_null() {
-                            self.tabs[i]
-                                .scene
-                                .meshes
-                                .insert(handle, crate::scene::MeshLodSet::from_single(mesh));
                             self.tabs[i].dirty = true;
                             self.command_line.push_output(&format!(
                                 "IMPORTOBJ: imported \"{}\" as mesh.",
