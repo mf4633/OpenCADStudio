@@ -367,11 +367,24 @@ Tessellation allocates millions of small `Vec<Vec3>`s. A bump arena —
 single allocation, frame-end reset — kills the per-vertex malloc cost.
 `bumpalo` plays well with rayon (per-thread arenas).
 
-### 4.3 `SmallVec` for small collections
+### 4.3 `SmallVec` for small collections — DEPRIORITIZED
 
 `Polyline.vertices`, `Hatch.boundary_paths`, glyph-stroke lists are
 typically < 8-16 entries. `SmallVec<[T; 8]>` skips the heap on the common
 case.
+
+**Why parked (assessed 2026-07):** of the three named targets, two —
+`Polyline.vertices` and `Hatch.boundary_paths` — are **acadrust-owned**
+types we can't change without carrying a fork patch. The one we do own,
+glyph strokes, is the pervasive `Vec<Vec<[f32; 2]>>` polyline-list type that
+also carries hatch outlines, wide fills, tolerances, tables and multileader
+text — swapping it to `SmallVec` ripples through ~15 files. And the payoff
+is small: glyph geometry is parsed **once** per font and cached process-wide
+(3.5), so the stroke `Vec`s aren't a per-frame or per-open allocation hot
+spot. Net: wide churn + a new dependency for no measurable win. Revisit only
+if a profile (5.1) actually shows small-`Vec` malloc as a hot slice — 4.2
+(bump arena for the genuinely millions-of-`Vec` tessellation path) is the
+better allocation lever if one is needed.
 
 ### 4.4 Compact entity-ID representation
 
