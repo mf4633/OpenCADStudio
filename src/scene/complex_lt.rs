@@ -69,8 +69,10 @@ pub fn apply_along(
         let perp = [-fwd[1], fwd[0], fwd[2]];
 
         let mut pos = 0.0f32;
+        let mut stuck = 0usize;
 
         while pos < seg_len - 1e-6 {
+            let pos_before = pos;
             let idx = elem_idx % scaled.len();
 
             match &scaled[idx] {
@@ -115,9 +117,6 @@ pub fn apply_along(
                     strokes.push(vec![p, p]);
                     elem_idx += 1;
                     elem_consumed = 0.0;
-                    if pos < 1e-6 {
-                        break;
-                    }
                 }
 
                 LtSeg::Shape {
@@ -137,9 +136,6 @@ pub fn apply_along(
 
                     elem_idx += 1;
                     elem_consumed = 0.0;
-                    if pos < 1e-6 {
-                        break;
-                    }
                 }
                 LtSeg::Text {
                     text,
@@ -174,10 +170,21 @@ pub fn apply_along(
 
                     elem_idx += 1;
                     elem_consumed = 0.0;
-                    if pos < 1e-6 {
-                        break;
-                    }
                 }
+            }
+
+            // Zero-length elements (dot / shape / text) advance `elem_idx` but
+            // not `pos`. Bail only if a full pattern cycle passes without any
+            // progress — this avoids an infinite loop without skipping the rest
+            // of the path segment (the old `if pos < 1e-6 { break }` dropped
+            // every dash after a leading dot/shape/text).
+            if pos <= pos_before + 1e-9 {
+                stuck += 1;
+                if stuck > scaled.len() {
+                    break;
+                }
+            } else {
+                stuck = 0;
             }
         }
     }
@@ -331,4 +338,64 @@ fn emit_shape(
                 .collect()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::linetypes::{ComplexLt, LtSegment};
+
+    fn max_x(wires: &[WireModel]) -> f32 {
+        wires
+            .iter()
+            .flat_map(|w| w.points.iter())
+            .map(|p| p[0])
+            .fold(f32::MIN, f32::max)
+    }
+
+    #[test]
+    fn leading_dot_does_not_drop_the_rest_of_the_segment() {
+        // A pattern starting with a zero-length element (Dot) applied to a
+        // single path segment must still draw the dashes that follow.
+        let lt = ComplexLt {
+            segments: vec![
+                LtSegment::Dot,
+                LtSegment::Dash(5.0),
+                LtSegment::Space(5.0),
+            ],
+        };
+        let path = [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0]];
+        let wires = apply_along("DOTLINE", &path, &lt, 1.0, [0.0, 0.0, 0.0, 1.0], false, 1.0);
+        assert!(
+            max_x(&wires) > 4.0,
+            "dashes after the leading dot were dropped (max_x = {})",
+            max_x(&wires)
+        );
+    }
+
+    #[test]
+    fn plain_dash_space_pattern_is_unchanged() {
+        // Common case must be unaffected: 20 units of [dash 5, space 5] gives
+        // exactly two dashes ([0,5] and [10,15]).
+        let lt = ComplexLt {
+            segments: vec![LtSegment::Dash(5.0), LtSegment::Space(5.0)],
+        };
+        let path = [[0.0, 0.0, 0.0], [20.0, 0.0, 0.0]];
+        let wires = apply_along("DASHED", &path, &lt, 1.0, [0.0, 0.0, 0.0, 1.0], false, 1.0);
+        assert_eq!(wires.len(), 2, "expected two dashes");
+        assert!((max_x(&wires) - 15.0).abs() < 1e-3, "second dash should end at 15");
+    }
+
+    #[test]
+    fn dot_in_pattern_across_vertices_terminates_and_covers() {
+        // A dot mid-pattern over a multi-segment polyline must terminate (no
+        // infinite loop) and still draw dashes on every segment.
+        let lt = ComplexLt {
+            segments: vec![LtSegment::Dash(3.0), LtSegment::Dot, LtSegment::Space(3.0)],
+        };
+        let path = [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [20.0, 0.0, 0.0]];
+        let wires = apply_along("DASHDOT", &path, &lt, 1.0, [0.0, 0.0, 0.0, 1.0], false, 1.0);
+        assert!(!wires.is_empty());
+        assert!(max_x(&wires) > 18.0, "dashes should reach the far end (max_x = {})", max_x(&wires));
+    }
 }
