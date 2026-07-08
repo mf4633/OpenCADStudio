@@ -69,12 +69,6 @@ pub async fn open_path_with_phase(
             load_file(&path2)?
         };
         let parse_ms = t_parse.elapsed().as_millis() as u32;
-        let t_purge = Instant::now();
-        let dropped = {
-            crate::profile_scope!("io::purge");
-            purge_corrupt_entities(&mut doc)
-        };
-        let purge_ms = t_purge.elapsed().as_millis() as u32;
 
         // Resolve XREFs here, on the background thread (Roadmap 1.2). It used
         // to run on the UI thread in the `FileOpened` handler, so a large
@@ -97,17 +91,18 @@ pub async fn open_path_with_phase(
 
         phase2.store(PHASE_CACHING, Ordering::Relaxed);
         let t_caches = Instant::now();
+        // `build_derived_caches` now also purges corrupt entities in its single
+        // planning pass (Roadmap 1.3) and reports the count in
+        // `caches.corrupt_dropped`, so the purge time is part of `caches_ms`.
         let mut caches = {
             crate::profile_scope!("io::caches");
-            crate::scene::build_derived_caches(&doc)
+            crate::scene::build_derived_caches(&mut doc)
         };
         caches.timings = crate::scene::OpenTimings {
             parse_ms,
-            purge_ms,
             caches_ms: t_caches.elapsed().as_millis() as u32,
             xref_ms,
         };
-        caches.corrupt_dropped = dropped;
         caches.xrefs = xrefs;
         caches.xref_dropped = xref_dropped;
         phase2.store(PHASE_FINALIZING, Ordering::Relaxed);

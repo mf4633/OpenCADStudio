@@ -202,17 +202,14 @@ impl OpenCADStudio {
                 // Open-time breakdown so regressions are visible immediately.
                 // `total` is wall time from the Open click to here (pre-first
                 // -frame); the phase figures are all background-thread spans
-                // (parse / purge / xref resolve / derived-cache build).
+                // (parse / xref resolve / derived-cache build, the last of
+                // which now includes the corrupt-entity purge — Roadmap 1.3).
                 let total_ms = open_started
                     .map(|s| s.elapsed().as_millis() as u32)
                     .unwrap_or(0);
                 self.command_line.push_info(&format!(
-                    "  parse {}ms · purge {}ms · xref {}ms · caches {}ms · total {}ms",
-                    timings.parse_ms,
-                    timings.purge_ms,
-                    timings.xref_ms,
-                    timings.caches_ms,
-                    total_ms
+                    "  parse {}ms · xref {}ms · caches {}ms · total {}ms",
+                    timings.parse_ms, timings.xref_ms, timings.caches_ms, total_ms
                 ));
 
                 // Caches were built on the background thread inside open_path().
