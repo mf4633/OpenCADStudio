@@ -264,29 +264,48 @@ fn apply_grip(ell: &mut Ellipse, grip_id: usize, apply: GripApply) {
             ell.major_axis.z = p.z as f64 - ell.center.z;
         }
         (2, GripApply::Absolute(p)) => {
-            let major_len = ell.major_axis_length();
-            if major_len > 1e-10 {
-                let dx = p.x as f64 - ell.center.x;
-                let dy = p.y as f64 - ell.center.y;
-                let dist = (dx * dx + dy * dy).sqrt();
-                if dist <= major_len {
-                    // Minor axis stays the shorter one: just update the ratio.
-                    ell.minor_axis_ratio = (dist / major_len).clamp(0.001, 1.0);
-                } else if dist > 1e-10 {
-                    // Dragged past the major length. Rather than clamping (which
-                    // pins the minor grip at the major radius), rotate the
-                    // definition: the minor direction becomes the new major axis
-                    // so the stored ratio stays <= 1.0 as the file format requires.
-                    let perp_x = -ell.major_axis.y;
-                    let perp_y = ell.major_axis.x;
-                    let perp_len = (perp_x * perp_x + perp_y * perp_y).sqrt();
-                    if perp_len > 1e-10 {
-                        let s = dist / perp_len;
-                        ell.major_axis.x = perp_x * s;
-                        ell.major_axis.y = perp_y * s;
-                        ell.minor_axis_ratio = (major_len / dist).clamp(0.001, 1.0);
-                    }
-                }
+            // Minor-axis grip. The two axes are always perpendicular, so this
+            // grip stretches one of them along its fixed direction while the
+            // other stays put. Work in the ellipse's view plane (XY).
+            let mx = ell.major_axis.x;
+            let my = ell.major_axis.y;
+            let major_len = (mx * mx + my * my).sqrt();
+            if major_len <= 1e-10 {
+                return;
+            }
+            let major_unit = (mx / major_len, my / major_len);
+            let minor_unit = (-major_unit.1, major_unit.0);
+            let minor_len = major_len * ell.minor_axis_ratio;
+
+            let dx = p.x as f64 - ell.center.x;
+            let dy = p.y as f64 - ell.center.y;
+            // Which stored axis is actually under the cursor? Below a circle it
+            // is the minor direction; once the drag pushes the minor past the
+            // major and the axes swap, the grabbed endpoint sits on the major
+            // direction. Decide by cursor alignment — NOT by recomputing a perp
+            // from the just-swapped major every frame — so a continuous drag
+            // stays stable instead of flipping the major 90° each move (which
+            // made both axes balloon once the minor reached the major). The
+            // perpendicular (non-dragged) axis keeps its length; the longer axis
+            // is stored as the major so the ratio stays <= 1 per the file format.
+            let along_major = (dx * major_unit.0 + dy * major_unit.1).abs();
+            let along_minor = (dx * minor_unit.0 + dy * minor_unit.1).abs();
+            let (drag_dir, dragged_len, fixed_dir, fixed_len) = if along_minor >= along_major {
+                (minor_unit, along_minor, major_unit, major_len)
+            } else {
+                (major_unit, along_major, minor_unit, minor_len)
+            };
+            if fixed_len <= 1e-10 {
+                return;
+            }
+            if dragged_len >= fixed_len {
+                ell.major_axis.x = drag_dir.0 * dragged_len;
+                ell.major_axis.y = drag_dir.1 * dragged_len;
+                ell.minor_axis_ratio = (fixed_len / dragged_len).clamp(0.001, 1.0);
+            } else {
+                ell.major_axis.x = fixed_dir.0 * fixed_len;
+                ell.major_axis.y = fixed_dir.1 * fixed_len;
+                ell.minor_axis_ratio = (dragged_len / fixed_len).clamp(0.001, 1.0);
             }
         }
         _ => {}
@@ -376,5 +395,57 @@ impl crate::entities::traits::MassPropsCalc for acadrust::entities::Ellipse {
             cx: e.center.x,
             cy: e.center.y,
         }
+    }
+}
+
+#[cfg(test)]
+mod grip_tests {
+    use super::*;
+    use glam::DVec3;
+
+    fn ell(major_x: f64, ratio: f64) -> Ellipse {
+        let mut e = Ellipse::default();
+        e.center.x = 0.0;
+        e.center.y = 0.0;
+        e.center.z = 0.0;
+        e.major_axis.x = major_x;
+        e.major_axis.y = 0.0;
+        e.major_axis.z = 0.0;
+        e.minor_axis_ratio = ratio;
+        e
+    }
+    fn xy_len(v: &acadrust::entities::Ellipse) -> f64 {
+        (v.major_axis.x * v.major_axis.x + v.major_axis.y * v.major_axis.y).sqrt()
+    }
+
+    #[test]
+    fn minor_grip_below_major_updates_ratio_only() {
+        let mut e = ell(10.0, 0.5);
+        apply_grip(&mut e, 2, GripApply::Absolute(DVec3::new(0.0, 8.0, 0.0)));
+        assert!((xy_len(&e) - 10.0).abs() < 1e-9, "major axis unchanged");
+        assert!((e.minor_axis_ratio - 0.8).abs() < 1e-9, "ratio = 8/10");
+    }
+
+    #[test]
+    fn minor_grip_past_major_swaps_without_ballooning() {
+        // major=10 (+X), minor=5 (+Y). Drag the minor grip to (0,11), past major.
+        let mut e = ell(10.0, 0.5);
+        apply_grip(&mut e, 2, GripApply::Absolute(DVec3::new(0.0, 11.0, 0.0)));
+        assert!((xy_len(&e) - 11.0).abs() < 1e-9, "major follows the drag to 11");
+        assert!(e.major_axis.x.abs() < 1e-9, "major points +Y after the swap");
+        assert!(
+            (xy_len(&e) * e.minor_axis_ratio - 10.0).abs() < 1e-9,
+            "minor holds the old major length (10)"
+        );
+
+        // Keep dragging along +Y: the perpendicular axis must stay 10, not
+        // balloon, and the major must not flip 90° each frame (the reported bug).
+        apply_grip(&mut e, 2, GripApply::Absolute(DVec3::new(0.0, 13.0, 0.0)));
+        assert!((xy_len(&e) - 13.0).abs() < 1e-9, "major grows to 13");
+        assert!(e.major_axis.x.abs() < 1e-9, "major stays +Y (no flip)");
+        assert!(
+            (xy_len(&e) * e.minor_axis_ratio - 10.0).abs() < 1e-6,
+            "minor still 10 — no ballooning"
+        );
     }
 }
