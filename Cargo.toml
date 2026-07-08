@@ -31,6 +31,15 @@ truck-shapeops = "0.4"
 # Fast non-cryptographic hasher. Handle/u64 keys dominate the hot block,
 # hatch, draw-depth and wire caches; the default SipHash is overkill there.
 rustc-hash = "2"
+# Frame profiler (Phase 5.1) — pulled in only under `--features profile`.
+# `dep:` keeps it out of every normal build; the spans compile to no-ops.
+puffin = { version = "0.19", optional = true }
+puffin_http = { version = "0.16", optional = true }
+
+[features]
+# Enable puffin spans + a puffin_http server for live flamegraph capture.
+# Build with `cargo run --features profile`, then attach `puffin_viewer`.
+profile = ["dep:puffin", "dep:puffin_http"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

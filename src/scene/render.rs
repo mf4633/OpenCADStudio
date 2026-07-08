@@ -191,6 +191,7 @@ impl shader::Primitive for Primitive {
         bounds: &Rectangle,
         viewport: &Viewport,
     ) {
+        crate::profile_scope!("pipeline::prepare");
         let phys = viewport.physical_size();
         let full_size = Size::new(phys.width, phys.height);
         let scale = viewport.scale_factor() as f32;
@@ -281,12 +282,15 @@ impl shader::Primitive for Primitive {
             // the resident base wire buffer.
             inner.upload_preview_wires(device, &vp.preview_wires[..], &vp.draw_depths);
             let vproj = vp.uniforms.view_proj;
-            inner.compute_wire_scissors(vproj, clip_size.width, clip_size.height);
-            inner.compute_wipeout_scissors(vproj, clip_size.width, clip_size.height);
-            inner.compute_image_scissors(vproj, clip_size.width, clip_size.height);
-            inner.compute_hatch_lod(queue, vproj, clip_size.width, clip_size.height);
-            inner.compute_wipeout_lod(vproj, clip_size.width, clip_size.height);
-            inner.compute_mesh_lod(vproj, clip_size.width, clip_size.height);
+            {
+                crate::profile_scope!("pipeline::cull");
+                inner.compute_wire_scissors(vproj, clip_size.width, clip_size.height);
+                inner.compute_wipeout_scissors(vproj, clip_size.width, clip_size.height);
+                inner.compute_image_scissors(vproj, clip_size.width, clip_size.height);
+                inner.compute_hatch_lod(queue, vproj, clip_size.width, clip_size.height);
+                inner.compute_wipeout_lod(vproj, clip_size.width, clip_size.height);
+                inner.compute_mesh_lod(vproj, clip_size.width, clip_size.height);
+            }
             if vp.show_viewcube {
                 inner.viewcube.upload(
                     queue,
@@ -306,6 +310,7 @@ impl shader::Primitive for Primitive {
         target: &iced::wgpu::TextureView,
         clip: &Rectangle<u32>,
     ) {
+        crate::profile_scope!("pipeline::render");
         let cw = clip.width as f32;
         let ch = clip.height as f32;
         let clip_right = clip.x + clip.width;
@@ -369,6 +374,10 @@ impl shader::Primitive for Primitive {
                 inner.viewcube.render(encoder, target, vp_clip);
             }
         }
+        // End of the per-frame GPU submission — advance the profiler frame so
+        // puffin segments its timeline here. Harmless (splits into sub-frames)
+        // if multiple viewport widgets render in one real frame.
+        crate::profiling::finish_frame();
     }
 }
 
@@ -564,6 +573,7 @@ impl Scene {
         model_render_mode: acadrust::entities::ViewportRenderMode,
         _hover_region: Option<usize>,
     ) -> Primitive {
+        crate::profile_scope!("scene::build_viewports");
         // Hover comes from the scene cell driven by the app-level
         // `CursorMoved` handler — the cube overlay sits above the shader
         // and would otherwise mask the move event from `Program::update`.

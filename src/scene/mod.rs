@@ -1676,6 +1676,7 @@ impl Scene {
         cam_aspect: f32,
         tile_pixel_height: f32,
     ) -> Arc<Vec<WireModel>> {
+        crate::profile_scope!("scene::model_tile_wires");
         let wpp = if tile_pixel_height > 0.0 {
             Some((2.0 * cam.ortho_size()) / tile_pixel_height)
         } else {
