@@ -325,12 +325,23 @@ set. Hardware instancing:
 
 Typical architectural DWGs: 10-100× faster.
 
-### 3.5 Glyph-stroke batching
+### 3.5 Glyph-stroke batching ✅ DONE (already satisfied by the LFF engine)
 
-`tessellate.rs` produces one `WireModel` per glyph stroke today — one text
-entity = dozens of models. Cache stroke geometry per font once
-(`HashMap<(font, glyph), Vec<Point2>>`), then per-text only a transform
-matters.
+This describes the pre-LFF (CXF) state; the current architecture already
+does everything it asks:
+
+- **Glyph geometry is cached per font, process-wide.** `lff::get_font`
+  returns a `&'static Font` from a once-initialized `FONTS` map; parsing
+  runs once and `Font::glyph(c)` hands back the cached `Glyph::strokes`
+  (glyph-unit polylines) — the `HashMap<(font, glyph), …>` the item asks
+  for.
+- **Per-text work is transform-only.** `lff::tessellate_text_run` reuses the
+  cached strokes and applies just an affine `xform` (origin / scale /
+  rotation / oblique / width-factor) per character — no re-tessellation.
+- **Text emits one `WireModel` per colour-bin, not per stroke.**
+  `tessellate.rs` bins strokes (NaN-separated) by inline-colour override, so
+  a plain text/MTEXT is a single wire; Phase 3.3's batched wire pipeline then
+  collapses those into single draw calls.
 
 ---
 

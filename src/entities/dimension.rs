@@ -2546,3 +2546,65 @@ fn perp_sign_default() -> f64 {
     1.0
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acadrust::types::Vector3;
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn rotate_point_quarter_turn() {
+        // (1,0) rotated +90° about the origin → (0,1).
+        let mut p = Vector3::new(1.0, 0.0, 0.0);
+        rotate_point(&mut p, Vec3::new(0.0, 0.0, 0.0), std::f32::consts::FRAC_PI_2);
+        assert!(close(p.x, 0.0) && close(p.y, 1.0));
+        // About a non-origin centre: (2,1) about (1,1) by 90° → (1,2).
+        let mut q = Vector3::new(2.0, 1.0, 0.0);
+        rotate_point(&mut q, Vec3::new(1.0, 1.0, 0.0), std::f32::consts::FRAC_PI_2);
+        assert!(close(q.x, 1.0) && close(q.y, 2.0));
+    }
+
+    #[test]
+    fn scale_point_about_centre() {
+        let mut p = Vector3::new(2.0, 4.0, 6.0);
+        scale_point(&mut p, Vec3::new(0.0, 0.0, 0.0), 0.5);
+        assert!(close(p.x, 1.0) && close(p.y, 2.0) && close(p.z, 3.0));
+        // Scaling about the point itself is a no-op.
+        let mut q = Vector3::new(5.0, 5.0, 5.0);
+        scale_point(&mut q, Vec3::new(5.0, 5.0, 5.0), 3.0);
+        assert!(close(q.x, 5.0) && close(q.y, 5.0) && close(q.z, 5.0));
+    }
+
+    #[test]
+    fn mirror_point_across_x_axis() {
+        // Reflecting (1,1) across the X axis (0,0)->(1,0) → (1,-1).
+        let mut p = Vector3::new(1.0, 1.0, 0.0);
+        mirror_point(&mut p, Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
+        assert!(close(p.x, 1.0) && close(p.y, -1.0));
+    }
+
+    #[test]
+    fn architectural_feet_and_inches() {
+        assert_eq!(format_architectural(18.0, 4), "1'-6\"");
+        assert_eq!(format_architectural(30.0, 4), "2'-6\"");
+        assert_eq!(format_architectural(0.0, 4), "0'-0\"");
+        assert_eq!(format_architectural(-18.0, 4), "-1'-6\"");
+        // 6.5" → half-inch fraction appended.
+        assert_eq!(format_architectural(18.5, 4), "1'-6 1/2\"");
+    }
+
+    #[test]
+    fn fractional_reduces_to_lowest_terms() {
+        assert_eq!(fraction_string(0.25, 2), "1/4");
+        assert_eq!(fraction_string(0.5, 2), "1/2");
+        assert_eq!(fraction_string(0.0, 2), "");
+        assert_eq!(format_fractional(2.5, 2), "2 1/2");
+        assert_eq!(format_fractional(0.25, 2), "1/4"); // whole part omitted
+        assert_eq!(format_fractional(3.0, 2), "3"); // no fraction
+        assert_eq!(format_fractional(-2.5, 2), "-2 1/2");
+    }
+}
+
