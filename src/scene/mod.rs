@@ -132,15 +132,19 @@ pub struct DerivedCaches {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenTimings {
     pub parse_ms: u32,
-    pub purge_ms: u32,
+    /// Derived-cache build time. Includes the corrupt-entity purge, which is
+    /// folded into the same planning pass (Roadmap 1.3).
     pub caches_ms: u32,
     /// XREF resolve time (Roadmap 1.2 — now on the background thread).
     pub xref_ms: u32,
 }
 
-/// Build hatch / image / mesh caches from a document without needing `&mut Scene`.
-/// Intended to run on a background thread during file load.
-pub fn build_derived_caches(doc: &CadDocument) -> DerivedCaches {
+/// Build hatch / image / mesh caches from a document. Takes `&mut` so the
+/// single planning pass can also purge corrupt entities (Roadmap 1.3) — the
+/// standalone `purge_corrupt_entities` walk is folded in here. Intended to run
+/// on a background thread during file load; the rebuild-on-edit path calls it
+/// on an already-clean document (the purge is then a no-op).
+pub fn build_derived_caches(doc: &mut CadDocument) -> DerivedCaches {
     // model-space block handle (same logic as Scene::model_space_block_handle)
     let model_block = doc
         .objects
@@ -180,32 +184,79 @@ pub fn build_derived_caches(doc: &CadDocument) -> DerivedCaches {
     // 10× its own half-span away from the entity centroid.
     use rayon::prelude::*;
 
-    // Single pass over entities does triple duty: classify cache-kind handle
-    // lists (hatch / image / mesh) AND accumulate per-entity centroids for the
-    // world_offset median. Folding the offset scan in here collapses what were
-    // two O(N) `entities()` walks (offset scan + handle collection) into one.
-    // Heavy tessellation runs in parallel below, reading entities via
-    // `doc.get_entity(h)` (O(1) HashMap lookup); no clones in this pass.
+    // Single parallel pass does triple duty: corrupt-entity detection
+    // (Roadmap 1.3), cache-kind classification (hatch / image / mesh), AND
+    // per-entity centroids for the world_offset median. This fuses what used
+    // to be TWO O(N) `entities()` walks — the standalone
+    // `purge_corrupt_entities` scan and the cache/offset planning walk — into
+    // one. The heavy per-entity work (`is_entity_corrupt`'s per-vertex finite
+    // checks, `offset_centroid`'s bounding_box) runs across rayon; the
+    // partition below is a cheap serial fold. Corrupt entities are kept out of
+    // every cache list and out of the centroid set, then removed from the
+    // document — so no corrupt mesh reaches tessellation and the offset is not
+    // skewed by junk coordinates. Heavy tessellation runs in parallel further
+    // down, reading survivors via `doc.get_entity(h)` (O(1) lookup).
     let prep = offset_prep(doc, model_block);
+    enum CacheKind {
+        None,
+        Hatch,
+        Image,
+        Mesh,
+    }
+    // Scope the immutable borrow (`entities`) to this scan so the corrupt
+    // removal below can take `&mut doc`.
+    let scanned: Vec<(Handle, bool, CacheKind, Option<[f64; 3]>)> = doc
+        .entities()
+        .collect::<Vec<_>>()
+        .par_iter()
+        .map(|&e| {
+            let h = e.common().handle;
+            if crate::io::is_entity_corrupt(e) {
+                return (h, true, CacheKind::None, None);
+            }
+            let kind = match e {
+                EntityType::Hatch(_) | EntityType::Solid(_) => CacheKind::Hatch,
+                EntityType::RasterImage(_) => CacheKind::Image,
+                EntityType::Solid3D(_)
+                | EntityType::Region(_)
+                | EntityType::Body(_)
+                | EntityType::Mesh(_) => CacheKind::Mesh,
+                _ => CacheKind::None,
+            };
+            (h, false, kind, offset_centroid(e, model_block, &prep))
+        })
+        .collect();
+
+    let mut corrupt: Vec<Handle> = Vec::new();
     let mut hatch_handles: Vec<Handle> = Vec::new();
     let mut image_handles: Vec<Handle> = Vec::new();
     let mut mesh_handles: Vec<Handle> = Vec::new();
     let mut centers: Vec<[f64; 3]> = Vec::new();
-    for e in doc.entities() {
-        let h = e.common().handle;
-        match e {
-            EntityType::Hatch(_) | EntityType::Solid(_) => hatch_handles.push(h),
-            EntityType::RasterImage(_) => image_handles.push(h),
-            EntityType::Solid3D(_)
-            | EntityType::Region(_)
-            | EntityType::Body(_)
-            | EntityType::Mesh(_) => mesh_handles.push(h),
-            _ => {}
+    for (h, is_corrupt, kind, centroid) in scanned {
+        if is_corrupt {
+            corrupt.push(h);
+            continue;
         }
-        if let Some(c) = offset_centroid(e, model_block, &prep) {
+        match kind {
+            CacheKind::Hatch => hatch_handles.push(h),
+            CacheKind::Image => image_handles.push(h),
+            CacheKind::Mesh => mesh_handles.push(h),
+            CacheKind::None => {}
+        }
+        if let Some(c) = centroid {
             centers.push(c);
         }
     }
+
+    let corrupt_dropped = corrupt.len();
+    for h in corrupt {
+        doc.remove_entity(h);
+    }
+
+    // Corrupt entities are gone; the rest of the build only reads the document
+    // (parallel `get_entity` lookups), so drop back to a shared borrow.
+    let doc: &CadDocument = doc;
+
     let (world_offset, local_extent_max) = world_offset_from_centers(centers, &doc.header);
 
     // Default bg adaptation target at load: the model background (paper
@@ -272,7 +323,7 @@ pub fn build_derived_caches(doc: &CadDocument) -> DerivedCaches {
         hatches,
         images,
         meshes,
-        corrupt_dropped: 0,
+        corrupt_dropped,
         xrefs: Vec::new(),
         xref_dropped: 0,
         timings: OpenTimings::default(),
