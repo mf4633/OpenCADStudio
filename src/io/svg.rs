@@ -68,9 +68,11 @@ pub fn build_svg(
     // world y → (min_y + max_y) - y keeps the drawing upright under SVG's
     // Y-down axis while staying inside the same viewBox.
     let flip = min_y + max_y;
-    // Hairline stroke in world units, scaled to the drawing so it reads at any
-    // size (there is no device DPI at export time).
-    let stroke_w = (vw.hypot(vh) * 0.0015).max(1e-6);
+    // Base hairline in world units, scaled to the drawing so it reads at any
+    // size (there is no device DPI at export time). Per-wire widths multiply
+    // this by the entity's resolved lineweight so heavy lines (walls) export
+    // thicker than thin ones (dimensions), matching the on-screen weighting.
+    let base_sw = (vw.hypot(vh) * 0.0015).max(1e-6);
 
     let mut s = String::new();
     let _ = write!(
@@ -95,7 +97,7 @@ pub fn build_svg(
             for [a, b_pt] in segs {
                 let _ = write!(
                     s,
-                    r#"<line x1="{:.3}" y1="{:.3}" x2="{:.3}" y2="{:.3}" stroke="{color}" stroke-width="{stroke_w:.4}"/>"#,
+                    r#"<line x1="{:.3}" y1="{:.3}" x2="{:.3}" y2="{:.3}" stroke="{color}" stroke-width="{base_sw:.4}"/>"#,
                     a[0],
                     flip - a[1],
                     b_pt[0],
@@ -143,6 +145,10 @@ pub fn build_svg(
     for wire in wires {
         let [r, g, b, _a] = wire.color;
         let color = rgb_hex(r, g, b);
+        // Resolved lineweight (screen px, always ≥ 1.0 from render_style) scales
+        // the hairline; clamped to ≥ 1× so a default-weight line keeps the base
+        // width and heavier lines get proportionally thicker.
+        let sw = base_sw * wire.line_weight_px.max(1.0);
         // `points` is one flat strip; NaN triples split it into sub-strokes.
         for stroke in wire.points.split(|p| p[0].is_nan() || p[1].is_nan()) {
             if stroke.len() < 2 {
@@ -154,7 +160,7 @@ pub fn build_svg(
             }
             let _ = write!(
                 s,
-                r#"<polyline points="{}" fill="none" stroke="{color}" stroke-width="{stroke_w:.4}" stroke-linecap="round" stroke-linejoin="round"/>"#,
+                r#"<polyline points="{}" fill="none" stroke="{color}" stroke-width="{sw:.4}" stroke-linecap="round" stroke-linejoin="round"/>"#,
                 pts.trim_end()
             );
         }
@@ -271,6 +277,27 @@ mod tests {
         );
         assert!(svg.contains("<rect"));
         assert!(svg.contains(r##"fill="#000000""##));
+    }
+
+    fn stroke_width_of(svg: &str) -> f32 {
+        let key = "stroke-width=\"";
+        let i = svg.find(key).expect("a stroke-width") + key.len();
+        let rest = &svg[i..];
+        let end = rest.find('"').unwrap();
+        rest[..end].parse().unwrap()
+    }
+
+    #[test]
+    fn stroke_width_scales_with_lineweight() {
+        // Same geometry (so the base hairline is identical) at two lineweights;
+        // a 3× resolved weight must yield a 3× stroke width.
+        let mut thin = wire(vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]], [0.0, 0.0, 0.0, 1.0]);
+        thin.line_weight_px = 1.0;
+        let mut thick = wire(vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]], [0.0, 0.0, 0.0, 1.0]);
+        thick.line_weight_px = 3.0;
+        let wt = stroke_width_of(&build_svg(&[thin], &[], None));
+        let wk = stroke_width_of(&build_svg(&[thick], &[], None));
+        assert!((wk / wt - 3.0).abs() < 0.02, "thin {wt} thick {wk}");
     }
 
     #[test]
