@@ -359,13 +359,27 @@ single `FxHashMap<Handle, u32>` translation table — cache-friendlier.
 
 Don't start any of the above **without measuring first**.
 
-### 5.1 Add `puffin` or `tracy` spans
+### 5.1 Add `puffin` or `tracy` spans ✅ DONE
 
-- `io::open_path_with_phase` → `parse`, `purge`, `caches` spans.
-- `Scene::wires_for_block` → `block_cache`, `tess`, `sort` spans.
-- `Pipeline::prepare` → `upload`, `cull`, `draw` spans.
+`puffin` spans behind a `--features profile` flag (chosen over `debug_assertions`
+so normal debug builds carry zero profiling cost — the deps are `dep:`-gated and
+the `crate::profile_scope!` macro compiles to nothing without the feature). With
+the feature, `profiling::init` starts a `puffin_http` server so `puffin_viewer`
+attaches for a live flamegraph, and `profiling::finish_frame` (end of the
+`shader::Primitive::render` pass) advances the profiler timeline.
 
-Gate behind `debug_assertions` or a `--features profile` flag.
+Instrumented:
+
+- `io::open_path_with_phase` → `io::parse` / `io::purge` / `io::caches`.
+- Wire tessellation entry → `scene::build_viewports` and per-tile
+  `scene::model_tile_wires` (near-zero on a cache hit, so it isolates the
+  re-tessellation miss cost — the same slice the PERF HUD times).
+- `Pipeline::prepare` → `pipeline::prepare` (whole GPU-prep) + a
+  `pipeline::cull` sub-span over the scissor / LOD compute block; the draw
+  pass is `pipeline::render`.
+
+Still open: finer `pipeline::upload` sub-spans per buffer, and GPU-side
+timestamp queries (the CPU submission cost is covered; GPU-wait is not).
 
 ### 5.2 Open-time breakdown log ✅ DONE
 

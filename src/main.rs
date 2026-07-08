@@ -11,6 +11,7 @@ mod io;
 mod linetypes;
 mod modules;
 mod patterns;
+mod profiling;
 mod scene;
 mod snap;
 mod ui;

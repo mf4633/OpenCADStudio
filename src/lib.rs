@@ -7,6 +7,7 @@ pub mod io;
 pub mod linetypes;
 pub mod modules;
 pub mod patterns;
+pub mod profiling;
 pub mod scene;
 pub mod snap;
 pub mod ui;

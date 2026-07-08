@@ -63,14 +63,23 @@ pub async fn open_path_with_phase(
         use std::time::Instant;
         phase2.store(PHASE_PARSING, Ordering::Relaxed);
         let t_parse = Instant::now();
-        let mut doc = load_file(&path2)?;
+        let mut doc = {
+            crate::profile_scope!("io::parse");
+            load_file(&path2)?
+        };
         let parse_ms = t_parse.elapsed().as_millis() as u32;
         let t_purge = Instant::now();
-        let dropped = purge_corrupt_entities(&mut doc);
+        let dropped = {
+            crate::profile_scope!("io::purge");
+            purge_corrupt_entities(&mut doc)
+        };
         let purge_ms = t_purge.elapsed().as_millis() as u32;
         phase2.store(PHASE_CACHING, Ordering::Relaxed);
         let t_caches = Instant::now();
-        let mut caches = crate::scene::build_derived_caches(&doc);
+        let mut caches = {
+            crate::profile_scope!("io::caches");
+            crate::scene::build_derived_caches(&doc)
+        };
         caches.timings = crate::scene::OpenTimings {
             parse_ms,
             purge_ms,

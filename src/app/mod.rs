@@ -1516,6 +1516,7 @@ impl OpenCADStudio {
 use std::path::PathBuf;
 
 pub fn run() -> iced::Result {
+    crate::profiling::init();
     iced::daemon(OpenCADStudio::boot, OpenCADStudio::update, OpenCADStudio::view)
         .subscription(OpenCADStudio::subscription)
         .title(|state: &OpenCADStudio, window_id: window::Id| {

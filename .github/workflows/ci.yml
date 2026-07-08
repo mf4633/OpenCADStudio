@@ -49,6 +49,12 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # Fast compile-check of the optional `profile` feature (puffin spans) so
+      # the feature-gated code can't rot unnoticed. `check`, not `build` — just
+      # enough to catch breakage without a second full link.
+      - name: Check profile feature
+        run: cargo check --features profile
+
       # Clippy runs without `-D warnings` for now: the codebase has never been
       # gated on it, so a blanket deny would fail on pre-existing lints. This
       # step still surfaces clippy findings as annotations and fails on genuine
