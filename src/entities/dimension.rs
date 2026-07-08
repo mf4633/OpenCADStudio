@@ -2664,5 +2664,74 @@ mod tests {
         assert_eq!(format_engineering(11.999, 2), "1'-0.00\"");
         assert_eq!(format_engineering(18.0, 2), "1'-6.00\"");
     }
+
+    #[test]
+    fn decimal_separator_swap() {
+        assert_eq!(swap_decimal_sep("1.5", 46), "1.5"); // 46='.', no-op
+        assert_eq!(swap_decimal_sep("1.5", 0), "1.5"); // 0 = default '.'
+        assert_eq!(swap_decimal_sep("1.5", 44), "1,5"); // 44=','
+        assert_eq!(swap_decimal_sep("100", 44), "100"); // nothing to swap
+    }
+
+    #[test]
+    fn angular_zero_suppression_bits() {
+        assert_eq!(apply_angular_zero_suppression("45.00", 0), "45.00");
+        assert_eq!(apply_angular_zero_suppression("45.00", 2), "45"); // trailing
+        assert_eq!(apply_angular_zero_suppression("0.50", 1), ".50"); // leading
+        assert_eq!(apply_angular_zero_suppression("0.50", 3), ".5"); // both
+    }
+
+    #[test]
+    fn linear_zero_suppression_bits() {
+        assert_eq!(apply_linear_zero_suppression("1.500", 8), "1.5"); // trailing
+        assert_eq!(apply_linear_zero_suppression("0.5", 4), ".5"); // leading
+        assert_eq!(apply_linear_zero_suppression("0.500", 12), ".5"); // both
+        assert_eq!(apply_linear_zero_suppression("2.000", 8), "2"); // strip to int
+    }
+
+    #[test]
+    fn linear_value_defaults_strip_trailing() {
+        // No style → dec=4, DIMZIN=8 (trailing-zero suppression).
+        assert_eq!(format_linear_value(1.5, None), "1.5");
+        assert_eq!(format_linear_value(2.0, None), "2");
+        assert_eq!(format_linear_value(0.25, None), "0.25");
+    }
+
+    #[test]
+    fn angular_value_units() {
+        use acadrust::tables::DimStyle;
+        // No style → decimal degrees, 2 dp.
+        assert_eq!(format_angular_value(45.0, None), "45.00°");
+
+        let mut s = DimStyle::new("t");
+        s.dimazin = 0;
+        // Gradians: 90° = 100g.
+        s.dimaunit = 2;
+        s.dimadec = 0;
+        assert_eq!(format_angular_value(90.0, Some(&s)), "100g");
+        // Radians: 180° = π.
+        s.dimaunit = 3;
+        s.dimadec = 4;
+        assert_eq!(format_angular_value(180.0, Some(&s)), "3.1416r");
+        // DMS via style.
+        s.dimaunit = 1;
+        s.dimadec = 0;
+        assert_eq!(format_angular_value(30.5, Some(&s)), "30°30'0\"");
+    }
+
+    #[test]
+    fn linear_value_scale_and_separator() {
+        use acadrust::tables::DimStyle;
+        let mut s = DimStyle::new("t");
+        s.dimlunit = 2; // decimal
+        s.dimdec = 2;
+        s.dimzin = 0; // no suppression, so the fixed dp is visible
+        s.dimrnd = 0.0;
+        s.dimlfac = 2.0; // measurement scale
+        s.dimfrac = 0;
+        s.dimdsep = 44; // comma
+        // 1.5 × dimlfac(2) = 3.0 → "3.00" → comma separator.
+        assert_eq!(format_linear_value(1.5, Some(&s)), "3,00");
+    }
 }
 
