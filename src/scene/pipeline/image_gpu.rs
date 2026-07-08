@@ -70,7 +70,10 @@ impl ImageGpu {
         model: &ImageModel,
         bgl1: &wgpu::BindGroupLayout,
     ) -> Option<Self> {
-        if model.pixels.is_empty() || model.width == 0 || model.height == 0 {
+        // Decode lazily on first upload (Phase 1.6). An off-screen image whose
+        // quad is culled before it ever reaches here is never decoded.
+        let dec = model.decoded()?;
+        if dec.pixels.is_empty() || dec.width == 0 || dec.height == 0 {
             return None;
         }
 
@@ -79,8 +82,8 @@ impl ImageGpu {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&tex_label),
             size: wgpu::Extent3d {
-                width: model.width,
-                height: model.height,
+                width: dec.width,
+                height: dec.height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -92,15 +95,15 @@ impl ImageGpu {
         });
         queue.write_texture(
             texture.as_image_copy(),
-            &model.pixels[..],
+            &dec.pixels[..],
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * model.width),
-                rows_per_image: Some(model.height),
+                bytes_per_row: Some(4 * dec.width),
+                rows_per_image: Some(dec.height),
             },
             wgpu::Extent3d {
-                width: model.width,
-                height: model.height,
+                width: dec.width,
+                height: dec.height,
                 depth_or_array_layers: 1,
             },
         );

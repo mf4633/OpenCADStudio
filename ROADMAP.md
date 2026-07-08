@@ -83,12 +83,19 @@ the biggest unrealized win. Lives in the upstream fork.
 **Order:** profile first — is this really the largest slice? Measure with
 `puffin`.
 
-### 1.6 Defer raster image decode
+### 1.6 Defer raster image decode ✅ DONE
 
-[`build_derived_caches`](src/scene/mod.rs#L177-L186) calls
-`ImageModel::from_raster_image` for every `RasterImage` entity — pixel
-decode happens up front. Wasted if the entity is off-screen. Defer the
-decode until **first render** (per-handle lazy `OnceCell`).
+`build_derived_caches` still walks every `RasterImage`, but
+`ImageModel::from_raster_image` now builds only the (cheap, entity-derived)
+quad geometry — the pixel decode is deferred to the first GPU upload.
+`ImageModel` holds an `Arc<OnceLock<Option<Decoded>>>`; `decoded()` runs
+`load_pixels` on first access and caches it, and the `Arc` is shared across
+clones (the per-frame `images_arc` snapshot) so a decode happens at most
+once. An off-screen image whose quad is culled before `ImageGpu::new` never
+decodes, so opening an image-heavy drawing no longer pays the decode +
+memory cost up front. A missing/undecodable file resolves to `None` (the
+quad doesn't render), matching the old "excluded on decode failure" result
+without the eager file read.
 
 ### 1.7 File-hash cache (warm re-open)
 
