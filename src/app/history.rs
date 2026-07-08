@@ -46,7 +46,9 @@ impl OpenCADStudio {
         self.tabs[i].scene.populate_images_from_document();
         self.tabs[i].scene.populate_meshes_from_document();
         self.tabs[i].scene.clear_preview_wire();
-        self.tabs[i].scene.images.clear();
+        // NOTE: do not clear scene.images here — populate_images_from_document
+        // above already rebuilt it; clearing wiped every attached raster image
+        // on undo/redo until reload.
         self.tabs[i].active_cmd = None;
         self.tabs[i].snap_result = None;
         self.tabs[i].active_grip = None;
