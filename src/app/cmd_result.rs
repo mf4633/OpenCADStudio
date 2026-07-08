@@ -329,10 +329,11 @@ impl OpenCADStudio {
                             return Task::none();
                         }
                         if layer.starts_with("__DIMSPACE__") {
+                            // Snapshot before mutating so the change is undoable.
+                            self.push_undo_snapshot(i, "DIMSPACE");
                             if let Some(encoded) = layer.strip_prefix("__DIMSPACE__") {
                                 apply_dimspace(&mut self.tabs[i].scene, encoded);
                             }
-                            self.push_undo_snapshot(i, "DIMSPACE");
                             self.command_line.push_output("DIMSPACE  Spacing adjusted.");
                             self.tabs[i].dirty = true;
                             self.tabs[i].active_cmd = None;
@@ -349,10 +350,11 @@ impl OpenCADStudio {
                             return Task::none();
                         }
                         if layer.starts_with("__MLEADERALIGN__") {
+                            // Snapshot before mutating so the change is undoable.
+                            self.push_undo_snapshot(i, "MLEADERALIGN");
                             if let Some(encoded) = layer.strip_prefix("__MLEADERALIGN__") {
                                 apply_mleader_align(&mut self.tabs[i].scene, encoded);
                             }
-                            self.push_undo_snapshot(i, "MLEADERALIGN");
                             self.command_line
                                 .push_output("MLEADERALIGN  Leaders aligned.");
                             self.tabs[i].dirty = true;
@@ -361,10 +363,12 @@ impl OpenCADStudio {
                             return Task::none();
                         }
                         if layer.starts_with("__MLEADERCOLLECT__") {
+                            // Snapshot before erasing the merged-away leaders, or
+                            // undo restores the already-collapsed state (data loss).
+                            self.push_undo_snapshot(i, "MLEADERCOLLECT");
                             if let Some(encoded) = layer.strip_prefix("__MLEADERCOLLECT__") {
                                 apply_mleader_collect(&mut self.tabs[i].scene, encoded);
                             }
-                            self.push_undo_snapshot(i, "MLEADERCOLLECT");
                             self.command_line
                                 .push_output("MLEADERCOLLECT  Leaders collected.");
                             self.tabs[i].dirty = true;
@@ -839,6 +843,10 @@ impl OpenCADStudio {
             }
             CmdResult::PeditOp { handle, op } => {
                 use crate::modules::home::modify::pedit::apply_pedit;
+                // Snapshot BEFORE mutating so the op is undoable; apply_pedit
+                // edits the entity in place, so a snapshot taken afterward would
+                // capture the already-changed state. Discard it if nothing changed.
+                self.push_undo_snapshot(i, "PEDIT");
                 let changed = self.tabs[i]
                     .scene
                     .document
@@ -846,11 +854,11 @@ impl OpenCADStudio {
                     .map(|e| apply_pedit(e, &op))
                     .unwrap_or(false);
                 if changed {
-                    self.push_undo_snapshot(i, "PEDIT");
                     self.tabs[i].dirty = true;
                     self.command_line.push_output("PEDIT: applied.");
                     self.refresh_properties();
                 } else {
+                    self.tabs[i].history.undo_stack.pop();
                     self.command_line
                         .push_error("PEDIT: operation not applicable to this entity.");
                 }
