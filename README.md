@@ -14,7 +14,7 @@ A CAD application for 2D drafting and 3D modeling, built with Rust. Reads and wr
 - **STEP AP203** export (`STEPOUT`)
 - **OBJ** import (`IMPORTOBJ`)
 - **PDF** export (plot layouts to PDF)
-- **SVG** export (`SVGOUT` / `EXPORTSVG`) — model-space vector export for the web, docs, and laser cutting
+- **SVG** export (`SVGOUT` / `EXPORTSVG`) — vector export for the web, docs, and laser cutting; exports model space (auto-fit) or the active paper-space layout (paper-sized sheet, print-adapted colours, hatch fills, lineweights)
 - **WBLOCK** — write selected entities or a block to an external file
 - **XREF** — attach, reload, and auto-resolve external references
 
