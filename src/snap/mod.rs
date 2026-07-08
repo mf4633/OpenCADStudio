@@ -758,3 +758,93 @@ fn t_on_segment(p: Point, a: Point, b: Point) -> f32 {
     }
     (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).clamp(0.0, 1.0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+    fn v(x: f32, y: f32) -> Vec3 {
+        Vec3::new(x, y, 0.0)
+    }
+
+    #[test]
+    fn nearest_on_segment_clamps_and_projects() {
+        let (p0, p1) = (v(0.0, 0.0), v(10.0, 0.0));
+        // Interior projection.
+        let m = nearest_on_segment(v(5.0, 5.0), p0, p1);
+        assert!(close(m.x, 5.0) && close(m.y, 0.0));
+        // Past the far end → clamped to p1.
+        let e = nearest_on_segment(v(15.0, 5.0), p0, p1);
+        assert!(close(e.x, 10.0) && close(e.y, 0.0));
+        // Before the start → clamped to p0.
+        let s = nearest_on_segment(v(-5.0, 5.0), p0, p1);
+        assert!(close(s.x, 0.0) && close(s.y, 0.0));
+        // Degenerate segment returns p0.
+        let d = nearest_on_segment(v(3.0, 3.0), v(2.0, 2.0), v(2.0, 2.0));
+        assert!(close(d.x, 2.0) && close(d.y, 2.0));
+    }
+
+    #[test]
+    fn nearest_on_segment_interpolates_z() {
+        // t is computed in XY, then applied to Z.
+        let m = nearest_on_segment(v(5.0, 0.0), Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 10.0));
+        assert!(close(m.z, 5.0));
+    }
+
+    #[test]
+    fn perp_foot_within_window_only() {
+        let (p0, p1) = (v(0.0, 0.0), v(10.0, 0.0));
+        let f = perp_foot(v(5.0, 5.0), p0, p1).unwrap();
+        assert!(close(f.x, 5.0) && close(f.y, 0.0));
+        // Foot at t = 2.5 (beyond the 2× window) is rejected.
+        assert!(perp_foot(v(5.0, 5.0), v(0.0, 0.0), v(2.0, 0.0)).is_none());
+        // Degenerate segment → None.
+        assert!(perp_foot(v(1.0, 1.0), v(0.0, 0.0), v(0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn seg_intersect_xy_crossing_parallel_and_disjoint() {
+        // Cross at (5, 0).
+        let p = seg_intersect_xy(v(0.0, 0.0), v(10.0, 0.0), v(5.0, -5.0), v(5.0, 5.0)).unwrap();
+        assert!(close(p.x, 5.0) && close(p.y, 0.0));
+        // Parallel → None.
+        assert!(seg_intersect_xy(v(0.0, 0.0), v(10.0, 0.0), v(0.0, 1.0), v(10.0, 1.0)).is_none());
+        // Would cross only if extended → None (out of range).
+        assert!(seg_intersect_xy(v(0.0, 0.0), v(10.0, 0.0), v(20.0, -5.0), v(20.0, 5.0)).is_none());
+    }
+
+    #[test]
+    fn seg_intersect_2d_returns_params() {
+        let (t, s) = seg_intersect_2d(
+            Point::new(0.0, 0.0),
+            Point::new(10.0, 0.0),
+            Point::new(5.0, -5.0),
+            Point::new(5.0, 5.0),
+        )
+        .unwrap();
+        assert!(close(t, 0.5) && close(s, 0.5));
+    }
+
+    #[test]
+    fn dist2_and_dist2_to_segment() {
+        assert!(close(dist2(Point::new(2.0, 3.0), Point::new(5.0, 7.0)), 25.0));
+        // Perp distance to the interior of the segment.
+        let d = dist2_to_segment(Point::new(5.0, 5.0), Point::new(0.0, 0.0), Point::new(10.0, 0.0));
+        assert!(close(d, 25.0));
+        // Past the end → distance to the endpoint (clamped).
+        let e = dist2_to_segment(Point::new(15.0, 3.0), Point::new(0.0, 0.0), Point::new(10.0, 0.0));
+        assert!(close(e, 34.0)); // (5,3) → 25 + 9
+    }
+
+    #[test]
+    fn t_on_segment_clamps() {
+        assert!(close(t_on_segment(Point::new(5.0, 0.0), Point::new(0.0, 0.0), Point::new(10.0, 0.0)), 0.5));
+        assert!(close(t_on_segment(Point::new(-5.0, 0.0), Point::new(0.0, 0.0), Point::new(10.0, 0.0)), 0.0));
+        assert!(close(t_on_segment(Point::new(50.0, 0.0), Point::new(0.0, 0.0), Point::new(10.0, 0.0)), 1.0));
+        // Degenerate segment → 0.
+        assert!(close(t_on_segment(Point::new(1.0, 1.0), Point::new(0.0, 0.0), Point::new(0.0, 0.0)), 0.0));
+    }
+}
