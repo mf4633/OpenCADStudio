@@ -156,10 +156,15 @@ cd OpenCADStudio
 cargo build --release --bin OpenCADStudio
 ./target/release/OpenCADStudio
 ```
-
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=HakanSeven12/OpenCADStudio&type=Date)](https://star-history.com/#HakanSeven12/OpenCADStudio&Date)
+<a href="https://www.star-history.com/?type=date&repos=HakanSeven12%2FOpenCADStudio">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=HakanSeven12/OpenCADStudio&type=date&theme=dark&legend=top-left&sealed_token=fxoXStKu5WnRhnRk-41E-cafKNCHriESCCEPQ9zb-yh5SSTL44WLgXPBXTkx4KIggbDLYEx35Xtc0SD0sONqgBVfmMqmu0p5tLdLeOUG_gn9TmAbQl6opxQWT_G8bltsXywCwAVIW1e4gtHkhQGrNR_2OP_W_VprMyUtEt9Kn__tidNzptPRwWZVRFAv" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=HakanSeven12/OpenCADStudio&type=date&legend=top-left&sealed_token=fxoXStKu5WnRhnRk-41E-cafKNCHriESCCEPQ9zb-yh5SSTL44WLgXPBXTkx4KIggbDLYEx35Xtc0SD0sONqgBVfmMqmu0p5tLdLeOUG_gn9TmAbQl6opxQWT_G8bltsXywCwAVIW1e4gtHkhQGrNR_2OP_W_VprMyUtEt9Kn__tidNzptPRwWZVRFAv" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=HakanSeven12/OpenCADStudio&type=date&legend=top-left&sealed_token=fxoXStKu5WnRhnRk-41E-cafKNCHriESCCEPQ9zb-yh5SSTL44WLgXPBXTkx4KIggbDLYEx35Xtc0SD0sONqgBVfmMqmu0p5tLdLeOUG_gn9TmAbQl6opxQWT_G8bltsXywCwAVIW1e4gtHkhQGrNR_2OP_W_VprMyUtEt9Kn__tidNzptPRwWZVRFAv" />
+ </picture>
+</a>
 
 ## License
 
