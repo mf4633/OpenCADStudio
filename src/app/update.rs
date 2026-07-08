@@ -474,6 +474,49 @@ impl OpenCADStudio {
 
             Message::StlExportPath(None) => Task::none(),
 
+            // ── SVG export ────────────────────────────────────────────────
+            Message::SvgExport => {
+                let i = self.active_tab;
+                if self.tabs[i].scene.entity_wires().is_empty() {
+                    self.command_line
+                        .push_error("SVGOUT: nothing to export in model space.");
+                    return Task::none();
+                }
+                Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .set_title("Export SVG")
+                            .set_file_name("export.svg")
+                            .add_filter("SVG Files", &["svg"])
+                            .add_filter("All Files", &["*"])
+                            .save_file()
+                            .await
+                            .map(|h| h.path().to_path_buf())
+                    },
+                    Message::SvgExportPath,
+                )
+            }
+
+            Message::SvgExportPath(Some(path)) => {
+                let i = self.active_tab;
+                let wires = self.tabs[i].scene.entity_wires();
+                // Match the on-screen model background so the (already
+                // bg-adapted) wire colours read correctly in the export.
+                let [br, bg, bb, _] = self.tabs[i].scene.bg_color;
+                let svg = crate::io::svg::build_svg(&wires, Some([br, bg, bb]));
+                match std::fs::write(&path, svg) {
+                    Ok(()) => self
+                        .command_line
+                        .push_output(&format!("SVGOUT: exported to \"{}\"", path.display())),
+                    Err(e) => self
+                        .command_line
+                        .push_error(&format!("SVGOUT: write error: {e}")),
+                }
+                Task::none()
+            }
+
+            Message::SvgExportPath(None) => Task::none(),
+
             // ── STEP AP203 export ─────────────────────────────────────────
             Message::StepExport => {
                 let i = self.active_tab;

@@ -1232,6 +1232,11 @@ pub enum Message {
     StepExport,
     /// Callback after the user picks (or cancels) the STEP save path.
     StepExportPath(Option<std::path::PathBuf>),
+    // ── SVG export ────────────────────────────────────────────────────────
+    /// Trigger SVG export: collect model-space wires and show save dialog.
+    SvgExport,
+    /// Callback after the user picks (or cancels) the SVG save path.
+    SvgExportPath(Option<std::path::PathBuf>),
     // ── OBJ import ────────────────────────────────────────────────────────
     /// Trigger OBJ import: show open-file dialog.
     ObjImport,
