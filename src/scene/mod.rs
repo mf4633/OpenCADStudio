@@ -1804,6 +1804,12 @@ impl Scene {
         (*self.entity_wires_arc()).clone()
     }
 
+    /// Model-space hatch fills with resolved (background-adapted) colours.
+    /// Mirrors `entity_wires`; used by exporters (e.g. SVG).
+    pub fn entity_hatches(&self) -> Vec<HatchModel> {
+        (*self.hatch_models_arc()).clone()
+    }
+
     /// Per-entity normalized draw-order depth, keyed by entity handle value.
     /// Built (and cached per geometry epoch) by ranking every entity within
     /// its owning block by effective sort key (SortEntitiesTable override or

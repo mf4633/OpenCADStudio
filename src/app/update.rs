@@ -477,7 +477,9 @@ impl OpenCADStudio {
             // ── SVG export ────────────────────────────────────────────────
             Message::SvgExport => {
                 let i = self.active_tab;
-                if self.tabs[i].scene.entity_wires().is_empty() {
+                if self.tabs[i].scene.entity_wires().is_empty()
+                    && self.tabs[i].scene.entity_hatches().is_empty()
+                {
                     self.command_line
                         .push_error("SVGOUT: nothing to export in model space.");
                     return Task::none();
@@ -500,10 +502,11 @@ impl OpenCADStudio {
             Message::SvgExportPath(Some(path)) => {
                 let i = self.active_tab;
                 let wires = self.tabs[i].scene.entity_wires();
+                let hatches = self.tabs[i].scene.entity_hatches();
                 // Match the on-screen model background so the (already
-                // bg-adapted) wire colours read correctly in the export.
+                // bg-adapted) wire/hatch colours read correctly in the export.
                 let [br, bg, bb, _] = self.tabs[i].scene.bg_color;
-                let svg = crate::io::svg::build_svg(&wires, Some([br, bg, bb]));
+                let svg = crate::io::svg::build_svg(&wires, &hatches, Some([br, bg, bb]));
                 match std::fs::write(&path, svg) {
                     Ok(()) => self
                         .command_line
