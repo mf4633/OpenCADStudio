@@ -2268,6 +2268,11 @@ impl Scene {
         (*self.entity_wires_arc()).clone()
     }
 
+    /// Model-space hatch fills for the current document (used by SVG export).
+    pub fn entity_hatches(&self) -> Vec<HatchModel> {
+        (*self.hatch_models_arc()).clone()
+    }
+
     /// Per-entity normalized draw-order depth, keyed by entity handle value.
     /// Built (and cached per geometry epoch) by ranking every entity within
     /// its owning block by effective sort key (SortEntitiesTable override or

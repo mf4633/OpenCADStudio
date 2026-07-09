@@ -10,6 +10,7 @@ pub mod plot_style;
 pub mod print_to_printer;
 pub mod step;
 pub mod stl;
+pub mod svg;
 pub mod xref;
 pub mod linetypes;
 pub mod patterns;

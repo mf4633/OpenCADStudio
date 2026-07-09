@@ -2064,6 +2064,11 @@ pub enum Message {
     StlExport,
     /// Callback after the user picks (or cancels) the STL save path.
     StlExportPath(Option<std::path::PathBuf>),
+    // ── SVG export ────────────────────────────────────────────────────────
+    /// Trigger SVG export: check for content and show save dialog.
+    SvgExport,
+    /// Callback after the user picks (or cancels) the SVG save path.
+    SvgExportPath(Option<std::path::PathBuf>),
     // ── STEP export ───────────────────────────────────────────────────────
     /// Trigger STEP AP203 export: show save dialog.
     StepExport,

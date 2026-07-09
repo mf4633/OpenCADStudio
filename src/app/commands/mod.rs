@@ -547,6 +547,7 @@ inventory::submit!(crate::command::CommandRegistration {
         "STPOUT",
         "STYLE",
         "STYLESMANAGER",
+        "SVGOUT",
         "TABLESTYLE",
         "TOOLPALETTES",
         "TP",

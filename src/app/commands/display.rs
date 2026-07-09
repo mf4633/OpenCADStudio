@@ -347,6 +347,11 @@ impl OpenCADStudio {
                 return Some(Task::done(Message::StlExport));
             }
 
+            // ── SVG export ────────────────────────────────────────────────
+            "SVGOUT" | "EXPORTSVG" => {
+                return Some(Task::done(Message::SvgExport));
+            }
+
             // STEPOUT — export 3D meshes to STEP AP203 format
             "STEPOUT" | "EXPORTSTEP" | "STPOUT" => {
                 return Some(Task::done(Message::StepExport));

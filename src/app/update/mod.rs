@@ -484,6 +484,34 @@ impl OpenCADStudio {
 
             Message::StlExportPath(None) => Task::none(),
 
+            Message::SvgExport => {
+                let i = self.active_tab;
+                if self.tabs[i].scene.entity_wires().is_empty()
+                    && self.tabs[i].scene.entity_hatches().is_empty()
+                {
+                    self.command_line
+                        .push_error("SVGOUT: nothing to export in model space.");
+                    return Task::none();
+                }
+                Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .set_title("Export SVG")
+                            .set_file_name("export.svg")
+                            .add_filter("SVG Files", &["svg"])
+                            .add_filter("All Files", &["*"])
+                            .save_file()
+                            .await
+                            .map(|h| crate::sys::handle_path(&h))
+                    },
+                    Message::SvgExportPath,
+                )
+            }
+
+            Message::SvgExportPath(Some(path)) => self.on_svg_export_path_some(path),
+
+            Message::SvgExportPath(None) => Task::none(),
+
             // ── STEP AP203 export ─────────────────────────────────────────
             Message::StepExport => {
                 let i = self.active_tab;
