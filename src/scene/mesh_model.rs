@@ -40,6 +40,31 @@ pub struct MeshLodSet {
     /// by the per-frame LOD selector to compute the projected pixel
     /// diagonal.
     pub world_aabb: [f32; 4],
+    /// World Z extent `[min_z, max_z]`. The cull / LOD projection needs it:
+    /// a mesh elevated off the z=0 plane projects to a different screen
+    /// position in a tilted 3D view, so projecting the XY box at z=0 alone
+    /// mis-culls and mis-LODs it. `[0.0, 0.0]` for a flat z=0 mesh.
+    pub z_range: [f32; 2],
+}
+
+/// World Z extent `[min_z, max_z]` over a set of mesh vertices (non-finite
+/// values skipped). Returns `[0.0, 0.0]` when no finite vertex is present.
+pub fn verts_z_range<'a>(verts: impl IntoIterator<Item = &'a [f32; 3]>) -> [f32; 2] {
+    let mut min_z = f32::INFINITY;
+    let mut max_z = f32::NEG_INFINITY;
+    for v in verts {
+        let z = v[2];
+        if !z.is_finite() {
+            continue;
+        }
+        if z < min_z { min_z = z; }
+        if z > max_z { max_z = z; }
+    }
+    if min_z.is_finite() {
+        [min_z, max_z]
+    } else {
+        [0.0, 0.0]
+    }
 }
 
 impl MeshLodSet {
@@ -61,9 +86,11 @@ impl MeshLodSet {
             if x > max_x { max_x = x; }
             if y > max_y { max_y = y; }
         }
+        let z_range = verts_z_range(&mesh.verts);
         Self {
             lods: vec![mesh],
             world_aabb: [min_x, min_y, max_x, max_y],
+            z_range,
         }
     }
 }

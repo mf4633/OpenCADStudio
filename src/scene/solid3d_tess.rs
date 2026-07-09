@@ -134,7 +134,8 @@ fn tessellate_sat_lods(
         return None;
     }
     let world_aabb = mesh_aabb(&lods[0]);
-    Some(MeshLodSet { lods, world_aabb })
+    let z_range = crate::scene::mesh_model::verts_z_range(&lods[0].verts);
+    Some(MeshLodSet { lods, world_aabb, z_range })
 }
 
 /// Scale a LOD's segment counts by FACETRES (clamped to AutoCAD's
