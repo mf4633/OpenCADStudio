@@ -594,14 +594,23 @@ impl OpenCADStudio {
                 self.snapper
                     .tracking_points
                     .iter()
-                    .map(|&wp| {
-                        let ndc = vp_mat.project_point3(wp);
-                        overlay::OstTrackPoint {
+                    .filter_map(|&wp| {
+                        // Do the perspective divide by hand so we can inspect
+                        // clip w. project_point3 discards w's sign, so a point
+                        // behind the camera (w <= 0) still lands at an in-bounds
+                        // NDC after the divide, painting a phantom marker at a
+                        // mirrored position. Cull those instead.
+                        let clip = vp_mat * wp.extend(1.0);
+                        if clip.w <= 1e-6 {
+                            return None;
+                        }
+                        let ndc = clip.truncate() / clip.w;
+                        Some(overlay::OstTrackPoint {
                             screen: iced::Point::new(
                                 (ndc.x + 1.0) * 0.5 * vp_bounds.width,
                                 (1.0 - ndc.y) * 0.5 * vp_bounds.height,
                             ),
-                        }
+                        })
                     })
                     .collect()
             } else {
