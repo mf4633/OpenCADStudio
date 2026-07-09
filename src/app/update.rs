@@ -650,8 +650,11 @@ impl OpenCADStudio {
                 let i = self.active_tab;
                 if let Some(path) = &self.tabs[i].current_path {
                     let path = path.clone();
-                    self.tabs[i].scene.document.header.user_real1 =
-                        self.tabs[i].scene.annotation_scale as f64;
+                    // Persist the annotation scale via CANNOSCALE/CANNOSCALEVALUE
+                    // — the header vars the load path reads back. The old code
+                    // wrote it into USERR1, which nobody reads (so Ctrl+S lost
+                    // the scale) and which clobbered a general-purpose user var.
+                    sync_annotation_scale_header(&mut self.tabs[i].scene);
                     match crate::io::save(&self.tabs[i].scene.document, &path) {
                         Ok(()) => {
                             self.command_line
@@ -712,7 +715,9 @@ impl OpenCADStudio {
                 let path = self.save_dialog_folder.join(&self.save_dialog_filename);
                 let (_, version) = crate::io::parse_save_format(&self.save_dialog_format);
                 let close = self.close_save_dialog_window();
-                let i = self.active_tab;
+                // Save the tab the dialog was opened for — the user may have
+                // switched tabs while this always-on-top window was up.
+                let i = self.save_dialog_tab.min(self.tabs.len().saturating_sub(1));
                 sync_annotation_scale_header(&mut self.tabs[i].scene);
                 match crate::io::save_as_version(&self.tabs[i].scene.document, &path, version) {
                     Ok(()) => {
@@ -7962,6 +7967,7 @@ impl OpenCADStudio {
 
     /// Populate edit buffers from the currently selected text style.
     fn open_save_dialog_window(&mut self, tab_idx: usize) -> Task<Message> {
+        self.save_dialog_tab = tab_idx;
         if let Some(id) = self.save_dialog_window {
             return window::gain_focus(id);
         }

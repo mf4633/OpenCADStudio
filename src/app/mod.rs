@@ -431,6 +431,10 @@ pub(super) struct OpenCADStudio {
     save_dialog_entries: Vec<(String, bool, std::path::PathBuf)>,
     /// True when triggered from the unsaved-changes flow.
     save_dialog_for_unsaved: bool,
+    /// Tab the save dialog was opened for. The dialog is a separate
+    /// always-on-top window, so the user can switch tabs while it is open;
+    /// confirm must save this tab, not whichever tab is active at confirm time.
+    save_dialog_tab: usize,
 
     // ── DimStyle Dialog ───────────────────────────────────────────────────
     /// Name of the style currently shown in the dialog.
@@ -1342,6 +1346,7 @@ impl OpenCADStudio {
                 .into(),
             save_dialog_entries: Vec::new(),
             save_dialog_for_unsaved: false,
+            save_dialog_tab: 0,
             // Plot style
             active_plot_style: None,
             // Color scheme (default: dark CAD-style)
