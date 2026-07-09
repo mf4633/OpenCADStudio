@@ -632,8 +632,13 @@ pub fn expand_insert(
 
     // `defn.aabb_local` is in the defn's offset frame — re-add
     // `defn.local_offset` (f64) before transforming so the world AABB is
-    // accurate for distant content.
-    let insert_world = transform_offset_aabb_xy(defn.aabb_local, defn.local_offset, &xform);
+    // accurate for distant content. For a MINSERT the block is replicated
+    // across a grid, so expand the local AABB by the array span (axis-aligned
+    // in the local frame) first; otherwise the whole-Insert cull below sees
+    // only the base cell and wrongly culls the whole array when the base cell
+    // is off-screen but later cells are visible.
+    let array_local_aabb = minsert_expanded_local_aabb(defn.aabb_local, ins);
+    let insert_world = transform_offset_aabb_xy(array_local_aabb, defn.local_offset, &xform);
     let insert_local = [
         insert_world[0] - ox as f32,
         insert_world[1] - oy as f32,
@@ -1503,6 +1508,26 @@ fn is_unreasonable_extent(e: &EntityType) -> bool {
     }
 }
 
+/// Expand a block's local XY AABB to cover every cell of a MINSERT array.
+/// Array offsets are axis-aligned in the block's local frame (col*spacing in x,
+/// row*spacing in y), so the grid's union AABB is just the base AABB extended by
+/// the full span in each axis direction. A plain (non-array) INSERT returns the
+/// AABB unchanged. Spacings may be negative, hence the min/max on the span.
+fn minsert_expanded_local_aabb(aabb: [f32; 4], ins: &acadrust::entities::Insert) -> [f32; 4] {
+    if !ins.is_minsert() {
+        return aabb;
+    }
+    let span_x = (ins.column_count.saturating_sub(1)) as f64 * ins.column_spacing;
+    let span_y = (ins.row_count.saturating_sub(1)) as f64 * ins.row_spacing;
+    let [x0, y0, x1, y1] = aabb;
+    [
+        x0 + span_x.min(0.0) as f32,
+        y0 + span_y.min(0.0) as f32,
+        x1 + span_x.max(0.0) as f32,
+        y1 + span_y.max(0.0) as f32,
+    ]
+}
+
 fn array_offsets(ins: &acadrust::entities::Insert) -> Vec<[f64; 3]> {
     if !ins.is_minsert() {
         return vec![[0.0; 3]];
@@ -1520,3 +1545,36 @@ fn array_offsets(ins: &acadrust::entities::Insert) -> Vec<[f64; 3]> {
     offsets
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::minsert_expanded_local_aabb;
+    use acadrust::entities::Insert;
+    use acadrust::Vector3;
+
+    #[test]
+    fn plain_insert_aabb_unchanged() {
+        let ins = Insert::new("B", Vector3::new(0.0, 0.0, 0.0));
+        let aabb = [1.0, 2.0, 3.0, 4.0];
+        assert_eq!(minsert_expanded_local_aabb(aabb, &ins), aabb);
+    }
+
+    #[test]
+    fn minsert_aabb_covers_whole_array() {
+        // 3 columns x 2 rows, spacing 10 x 20. Span = 2*10 (x), 1*20 (y).
+        let ins = Insert::new("B", Vector3::new(0.0, 0.0, 0.0))
+            .with_array(3, 2, 10.0, 20.0);
+        let aabb = [0.0, 0.0, 1.0, 1.0];
+        // max extends by the positive span; min unchanged (spacing positive).
+        assert_eq!(minsert_expanded_local_aabb(aabb, &ins), [0.0, 0.0, 21.0, 21.0]);
+    }
+
+    #[test]
+    fn minsert_negative_spacing_extends_the_min_side() {
+        let ins = Insert::new("B", Vector3::new(0.0, 0.0, 0.0))
+            .with_array(2, 1, -5.0, 0.0);
+        let aabb = [0.0, 0.0, 1.0, 1.0];
+        // One column step of -5 pushes the min-x side out to -5.
+        assert_eq!(minsert_expanded_local_aabb(aabb, &ins), [-5.0, 0.0, 1.0, 1.0]);
+    }
+}
