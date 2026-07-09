@@ -257,10 +257,10 @@ pub fn build_derived_caches(doc: &CadDocument) -> DerivedCaches {
             let (raw, ..) = render::render_style_for(doc, e);
             let color = render::adapt_to_bg(raw, LOAD_BG);
             let set = match e {
-                EntityType::Mesh(_) => mesh_tess::tessellate_mesh_entity(e, color),
-                _ => crate::entities::solid3d::tessellate_volume(e, color, facet_res),
+                EntityType::Mesh(_) => mesh_tess::tessellate_mesh_entity(e, color, world_offset),
+                _ => crate::entities::solid3d::tessellate_volume(e, color, facet_res, world_offset),
             };
-            set.map(|m| (handle, offset_mesh_lod_set(m, world_offset)))
+            set.map(|m| (handle, m))
         })
         .collect();
 
@@ -533,44 +533,6 @@ enum ContactSide {
 
 fn overlap_len(a: (f32, f32), b: (f32, f32)) -> f32 {
     (a.1.min(b.1) - a.0.max(b.0)).max(0.0)
-}
-
-/// Shift every vertex of a freshly tessellated `MeshLodSet` into the
-/// scene's local f32 space by subtracting `world_offset`. ACIS / SAT
-/// tessellation hands us WCS coordinates; the wire / hatch / face3d
-/// paths run in `(WCS - world_offset)` so meshes at large UTM-scale
-/// origins would otherwise float far away from the rest of the
-/// geometry. Also recomputes `world_aabb` so per-frame LOD / cull math
-/// uses the same space.
-fn offset_mesh_lod_set(mut set: MeshLodSet, world_offset: [f64; 3]) -> MeshLodSet {
-    let [ox, oy, oz] = world_offset;
-    let (fx, fy, fz) = (ox as f32, oy as f32, oz as f32);
-    let mut min_x = f32::INFINITY;
-    let mut min_y = f32::INFINITY;
-    let mut max_x = f32::NEG_INFINITY;
-    let mut max_y = f32::NEG_INFINITY;
-    let mut min_z = f32::INFINITY;
-    let mut max_z = f32::NEG_INFINITY;
-    for lod in &mut set.lods {
-        for v in &mut lod.verts {
-            v[0] -= fx;
-            v[1] -= fy;
-            v[2] -= fz;
-            if v[0] < min_x { min_x = v[0]; }
-            if v[1] < min_y { min_y = v[1]; }
-            if v[0] > max_x { max_x = v[0]; }
-            if v[1] > max_y { max_y = v[1]; }
-            if v[2] < min_z { min_z = v[2]; }
-            if v[2] > max_z { max_z = v[2]; }
-        }
-    }
-    if min_x.is_finite() {
-        set.world_aabb = [min_x, min_y, max_x, max_y];
-    }
-    if min_z.is_finite() {
-        set.z_range = [min_z, max_z];
-    }
-    set
 }
 
 /// Stable hash of a `Camera`'s pose for use as a per-tile cache key.
@@ -3429,12 +3391,11 @@ impl Scene {
         ) {
             let color = self.render_style(&entity).0;
             let woff = self.world_offset;
-            crate::entities::solid3d::tessellate_volume(&entity, color, facet_res)
-                .map(|m| offset_mesh_lod_set(m, woff))
+            crate::entities::solid3d::tessellate_volume(&entity, color, facet_res, woff)
         } else if matches!(&entity, EntityType::Mesh(_)) {
             let color = self.render_style(&entity).0;
             let woff = self.world_offset;
-            mesh_tess::tessellate_mesh_entity(&entity, color).map(|m| offset_mesh_lod_set(m, woff))
+            mesh_tess::tessellate_mesh_entity(&entity, color, woff)
         } else {
             None
         };
@@ -4327,10 +4288,10 @@ impl Scene {
             .into_par_iter()
             .filter_map(|(handle, entity, color)| {
                 let set = match &entity {
-                    EntityType::Mesh(_) => mesh_tess::tessellate_mesh_entity(&entity, color),
-                    _ => crate::entities::solid3d::tessellate_volume(&entity, color, facet_res),
+                    EntityType::Mesh(_) => mesh_tess::tessellate_mesh_entity(&entity, color, woff),
+                    _ => crate::entities::solid3d::tessellate_volume(&entity, color, facet_res, woff),
                 };
-                set.map(|m| (handle, offset_mesh_lod_set(m, woff)))
+                set.map(|m| (handle, m))
             })
             .collect();
 
@@ -4916,9 +4877,9 @@ impl Scene {
             EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_) => {
                 let color = self.render_style(&entity).0;
                 let facet_res = self.document.header.facet_resolution;
-                match crate::entities::solid3d::tessellate_volume(&entity, color, facet_res) {
+                match crate::entities::solid3d::tessellate_volume(&entity, color, facet_res, woff) {
                     Some(m) => {
-                        self.meshes.insert(handle, offset_mesh_lod_set(m, woff));
+                        self.meshes.insert(handle, m);
                     }
                     None => {
                         self.meshes.remove(&handle);
@@ -4927,9 +4888,9 @@ impl Scene {
             }
             EntityType::Mesh(_) => {
                 let color = self.render_style(&entity).0;
-                match mesh_tess::tessellate_mesh_entity(&entity, color) {
+                match mesh_tess::tessellate_mesh_entity(&entity, color, woff) {
                     Some(m) => {
-                        self.meshes.insert(handle, offset_mesh_lod_set(m, woff));
+                        self.meshes.insert(handle, m);
                     }
                     None => {
                         self.meshes.remove(&handle);
