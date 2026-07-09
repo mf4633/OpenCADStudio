@@ -1339,7 +1339,16 @@ fn array_offsets(ins: &acadrust::entities::Insert) -> Vec<[f64; 3]> {
     if !ins.is_minsert() {
         return vec![[0.0; 3]];
     }
-    let mut offsets = Vec::with_capacity(ins.instance_count());
+    // Guard against a corrupt/desync'd MINSERT whose row×column counts are
+    // absurd: `with_capacity(row*col)` on a multi-billion product aborts the
+    // process on OOM. No real array has this many instances, so fall back to a
+    // single base instance rather than attempting the allocation.
+    const MAX_MINSERT: u64 = 1_000_000;
+    let total = (ins.row_count as u64).saturating_mul(ins.column_count as u64);
+    if total == 0 || total > MAX_MINSERT {
+        return vec![[0.0; 3]];
+    }
+    let mut offsets = Vec::with_capacity(total as usize);
     for row in 0..ins.row_count {
         for col in 0..ins.column_count {
             offsets.push([
