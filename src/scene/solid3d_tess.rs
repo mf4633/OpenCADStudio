@@ -313,6 +313,93 @@ fn push_quad(
 
 // ── Planar face ───────────────────────────────────────────────────────────────
 
+/// Signed area of a 2D polygon (positive when CCW).
+fn signed_area_2d(pts: &[[f64; 2]]) -> f64 {
+    let n = pts.len();
+    let mut a = 0.0;
+    for i in 0..n {
+        let p = pts[i];
+        let q = pts[(i + 1) % n];
+        a += p[0] * q[1] - q[0] * p[1];
+    }
+    a * 0.5
+}
+
+/// True when `p` lies inside or on the edge of triangle `a,b,c`.
+fn point_in_tri_2d(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> bool {
+    let sign = |u: [f64; 2], v: [f64; 2], w: [f64; 2]| {
+        (u[0] - w[0]) * (v[1] - w[1]) - (v[0] - w[0]) * (u[1] - w[1])
+    };
+    let d1 = sign(p, a, b);
+    let d2 = sign(p, b, c);
+    let d3 = sign(p, c, a);
+    let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+    let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+    !(has_neg && has_pos)
+}
+
+/// Ear-clipping triangulation of a simple polygon given as 2D points. Returns
+/// triangles as index triples into the input slice. Unlike a fan from vertex 0,
+/// this triangulates concave polygons correctly (a fan spills triangles outside
+/// an L-shaped face). Returns an empty vec on degenerate / self-intersecting
+/// input so the caller can fall back.
+fn triangulate_polygon_2d(pts: &[[f64; 2]]) -> Vec<[usize; 3]> {
+    let n = pts.len();
+    if n < 3 {
+        return vec![];
+    }
+    // Work in CCW order so a convex corner is a left turn (positive cross).
+    let mut idx: Vec<usize> = (0..n).collect();
+    if signed_area_2d(pts) < 0.0 {
+        idx.reverse();
+    }
+
+    let is_convex = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) > 0.0
+    };
+
+    let mut tris: Vec<[usize; 3]> = Vec::with_capacity(n.saturating_sub(2));
+    let mut guard = 0usize;
+    let max_guard = n * n + 1;
+    while idx.len() > 3 {
+        let m = idx.len();
+        let mut clipped = false;
+        for i in 0..m {
+            let i0 = idx[(i + m - 1) % m];
+            let i1 = idx[i];
+            let i2 = idx[(i + 1) % m];
+            let (a, b, c) = (pts[i0], pts[i1], pts[i2]);
+            if !is_convex(a, b, c) {
+                continue; // reflex vertex — not an ear tip
+            }
+            // Ear only if no other polygon vertex is inside the candidate tri.
+            let mut contains = false;
+            for &j in &idx {
+                if j == i0 || j == i1 || j == i2 {
+                    continue;
+                }
+                if point_in_tri_2d(pts[j], a, b, c) {
+                    contains = true;
+                    break;
+                }
+            }
+            if contains {
+                continue;
+            }
+            tris.push([i0, i1, i2]);
+            idx.remove(i);
+            clipped = true;
+            break;
+        }
+        guard += 1;
+        if !clipped || guard > max_guard {
+            return vec![]; // degenerate — let the caller fan-fallback
+        }
+    }
+    tris.push([idx[0], idx[1], idx[2]]);
+    tris
+}
+
 fn tess_plane_face(
     sat: &SatDocument,
     face: &SatFace,
@@ -341,10 +428,40 @@ fn tess_plane_face(
         normals.push(nf);
     }
 
-    // Fan triangulation from vertex 0.
     let n = poly.len() as u32;
-    for i in 1..(n - 1) {
-        indices.extend_from_slice(&[base, base + i, base + i + 1]);
+
+    // Build an in-plane 2D basis (u, v) to project the polygon into, then
+    // ear-clip. Concave caps (e.g. an L-shaped extrusion) triangulate correctly
+    // instead of the fan spilling triangles outside the boundary.
+    let normal = norm3([nx, ny, nz]);
+    // A reference axis not parallel to the normal, to seed the u direction.
+    let seed = if normal[0].abs() < 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let u = norm3(cross3(normal, seed));
+    let v = cross3(normal, u);
+    let p0 = poly[0];
+    let pts2d: Vec<[f64; 2]> = poly
+        .iter()
+        .map(|p| {
+            let d = [p[0] - p0[0], p[1] - p0[1], p[2] - p0[2]];
+            [dot3(d, u), dot3(d, v)]
+        })
+        .collect();
+
+    let tris = triangulate_polygon_2d(&pts2d);
+    if tris.is_empty() {
+        // Degenerate polygon — fall back to the historical fan so the face
+        // still renders (convex faces are unaffected).
+        for i in 1..(n - 1) {
+            indices.extend_from_slice(&[base, base + i, base + i + 1]);
+        }
+    } else {
+        for [a, b, c] in tris {
+            indices.extend_from_slice(&[base + a as u32, base + b as u32, base + c as u32]);
+        }
     }
 }
 
@@ -687,5 +804,63 @@ fn norm3(v: [f64; 3]) -> [f64; 3] {
         [0.0, 0.0, 1.0]
     } else {
         [v[0] / len, v[1] / len, v[2] / len]
+    }
+}
+
+#[cfg(test)]
+mod triangulate_tests {
+    use super::{signed_area_2d, triangulate_polygon_2d};
+
+    fn tri_area(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+        ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() * 0.5
+    }
+
+    fn total_tri_area(pts: &[[f64; 2]], tris: &[[usize; 3]]) -> f64 {
+        tris.iter()
+            .map(|&[a, b, c]| tri_area(pts[a], pts[b], pts[c]))
+            .sum()
+    }
+
+    #[test]
+    fn convex_square_triangulates_to_full_area() {
+        let sq = [[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]];
+        let tris = triangulate_polygon_2d(&sq);
+        assert_eq!(tris.len(), 2);
+        assert!((total_tri_area(&sq, &tris) - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn concave_l_shape_has_no_spillage() {
+        // L-shape (concave): fan-from-vertex-0 would emit a triangle covering
+        // the notch, overshooting the true area of 3.
+        let l = [
+            [0.0, 0.0],
+            [2.0, 0.0],
+            [2.0, 1.0],
+            [1.0, 1.0],
+            [1.0, 2.0],
+            [0.0, 2.0],
+        ];
+        let expected = signed_area_2d(&l).abs(); // = 3.0
+        assert!((expected - 3.0).abs() < 1e-9);
+        let tris = triangulate_polygon_2d(&l);
+        // n-2 triangles, and their combined area equals the polygon exactly —
+        // no triangle spilled outside the concave boundary.
+        assert_eq!(tris.len(), l.len() - 2);
+        assert!(
+            (total_tri_area(&l, &tris) - expected).abs() < 1e-9,
+            "triangulated area {} != polygon area {}",
+            total_tri_area(&l, &tris),
+            expected
+        );
+    }
+
+    #[test]
+    fn clockwise_input_is_handled() {
+        // Same square wound CW — must still triangulate to the full area.
+        let cw = [[0.0, 0.0], [0.0, 2.0], [2.0, 2.0], [2.0, 0.0]];
+        let tris = triangulate_polygon_2d(&cw);
+        assert_eq!(tris.len(), 2);
+        assert!((total_tri_area(&cw, &tris) - 4.0).abs() < 1e-9);
     }
 }
