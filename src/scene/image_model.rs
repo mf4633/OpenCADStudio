@@ -52,12 +52,19 @@ impl ImageModel {
     /// Always returns `Some`; a bad file path surfaces later as a `None` from
     /// `decoded()` (the quad simply doesn't render), matching the old
     /// "excluded on decode failure" behaviour without the up-front decode.
-    pub fn from_raster_image(img: &acadrust::entities::RasterImage) -> Option<Self> {
+    /// `offset` is the scene's world_offset (the precision-preserving WCS
+    /// shift) for a model-space image, or `[0.0; 3]` for a paper-space one. It
+    /// must match the offset applied to sibling geometry (hatches/meshes) or
+    /// the raster renders displaced from everything else in the drawing.
+    pub fn from_raster_image(
+        img: &acadrust::entities::RasterImage,
+        offset: [f64; 3],
+    ) -> Option<Self> {
         let w = img.size.x;
         let h = img.size.y;
-        let ox = img.insertion_point.x as f32;
-        let oy = img.insertion_point.y as f32;
-        let oz = img.insertion_point.z as f32;
+        let ox = (img.insertion_point.x + offset[0]) as f32;
+        let oy = (img.insertion_point.y + offset[1]) as f32;
+        let oz = (img.insertion_point.z + offset[2]) as f32;
         let ux = (img.u_vector.x * w) as f32;
         let uy = (img.u_vector.y * w) as f32;
         let uz = (img.u_vector.z * w) as f32;
@@ -154,6 +161,24 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert!(b.decoded.get().is_some());
         assert!(b.decoded().is_some());
+    }
+
+    #[test]
+    fn world_offset_shifts_the_quad() {
+        use acadrust::entities::RasterImage;
+        use acadrust::Vector3;
+        // 4x2-pixel image inserted at WCS (1000, 2000, 0) with unit u/v.
+        let img = RasterImage::new("x.png", Vector3::new(1000.0, 2000.0, 0.0), 4.0, 2.0);
+        let offset = [-1000.0f64, -2000.0, 0.0];
+        let m = ImageModel::from_raster_image(&img, offset).unwrap();
+        // Origin corner shifts by the offset; without it the raster would sit
+        // 1000 units away from offset-shifted sibling geometry.
+        assert_eq!(m.corners[0], [0.0, 0.0, 0.0]);
+        // Opposite corner = origin + U*w + V*h, also offset-shifted.
+        assert_eq!(m.corners[2], [4.0, 2.0, 0.0]);
+        // Zero offset leaves the quad at its absolute WCS position.
+        let m0 = ImageModel::from_raster_image(&img, [0.0; 3]).unwrap();
+        assert_eq!(m0.corners[0], [1000.0, 2000.0, 0.0]);
     }
 
     #[test]
