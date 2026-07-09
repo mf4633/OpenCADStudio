@@ -224,6 +224,27 @@ fn parse_non_default(s: &str, default: f64) -> Option<f64> {
     }
 }
 
+/// Case-fold only the visible-character spans in `raw[start..end]`, leaving the
+/// bytes *between* spans untouched. Those inter-span bytes are inline format
+/// codes (`\L`, `\O`, `\f...;`), which `visible_spans` omits — folding them with
+/// the glyphs would corrupt them (`\L` underline-on -> `\l` underline-off).
+fn case_fold_spans(raw: &str, spans: &[(usize, usize)], start: usize, end: usize, upper: bool) -> String {
+    let mut repl = String::new();
+    let mut cursor = start;
+    for &(sp_s, sp_e) in spans {
+        repl.push_str(&raw[cursor..sp_s]);
+        let ch = &raw[sp_s..sp_e];
+        if upper {
+            repl.push_str(&ch.to_uppercase());
+        } else {
+            repl.push_str(&ch.to_lowercase());
+        }
+        cursor = sp_e;
+    }
+    repl.push_str(&raw[cursor..end]);
+    repl
+}
+
 /// Map each visible character of a raw MText value to its byte span
 /// `(start, end)` in that raw string, in the same reading order the layout
 /// counts glyph boxes (paragraphs split on `\P`/`\n`/`\N`, leading/trailing
@@ -431,8 +452,7 @@ impl super::OpenCADStudio {
         let end = spans[b - 1].1;
         let mut s = raw;
         if let Some(upper) = case {
-            let slice = &s[start..end];
-            let repl = if upper { slice.to_uppercase() } else { slice.to_lowercase() };
+            let repl = case_fold_spans(&s, &spans[a..b], start, end, upper);
             s.replace_range(start..end, &repl);
             // Length may change; recompute end for the suffix insert.
             let new_end = start + repl.len();
@@ -658,5 +678,35 @@ impl super::OpenCADStudio {
     /// Discard the editor without changing the drawing.
     pub(super) fn mtext_cancel(&mut self) {
         self.mtext_editor = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{case_fold_spans, visible_spans};
+
+    /// Fold the whole visible run of `raw` to the requested case, driving the
+    /// same code path the Uppercase/Lowercase buttons use.
+    fn fold_all(raw: &str, upper: bool) -> String {
+        let spans = visible_spans(raw);
+        let start = spans.first().map(|s| s.0).unwrap_or(0);
+        let end = spans.last().map(|s| s.1).unwrap_or(0);
+        case_fold_spans(raw, &spans, start, end, upper)
+    }
+
+    #[test]
+    fn case_fold_preserves_inline_codes() {
+        // \L / \l (underline on/off) must survive an uppercase fold verbatim;
+        // only the glyphs between them change.
+        assert_eq!(fold_all("a\\Lb\\lc", true), "A\\LB\\lC");
+        // \f...; font code and \O overline stay intact on lowercase.
+        assert_eq!(fold_all("HI\\fGothic;WORLD", false), "hi\\fGothic;world");
+        assert_eq!(fold_all("A\\OB\\oC", false), "a\\Ob\\oc");
+    }
+
+    #[test]
+    fn case_fold_plain_text() {
+        assert_eq!(fold_all("hello", true), "HELLO");
+        assert_eq!(fold_all("HeLLo", false), "hello");
     }
 }

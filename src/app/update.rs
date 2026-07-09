@@ -4839,6 +4839,13 @@ impl OpenCADStudio {
                     self.command_line.push_error("Layout name cannot be empty.");
                 } else if new_name == old_name {
                     // no-op
+                } else if self.tabs[i].scene.layout_names().iter().any(|n| *n == new_name) {
+                    // Reject a duplicate name — two layouts with the same name
+                    // make LayoutSwitch/PlotSettings matching ambiguous and
+                    // leave the loser orphaned. (LayoutRenameCommit already
+                    // guards this; the manager path did not.)
+                    self.command_line
+                        .push_error(&format!("\"{}\" name already in use", new_name));
                 } else {
                     self.push_undo_snapshot(i, "LAYOUT RENAME");
                     self.tabs[i].scene.rename_layout(&old_name, &new_name);
