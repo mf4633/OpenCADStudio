@@ -650,17 +650,28 @@ fn compute_fillet_entities(
             // Adjacent segments share a corner vertex — fillet that corner.
             let (low, high) = if *s1 < *s2 { (*s1, *s2) } else { (*s2, *s1) };
             let n = p1.vertices.len();
-            // Segments must be consecutive (high == low+1, or wrap-around on closed poly).
-            let consecutive =
-                high == low + 1 || (p1.is_closed && low == 0 && high == n.saturating_sub(1));
-            if !consecutive {
+            // Segments must be consecutive. Two cases with DIFFERENT shared
+            // vertices and before/after ordering:
+            //  • high == low+1 → shared vertex is `high`; segment-before-corner
+            //    is `low`, segment-after is `high`.
+            //  • closed-poly wrap (low==0, high==n-1) → the last segment
+            //    (n-1, ending at v0) and the first (0, starting at v0) share
+            //    vertex 0. So the corner is 0 and the before/after roles are
+            //    the REVERSE of ascending order.
+            // The old code always used `high` as the corner and `low`/`high`
+            // as before/after, so the wrap case replaced the wrong vertex and
+            // read the tangent points off the wrong segment ends.
+            let (corner_idx, seg_before, seg_after) = if high == low + 1 {
+                (high % n, low, high)
+            } else if p1.is_closed && low == 0 && high == n.saturating_sub(1) {
+                (0, high, low)
+            } else {
                 return None;
-            }
-            let corner_idx = high % n; // vertex shared by both segments
-            let l1 = lwpoly_seg_as_line(p1, low);
-            let l2 = lwpoly_seg_as_line(p1, high % n.max(1)); // seg after corner
-                                                              // Re-map click to whichever segment each was picked on.
-            let (c1, c2) = if *s1 == low {
+            };
+            let l1 = lwpoly_seg_as_line(p1, seg_before); // corner at its END
+            let l2 = lwpoly_seg_as_line(p1, seg_after); //  corner at its START
+            // Re-map click to whichever segment each was picked on.
+            let (c1, c2) = if *s1 == seg_before {
                 (click1, click2)
             } else {
                 (click2, click1)
@@ -1444,16 +1455,20 @@ fn chamfer_lwpoly_corner(
         return None;
     }
     let (low, high) = if s1 < s2 { (s1, s2) } else { (s2, s1) };
-    let consecutive =
-        high == low + 1 || (poly.is_closed && low == 0 && high == n.saturating_sub(1));
-    if !consecutive {
+    // See the fillet corner logic: the closed-poly wrap of segments (0, n-1)
+    // shares vertex 0 with the before/after roles reversed, so corner and
+    // segment order must be resolved per-case rather than always using `high`.
+    let (corner_idx, seg_before, seg_after) = if high == low + 1 {
+        (high % n, low, high)
+    } else if poly.is_closed && low == 0 && high == n.saturating_sub(1) {
+        (0, high, low)
+    } else {
         return None;
-    }
-    let corner_idx = high % n;
-    let l1 = lwpoly_seg_as_line(poly, low);
-    let l2 = lwpoly_seg_as_line(poly, high % n.max(1));
+    };
+    let l1 = lwpoly_seg_as_line(poly, seg_before);
+    let l2 = lwpoly_seg_as_line(poly, seg_after);
     // Map each click + distance to whichever segment it was picked on.
-    let (c1, d1, c2, d2) = if s1 == low {
+    let (c1, d1, c2, d2) = if s1 == seg_before {
         (click1, dist1, click2, dist2)
     } else {
         (click2, dist2, click1, dist1)
@@ -1946,5 +1961,46 @@ mod tests {
         };
         assert!(close(ml1.start.x, 0.0) && close(ml1.end.x, 2.0));
         assert!(close(ml2.start.y, -5.0) && close(ml2.end.y, 0.0));
+    }
+
+    fn closed_square() -> LwPolyline {
+        use acadrust::entities::LwVertex;
+        use acadrust::types::Vector2;
+        let mk = |x: f64, y: f64| LwVertex::new(Vector2::new(x, y));
+        LwPolyline {
+            vertices: vec![
+                mk(0.0, 0.0),   // v0 — the wrap corner
+                mk(10.0, 0.0),  // v1
+                mk(10.0, 10.0), // v2
+                mk(0.0, 10.0),  // v3
+            ],
+            is_closed: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn chamfer_closed_poly_wrap_corner_uses_vertex_zero() {
+        // Segments 0 (bottom, v0->v1) and 3 (left, v3->v0) of a closed square
+        // share the WRAP corner vertex 0 = (0,0). The old code chamfered vertex
+        // `high` (=3, the top-left corner) instead. Click both edges, chamfer
+        // distance 2.
+        let sq = closed_square();
+        let out = chamfer_lwpoly_corner(&sq, [0.0, 5.0], 2.0, [5.0, 0.0], 2.0).unwrap();
+        let EntityType::LwPolyline(p) = out else {
+            panic!("expected a polyline");
+        };
+        let has = |x: f64, y: f64| {
+            p.vertices
+                .iter()
+                .any(|v| close(v.location.x, x) && close(v.location.y, y))
+        };
+        // (0,0) becomes the two chamfer points (0,2) on the left edge and
+        // (2,0) on the bottom edge; the other three corners are untouched.
+        assert!(!has(0.0, 0.0), "the wrap corner (0,0) must be chamfered away");
+        assert!(has(0.0, 2.0), "chamfer point on the left edge");
+        assert!(has(2.0, 0.0), "chamfer point on the bottom edge");
+        assert!(has(0.0, 10.0), "top-left corner (v3) must NOT be touched");
+        assert!(has(10.0, 0.0) && has(10.0, 10.0), "far corners untouched");
     }
 }
