@@ -213,4 +213,44 @@ mod tests {
     fn box_exposes_edges() {
         assert!(edge_wires(&box_solid([0.0, 0.0, 0.0], 10.0, 10.0, 10.0)).len() >= 12);
     }
+
+    #[test]
+    fn boolean_result_persists_as_mesh_entity() {
+        use crate::scene::mesh_tess::{mesh_entity_from_model, tessellate_mesh_entity};
+        use crate::scene::mesh_model::MeshModel;
+        use crate::scene::truck_tess::{tessellate_solid, TruckTessResult};
+
+        // Union two overlapping boxes — the same geometry `solid_boolean` feeds
+        // into the persist path.
+        let a = box_solid([0.0, 0.0, 0.0], 10.0, 10.0, 10.0);
+        let b = box_solid([5.0, 5.0, 5.0], 10.0, 10.0, 10.0);
+        let result = boolean(Bool::Union, &a, &b).expect("union");
+
+        // Tessellate → MeshModel (as solid_boolean does).
+        let TruckTessResult::Mesh { verts, normals, indices } =
+            tessellate_solid(&result, [0.0, 0.0, 0.0])
+        else {
+            panic!("boolean result did not tessellate to a mesh");
+        };
+        assert!(!indices.is_empty(), "no triangles from boolean result");
+        let model = MeshModel {
+            name: String::new(),
+            verts,
+            normals,
+            indices,
+            color: [0.8, 0.8, 0.85, 1.0],
+            selected: false,
+        };
+
+        // Convert to the persistable Mesh entity, then re-tessellate it exactly
+        // as save/reload + undo do. The old bare-Solid3D path produced nothing
+        // here; the Mesh path must yield shaded geometry.
+        let entity = mesh_entity_from_model(&model, [0.0, 0.0, 0.0]);
+        let reloaded = tessellate_mesh_entity(&entity, [0.8, 0.8, 0.85, 1.0])
+            .expect("Mesh entity re-tessellates");
+        assert!(
+            reloaded.lods[0].indices.len() >= model.indices.len().min(12),
+            "reloaded mesh lost its geometry"
+        );
+    }
 }
