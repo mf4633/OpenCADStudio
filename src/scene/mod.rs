@@ -4736,6 +4736,7 @@ impl Scene {
             self.selected.remove(&h);
             self.hatches.remove(&h);
             self.meshes.remove(&h);
+            self.images.remove(&h);
             self.model_solids.remove(&h);
             self.mark_entity_dirty(h);
         }
@@ -4866,6 +4867,52 @@ impl Scene {
 
     // ── Modify (transform / copy) ─────────────────────────────────────────
 
+    /// (Re)build the mesh / image derived-cache entry for `handle` from the
+    /// current document entity. `meshes` and `images` are persistent caches
+    /// keyed by handle that are NOT rebuilt from the document on edit, so a
+    /// copied Mesh/RasterImage would render nothing and a transformed one would
+    /// stay at its old pose without this. Hatches are handled inline by callers.
+    fn rebuild_derived_for(&mut self, handle: Handle) {
+        let Some(entity) = self.document.get_entity(handle).cloned() else {
+            return;
+        };
+        let woff = self.world_offset;
+        match &entity {
+            EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_) => {
+                let color = self.render_style(&entity).0;
+                let facet_res = self.document.header.facet_resolution;
+                match crate::entities::solid3d::tessellate_volume(&entity, color, facet_res) {
+                    Some(m) => {
+                        self.meshes.insert(handle, offset_mesh_lod_set(m, woff));
+                    }
+                    None => {
+                        self.meshes.remove(&handle);
+                    }
+                }
+            }
+            EntityType::Mesh(_) => {
+                let color = self.render_style(&entity).0;
+                match mesh_tess::tessellate_mesh_entity(&entity, color) {
+                    Some(m) => {
+                        self.meshes.insert(handle, offset_mesh_lod_set(m, woff));
+                    }
+                    None => {
+                        self.meshes.remove(&handle);
+                    }
+                }
+            }
+            EntityType::RasterImage(img) => match ImageModel::from_raster_image(img) {
+                Some(m) => {
+                    self.images.insert(handle, m);
+                }
+                None => {
+                    self.images.remove(&handle);
+                }
+            },
+            _ => {}
+        }
+    }
+
     pub fn transform_entities(&mut self, handles: &[Handle], t: &EntityTransform) {
         let hatch_offset = if self.current_layout == "Model" {
             self.world_offset
@@ -4914,6 +4961,14 @@ impl Scene {
                 if let Some(model) = new_model {
                     self.hatches.insert(h, model);
                 }
+            }
+            // A moved/rotated/scaled Mesh or RasterImage mutates the document
+            // geometry but not its cached MeshLodSet/ImageModel — rebuild them.
+            if matches!(
+                self.document.get_entity(h),
+                Some(EntityType::Mesh(_) | EntityType::RasterImage(_))
+            ) {
+                self.rebuild_derived_for(h);
             }
         }
         if preserve_text_orientation {
@@ -4971,6 +5026,10 @@ impl Scene {
                 if let Some(model) = new_model {
                     self.hatches.insert(h, model);
                 }
+                // Seed mesh/image caches for the copy; without this a copied
+                // Mesh/Solid3D/RasterImage exists in the document but renders
+                // nothing (the caches are keyed by handle, not rebuilt on copy).
+                self.rebuild_derived_for(h);
             }
             new_handles.push(h);
         }
