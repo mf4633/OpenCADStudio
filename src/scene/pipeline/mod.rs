@@ -1031,7 +1031,7 @@ impl Pipeline {
         };
         for (i, aabb) in batch.instance_aabbs.iter().enumerate() {
             let skip = aabb_below_pixel(*aabb, view_proj, clip_w, clip_h, 2.0)
-                || aabb_offscreen(*aabb, view_proj, clip_w, clip_h);
+                || aabb_offscreen(*aabb, [0.0, 0.0], view_proj, clip_w, clip_h);
             batch.visibility[i] = if skip { 0 } else { 1 };
         }
         batch.upload_visibility(queue);
@@ -1054,7 +1054,7 @@ impl Pipeline {
         self.wipeout_skip_flags = self
             .gpu_wipeouts
             .iter()
-            .map(|h| aabb_offscreen(h.world_aabb, view_proj, clip_w, clip_h))
+            .map(|h| aabb_offscreen(h.world_aabb, [0.0, 0.0], view_proj, clip_w, clip_h))
             .collect();
     }
 
@@ -1126,12 +1126,12 @@ impl Pipeline {
             .map(|m| pick_mesh_lod(m, view_proj, clip_w, clip_h))
             .collect();
         // Phase 2.2 — frustum-visibility flag per mesh. Cheap: same
-        // 4-corner projection used for LOD selection, just answering a
+        // 8-corner box projection used for LOD selection, just answering a
         // different question (any corner inside the viewport rect?).
         self.mesh_visible = self
             .gpu_meshes
             .iter()
-            .map(|m| !aabb_offscreen(m.world_aabb, view_proj, clip_w, clip_h))
+            .map(|m| !aabb_offscreen(m.world_aabb, m.z_range, view_proj, clip_w, clip_h))
             .collect();
     }
 
@@ -1788,7 +1788,7 @@ fn pick_mesh_lod(
     clip_w: u32,
     clip_h: u32,
 ) -> usize {
-    let diag_px = aabb_diagonal_pixels(mesh.world_aabb, view_proj, clip_w, clip_h);
+    let diag_px = aabb_diagonal_pixels(mesh.world_aabb, mesh.z_range, view_proj, clip_w, clip_h);
     let target = if diag_px > 200.0 {
         0
     } else if diag_px > 50.0 {
@@ -1805,36 +1805,55 @@ fn pick_mesh_lod(
     0
 }
 
-fn aabb_diagonal_pixels(
+/// Project the 8 corners of a world box (XY `aabb` + `z_range`) to screen
+/// pixels and return the pixel-space bounding rect `[min_px, min_py, max_px,
+/// max_py]`, or `None` if any input is non-finite. A flat z=0 primitive
+/// (hatch / wipeout) passes `z_range == [0.0, 0.0]`, collapsing the box to the
+/// original 4-corner z-plane projection.
+fn project_box_pixels(
     aabb: [f32; 4],
+    z_range: [f32; 2],
     view_proj: glam::Mat4,
     clip_w: u32,
     clip_h: u32,
-) -> f32 {
+) -> Option<[f32; 4]> {
     let [x0, y0, x1, y1] = aabb;
-    if !x0.is_finite() || !y0.is_finite() || !x1.is_finite() || !y1.is_finite() {
-        return f32::INFINITY;
+    let [z0, z1] = z_range;
+    if [x0, y0, x1, y1, z0, z1].iter().any(|v| !v.is_finite()) {
+        return None;
     }
     let w = clip_w as f32;
     let h = clip_h as f32;
-    let corners = [
-        view_proj.project_point3(glam::Vec3::new(x0, y0, 0.0)),
-        view_proj.project_point3(glam::Vec3::new(x1, y0, 0.0)),
-        view_proj.project_point3(glam::Vec3::new(x0, y1, 0.0)),
-        view_proj.project_point3(glam::Vec3::new(x1, y1, 0.0)),
-    ];
     let mut min_px = f32::INFINITY;
     let mut max_px = f32::NEG_INFINITY;
     let mut min_py = f32::INFINITY;
     let mut max_py = f32::NEG_INFINITY;
-    for c in &corners {
-        let px = (c.x + 1.0) * 0.5 * w;
-        let py = (1.0 - c.y) * 0.5 * h;
-        if px < min_px { min_px = px; }
-        if px > max_px { max_px = px; }
-        if py < min_py { min_py = py; }
-        if py > max_py { max_py = py; }
+    for &z in &[z0, z1] {
+        for &(x, y) in &[(x0, y0), (x1, y0), (x0, y1), (x1, y1)] {
+            let c = view_proj.project_point3(glam::Vec3::new(x, y, z));
+            let px = (c.x + 1.0) * 0.5 * w;
+            let py = (1.0 - c.y) * 0.5 * h;
+            if px < min_px { min_px = px; }
+            if px > max_px { max_px = px; }
+            if py < min_py { min_py = py; }
+            if py > max_py { max_py = py; }
+        }
     }
+    Some([min_px, min_py, max_px, max_py])
+}
+
+fn aabb_diagonal_pixels(
+    aabb: [f32; 4],
+    z_range: [f32; 2],
+    view_proj: glam::Mat4,
+    clip_w: u32,
+    clip_h: u32,
+) -> f32 {
+    let Some([min_px, min_py, max_px, max_py]) =
+        project_box_pixels(aabb, z_range, view_proj, clip_w, clip_h)
+    else {
+        return f32::INFINITY;
+    };
     let dx = max_px - min_px;
     let dy = max_py - min_py;
     (dx * dx + dy * dy).sqrt()
@@ -1853,34 +1872,18 @@ fn aabb_diagonal_pixels(
 /// extents` for this reason; meshes already store an absolute rect.
 fn aabb_offscreen(
     aabb: [f32; 4],
+    z_range: [f32; 2],
     view_proj: glam::Mat4,
     clip_w: u32,
     clip_h: u32,
 ) -> bool {
-    let [x0, y0, x1, y1] = aabb;
-    if !x0.is_finite() || !y0.is_finite() || !x1.is_finite() || !y1.is_finite() {
+    let Some([min_px, min_py, max_px, max_py]) =
+        project_box_pixels(aabb, z_range, view_proj, clip_w, clip_h)
+    else {
         return false;
-    }
+    };
     let w = clip_w as f32;
     let h = clip_h as f32;
-    let corners = [
-        view_proj.project_point3(glam::Vec3::new(x0, y0, 0.0)),
-        view_proj.project_point3(glam::Vec3::new(x1, y0, 0.0)),
-        view_proj.project_point3(glam::Vec3::new(x0, y1, 0.0)),
-        view_proj.project_point3(glam::Vec3::new(x1, y1, 0.0)),
-    ];
-    let mut min_px = f32::INFINITY;
-    let mut max_px = f32::NEG_INFINITY;
-    let mut min_py = f32::INFINITY;
-    let mut max_py = f32::NEG_INFINITY;
-    for c in &corners {
-        let px = (c.x + 1.0) * 0.5 * w;
-        let py = (1.0 - c.y) * 0.5 * h;
-        if px < min_px { min_px = px; }
-        if px > max_px { max_px = px; }
-        if py < min_py { min_py = py; }
-        if py > max_py { max_py = py; }
-    }
     // 25% pad on each side — matches `view_world_aabb` (wire path),
     // keeps edge geometry rendered while panning before the next
     // upload reaches the GPU.
@@ -2050,5 +2053,47 @@ impl iced::widget::shader::Pipeline for MultiPipeline {
             inners: vec![Pipeline::new(device, queue, format)],
             format,
         }
+    }
+}
+
+#[cfg(test)]
+mod cull_tests {
+    use super::project_box_pixels;
+
+    /// A tilted 3D view where +Z has a screen-space component. Eye above and
+    /// in front of the origin, looking at it, with Z up.
+    fn tilted_view_proj() -> glam::Mat4 {
+        let proj = glam::Mat4::perspective_rh(1.0, 1.0, 0.1, 10_000.0);
+        let view = glam::Mat4::look_at_rh(
+            glam::Vec3::new(0.0, -200.0, 200.0),
+            glam::Vec3::ZERO,
+            glam::Vec3::Z,
+        );
+        proj * view
+    }
+
+    #[test]
+    fn z_extent_widens_projected_footprint() {
+        let vp = tilted_view_proj();
+        let xy = [-10.0, -10.0, 10.0, 10.0];
+        // Flat footprint on the z=0 plane (the old behaviour).
+        let flat = project_box_pixels(xy, [0.0, 0.0], vp, 800, 800).unwrap();
+        // Same XY box but 100 units tall.
+        let tall = project_box_pixels(xy, [0.0, 100.0], vp, 800, 800).unwrap();
+        let flat_h = flat[3] - flat[1];
+        let tall_h = tall[3] - tall[1];
+        // The elevated top of the box projects to a different screen row, so
+        // the true footprint is taller than the z=0 flattening reported.
+        assert!(
+            tall_h > flat_h + 1.0,
+            "tall footprint {tall_h} should exceed flat {flat_h}"
+        );
+    }
+
+    #[test]
+    fn non_finite_aabb_is_rejected() {
+        let vp = tilted_view_proj();
+        assert!(project_box_pixels([f32::NAN, 0.0, 1.0, 1.0], [0.0, 0.0], vp, 800, 800).is_none());
+        assert!(project_box_pixels([0.0, 0.0, 1.0, 1.0], [0.0, f32::INFINITY], vp, 800, 800).is_none());
     }
 }

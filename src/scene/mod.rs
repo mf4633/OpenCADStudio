@@ -549,6 +549,8 @@ fn offset_mesh_lod_set(mut set: MeshLodSet, world_offset: [f64; 3]) -> MeshLodSe
     let mut min_y = f32::INFINITY;
     let mut max_x = f32::NEG_INFINITY;
     let mut max_y = f32::NEG_INFINITY;
+    let mut min_z = f32::INFINITY;
+    let mut max_z = f32::NEG_INFINITY;
     for lod in &mut set.lods {
         for v in &mut lod.verts {
             v[0] -= fx;
@@ -558,10 +560,15 @@ fn offset_mesh_lod_set(mut set: MeshLodSet, world_offset: [f64; 3]) -> MeshLodSe
             if v[1] < min_y { min_y = v[1]; }
             if v[0] > max_x { max_x = v[0]; }
             if v[1] > max_y { max_y = v[1]; }
+            if v[2] < min_z { min_z = v[2]; }
+            if v[2] > max_z { max_z = v[2]; }
         }
     }
     if min_x.is_finite() {
         set.world_aabb = [min_x, min_y, max_x, max_y];
+    }
+    if min_z.is_finite() {
+        set.z_range = [min_z, max_z];
     }
     set
 }

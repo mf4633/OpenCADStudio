@@ -67,6 +67,10 @@ pub struct MeshGpu {
 pub struct MeshLodGpu {
     pub lods: Vec<MeshGpu>,
     pub world_aabb: [f32; 4],
+    /// World Z extent `[min_z, max_z]`, so the per-frame cull / LOD
+    /// projection can test the mesh's true 3D box rather than its XY
+    /// footprint flattened onto z=0.
+    pub z_range: [f32; 2],
 }
 
 impl MeshLodGpu {
@@ -79,6 +83,7 @@ impl MeshLodGpu {
                 .map(|m| MeshGpu::new(device, m))
                 .collect(),
             world_aabb: set.world_aabb,
+            z_range: set.z_range,
         }
     }
 }
