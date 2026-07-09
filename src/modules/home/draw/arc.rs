@@ -178,7 +178,10 @@ fn arc_from_se_radius(s: Vec3, e: Vec3, radius_pt: Vec3) -> Option<(Vec3, f32)> 
         return None;
     }
     let unit_chord = (e - s) / chord_len;
-    let perp = Vec3::new(-unit_chord.y, 0.0, unit_chord.x);
+    // Perpendicular in the XY plane (matches arc_from_sagitta / arc_from_direction).
+    // A `(-y, 0, x)` perp lives in the XZ plane and pushes the centre off-plane,
+    // so the committed arc no longer passes through the endpoints.
+    let perp = Vec3::new(-unit_chord.y, unit_chord.x, 0.0);
     let mid = (s + e) * 0.5;
     let h_sign = (radius_pt - mid).dot(perp).signum();
     let d = (r * r - (chord_len * 0.5) * (chord_len * 0.5))
@@ -207,6 +210,9 @@ fn arc_from_direction(s: Vec3, e: Vec3, dir_pt: Vec3) -> Option<(Vec3, f32)> {
 /// Compute end_angle from a chord-length pick (SCL / CSL semantics).
 /// `chord_len` is clamped to [0, 2r].
 fn end_angle_from_chord_len(start_angle: f32, chord: f32, r: f32) -> f32 {
+    if r <= 1e-9 {
+        return start_angle;
+    }
     let half = (chord.min(2.0 * r) / (2.0 * r)).asin();
     start_angle + 2.0 * half
 }
@@ -1115,3 +1121,35 @@ inventory::submit!(crate::command::CommandRegistration { names: &["ARC_SCL"] });
 inventory::submit!(crate::command::CommandRegistration { names: &["ARC_SEA"] });  // ArcSEACommand
 inventory::submit!(crate::command::CommandRegistration { names: &["ARC_SED"] });  // ArcSEDCommand
 inventory::submit!(crate::command::CommandRegistration { names: &["ARC_SER"] });  // ArcSERCommand
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-3
+    }
+
+    #[test]
+    fn arc_from_se_radius_center_stays_in_xy_plane() {
+        // s=(0,0), e=(2,0), radius pick √2 from s → r=√2. The correct centre is
+        // (1,∓1,0): equidistant from both endpoints AND on the z=0 plane. The old
+        // XZ-plane perpendicular produced a centre at z=∓1 (still equidistant in
+        // 3D, so only the z check catches the bug).
+        let s = Vec3::new(0.0, 0.0, 0.0);
+        let e = Vec3::new(2.0, 0.0, 0.0);
+        let rp = Vec3::new(1.0, 1.0, 0.0);
+        let (c, r) = arc_from_se_radius(s, e, rp).unwrap();
+        assert!(approx(c.z, 0.0), "centre left the XY plane: z={}", c.z);
+        assert!(approx(c.distance(s), r));
+        assert!(approx(c.distance(e), r));
+    }
+
+    #[test]
+    fn end_angle_from_chord_len_guards_zero_radius() {
+        // r=0 must not divide by zero and NaN the arc.
+        let a = end_angle_from_chord_len(1.0, 2.0, 0.0);
+        assert!(a.is_finite());
+        assert_eq!(a, 1.0);
+    }
+}

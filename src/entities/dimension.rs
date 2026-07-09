@@ -245,7 +245,12 @@ fn apply_linear_fields_aligned(d: &mut DimensionAligned, field: &str, value: &st
         field,
         value,
     );
-    let _ = assign_f64(value, &mut d.ext_line_rotation);
+    // Guard by field name (matching the Linear variant). Without it, editing
+    // any coordinate — whose value string parses as f64 — also overwrote the
+    // oblique extension-line rotation via the unconditional assign.
+    if field == "ext_line_rotation" {
+        let _ = assign_f64(value, &mut d.ext_line_rotation);
+    }
 }
 
 fn apply_linear_fields_linear(d: &mut DimensionLinear, field: &str, value: &str) {
@@ -2584,6 +2589,38 @@ mod tests {
         let mut p = Vector3::new(1.0, 1.0, 0.0);
         mirror_point(&mut p, Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
         assert!(close(p.x, 1.0) && close(p.y, -1.0));
+    }
+
+    #[test]
+    fn aligned_coord_edit_preserves_oblique_rotation() {
+        // Editing a coordinate field of an aligned dimension must not clobber
+        // ext_line_rotation (the DIMEDIT oblique angle). The old unconditional
+        // assign wrote the coordinate's value string into ext_line_rotation.
+        let mut d = DimensionAligned::new(
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(10.0, 0.0, 0.0),
+        );
+        d.ext_line_rotation = 0.3;
+        let mut dim = Dimension::Aligned(d);
+
+        apply_geom_prop(&mut dim, "first_x", "12.0");
+
+        let Dimension::Aligned(d) = &dim else {
+            unreachable!()
+        };
+        assert!(close(d.first_point.x, 12.0), "coordinate edit applied");
+        assert!(
+            close(d.ext_line_rotation, 0.3),
+            "oblique rotation preserved, got {}",
+            d.ext_line_rotation
+        );
+
+        // The dedicated field still writes through.
+        apply_geom_prop(&mut dim, "ext_line_rotation", "0.75");
+        let Dimension::Aligned(d) = &dim else {
+            unreachable!()
+        };
+        assert!(close(d.ext_line_rotation, 0.75));
     }
 
     #[test]
