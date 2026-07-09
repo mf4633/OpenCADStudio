@@ -350,6 +350,16 @@ pub(crate) fn is_entity_corrupt(e: &EntityType) -> bool {
                 || !e.minor_axis_ratio.is_finite()
                 || e.minor_axis_ratio.abs() < 1.0e-10
         }
+        E::Spline(sp) => {
+            // Non-finite control/fit points or weights make truck's
+            // BSpline/NURBS construction produce NaNs (or diverge) during
+            // tessellation; a desync'd parser also emits absurd point counts.
+            sp.control_points.len() >= MAX_VERTS
+                || sp.fit_points.len() >= MAX_VERTS
+                || sp.control_points.iter().any(|v| !finite_vec3(v))
+                || sp.fit_points.iter().any(|v| !finite_vec3(v))
+                || sp.weights.iter().any(|w| !w.is_finite())
+        }
         _ => false,
     }
 }
@@ -411,5 +421,40 @@ fn fix_dxf_dimension_rotations(doc: &mut CadDocument) {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod corrupt_tests {
+    use super::*;
+    use acadrust::entities::Spline;
+    use acadrust::types::Vector3;
+
+    #[test]
+    fn spline_with_nonfinite_control_point_is_corrupt() {
+        // A NaN control point makes truck's BSpline/NURBS tessellation emit
+        // NaNs; the guard must drop the entity on load like it does for the
+        // other curve kinds.
+        let sp = Spline {
+            control_points: vec![
+                Vector3::new(0.0, 0.0, 0.0),
+                Vector3::new(f64::NAN, 1.0, 0.0),
+            ],
+            ..Default::default()
+        };
+        assert!(is_entity_corrupt(&EntityType::Spline(sp)));
+    }
+
+    #[test]
+    fn spline_with_finite_control_points_is_kept() {
+        let sp = Spline {
+            control_points: vec![
+                Vector3::new(0.0, 0.0, 0.0),
+                Vector3::new(1.0, 1.0, 0.0),
+                Vector3::new(2.0, 0.0, 0.0),
+            ],
+            ..Default::default()
+        };
+        assert!(!is_entity_corrupt(&EntityType::Spline(sp)));
     }
 }
