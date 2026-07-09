@@ -200,7 +200,12 @@ fn le(
         .map(|s| {
             let xl = xl0 + s * dxl;
             let yl = yl0 + s * dyl;
-            let t = yl.atan2(xl); // ≡ atan2(yl/b, xl/a) but faster since sign is preserved
+            // Eccentric anomaly: for P(t) = c + a·cos t·n + b·sin t·v the local
+            // coords are (a·cos t, b·sin t), so the parameter is
+            // atan2(yl/b, xl/a). Plain atan2(yl, xl) is the *polar* angle and
+            // only equals t when a == b (a circle) — using it placed the cut at
+            // the wrong point on every non-circular ellipse.
+            let t = (yl / b).atan2(xl / a);
             (s, t)
         })
         .collect()
@@ -1928,7 +1933,10 @@ impl CadCommand for TrimCommand {
                 let ry = pt.y as f64 - e.center.y;
                 let xl = rx * nx + ry * ny;
                 let yl = -rx * ny + ry * nx;
-                let t_ell = yl.atan2(xl);
+                // Eccentric anomaly (see `le`): must match the cut-parameter
+                // convention from `ellipse_seg_ts`, else the click resolves to a
+                // different point than the cuts and the wrong segment is removed.
+                let t_ell = (yl / b).atan2(xl / a);
                 let t_click = arc_t(t_ell, t0, t1);
                 Some(trim_ellipse(e, &ts, t_click))
             }
@@ -2477,6 +2485,21 @@ mod tests {
         assert!(close(norm(-PI), PI));
         assert!(close(norm(TAU + 1.0), 1.0));
         assert!(close(norm(0.0), 0.0));
+    }
+
+    #[test]
+    fn le_returns_eccentric_anomaly_not_polar_angle() {
+        use std::f64::consts::FRAC_PI_3;
+        // Ellipse a=2, b=1 centred at the origin; the vertical line x=1 crosses
+        // it at local (1, ±√3/2). The ellipse parameter (eccentric anomaly)
+        // there is ±π/3 — NOT the polar angle atan2(√3/2, 1) ≈ 0.7137 the old
+        // code returned. A wrong parameter removes the wrong segment on trim.
+        let hits = le(1.0, -10.0, 0.0, 1.0, 0.0, 0.0, 2.0, 1.0, 1.0, 0.0);
+        assert_eq!(hits.len(), 2, "line should cross the ellipse twice");
+        let ts: Vec<f64> = hits.iter().map(|&(_, t)| t).collect();
+        let has = |target: f64| ts.iter().any(|&t| (t - target).abs() < 1e-6);
+        assert!(has(FRAC_PI_3), "expected +π/3, got {ts:?}");
+        assert!(has(-FRAC_PI_3), "expected -π/3, got {ts:?}");
     }
 
     #[test]

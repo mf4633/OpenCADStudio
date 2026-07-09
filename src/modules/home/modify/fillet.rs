@@ -126,8 +126,13 @@ fn compute_fillet(
     let z = l1.start.z;
 
     if radius < 1e-9 {
-        // r = 0: just extend/trim both lines to the intersection
-        let (new_l1, new_l2) = trim_to_point(l1, t_p, p1, u1, l2, u_p, p3, u2)?;
+        // r = 0: extend/trim both lines to the intersection, keeping the
+        // clicked side. Reuse the same click-honoring trim as the r>0 tangent
+        // trims below, with the tangent point being the intersection P — so a
+        // sharp-corner fillet keeps the portion the user picked instead of a
+        // fixed side chosen from the intersection-parameter sign.
+        let new_l1 = trim_to_xy(l1, t_p, [px, py], dir1, p1, u1)?;
+        let new_l2 = trim_to_xy(l2, u_p, [px, py], dir2, p3, u2)?;
         return Some((EntityType::Line(new_l1), EntityType::Line(new_l2), None));
     }
 
@@ -215,44 +220,6 @@ fn trim_to_xy(
     }
     let _ = (t_isect, len, t_tan); // used implicitly via `dot`
     Some(l)
-}
-
-/// Trim both lines exactly to their intersection point (r=0 case).
-fn trim_to_point(
-    l1: &LineEnt,
-    t_p: f64,
-    p1: [f64; 2],
-    u1: [f64; 2],
-    l2: &LineEnt,
-    u_p: f64,
-    _p3: [f64; 2],
-    _u2: [f64; 2],
-) -> Option<(LineEnt, LineEnt)> {
-    let px = p1[0] + t_p * u1[0];
-    let py = p1[1] + t_p * u1[1];
-    let z1 = l1.start.z;
-    let z2 = l2.start.z;
-
-    // For l1: if t_p is past the midpoint, keep start…P; else keep P…end
-    // We use the same "which end is P closer to" logic
-    let mut ll1 = l1.clone();
-    ll1.common.handle = Handle::NULL;
-    let mut ll2 = l2.clone();
-    ll2.common.handle = Handle::NULL;
-
-    if t_p >= 0.0 {
-        ll1.end = Vector3::new(px, py, z1);
-    } else {
-        ll1.start = Vector3::new(px, py, z1);
-    }
-
-    if u_p >= 0.0 {
-        ll2.end = Vector3::new(px, py, z2);
-    } else {
-        ll2.start = Vector3::new(px, py, z2);
-    }
-
-    Some((ll1, ll2))
 }
 
 // ── Point-generation helpers ──────────────────────────────────────────────
@@ -1944,5 +1911,40 @@ mod tests {
         let b = compute_bulge([1.0, 0.0], [0.0, 1.0], [0.0, 0.0]);
         assert!(close(b, (PI / 8.0).tan()));
         assert!(b > 0.0); // CCW → positive
+    }
+
+    fn line(x1: f64, y1: f64, x2: f64, y2: f64) -> LineEnt {
+        let mut l = LineEnt::new();
+        l.start = Vector3::new(x1, y1, 0.0);
+        l.end = Vector3::new(x2, y2, 0.0);
+        l
+    }
+
+    #[test]
+    fn fillet_r0_keeps_clicked_side() {
+        // l1 horizontal, l2 vertical, crossing at (2,0).
+        let l1 = line(0.0, 0.0, 10.0, 0.0);
+        let l2 = line(2.0, -5.0, 2.0, 5.0);
+
+        // Click the +x end of l1 and the +y end of l2 → the sharp corner must be
+        // (2,0)->(10,0) and (2,0)->(2,5). The old r=0 path ignored the clicks and
+        // kept the opposite lower-left corner.
+        let (e1, e2, arc) = compute_fillet(&l1, [8.0, 0.0], &l2, [2.0, 4.0], 0.0).unwrap();
+        assert!(arc.is_none());
+        let (EntityType::Line(nl1), EntityType::Line(nl2)) = (e1, e2) else {
+            panic!("expected two Line results");
+        };
+        assert!(close(nl1.start.x, 2.0) && close(nl1.start.y, 0.0));
+        assert!(close(nl1.end.x, 10.0) && close(nl1.end.y, 0.0));
+        assert!(close(nl2.start.x, 2.0) && close(nl2.start.y, 0.0));
+        assert!(close(nl2.end.x, 2.0) && close(nl2.end.y, 5.0));
+
+        // Click the other sides → the opposite corner is kept.
+        let (e1, e2, _) = compute_fillet(&l1, [-1.0, 0.0], &l2, [2.0, -4.0], 0.0).unwrap();
+        let (EntityType::Line(ml1), EntityType::Line(ml2)) = (e1, e2) else {
+            panic!("expected two Line results");
+        };
+        assert!(close(ml1.start.x, 0.0) && close(ml1.end.x, 2.0));
+        assert!(close(ml2.start.y, -5.0) && close(ml2.end.y, 0.0));
     }
 }

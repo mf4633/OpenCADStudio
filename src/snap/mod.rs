@@ -585,7 +585,7 @@ impl Snapper {
                             } else {
                                 (1.0, 0.0)
                             };
-                            let w = Vec3::new(cv.x + radius * nx, cv.y, cv.y + radius * ny);
+                            let w = Vec3::new(cv.x + radius * nx, cv.y + radius * ny, cv.z);
                             (w, edge_d * edge_d)
                         }
                     };
