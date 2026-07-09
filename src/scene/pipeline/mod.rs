@@ -131,6 +131,13 @@ pub struct Pipeline {
     /// a pick bumps only `selection_generation`, refreshing the overlay without
     /// touching the main wire buffers.
     pub cached_selection: (u64, u64),
+    /// `(wire_content_id, face3d_fill_active)` the 3D-face buffers were last
+    /// built for. 3DFACE / mesh-fill wires and their 2D greeked-text fills all
+    /// derive from the tessellation keyed by `wire_content_id`, so they only
+    /// change on a content change or a fill-mode / wireframe toggle — never on a
+    /// bare camera tick. Gated separately from `cached_epoch` (which tracks the
+    /// camera) so an orbit doesn't re-pack them every frame. `u64::MAX` = none.
+    pub cached_face3d: (u64, bool),
 }
 
 impl Pipeline {
@@ -902,6 +909,7 @@ impl Pipeline {
             cached_epoch: (u64::MAX, u64::MAX),
             cached_wire_id: u64::MAX,
             cached_selection: (u64::MAX, u64::MAX),
+            cached_face3d: (u64::MAX, false),
         }
     }
 

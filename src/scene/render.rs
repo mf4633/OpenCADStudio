@@ -243,6 +243,19 @@ impl shader::Primitive for Primitive {
                     inner.upload_images(device, queue, &vp.images[..]);
                     inner.upload_meshes(device, &vp.meshes[..]);
                 }
+                inner.cached_epoch = cur_key;
+            }
+            // 3D-face buffers are world-space too, so they only change when the
+            // tessellation content changes or the fill-mode / wireframe toggle
+            // flips — not on a camera tick. `face3d_wires` and the `all_wires`
+            // 2D fills (greeked text, MultiLeader bg) both derive from the same
+            // tessellation keyed by `wire_content_id`, which bumps on any content
+            // change (incl. zoom-driven greeking) yet stays stable on a
+            // pan-reuse. Gating here — rather than on `cur_key` (which bumps
+            // every frame the camera moves) — stops an orbit re-packing these
+            // buffers; the fill flag keeps FILLMODE / Wireframe toggles live.
+            let face3d_key = (vp.wire_content_id, face3d_fill_active);
+            if face3d_key != inner.cached_face3d {
                 inner.upload_face3d(
                     device,
                     &vp.face3d_wires[..],
@@ -250,7 +263,7 @@ impl shader::Primitive for Primitive {
                     !face3d_fill_active,
                     &vp.draw_depths,
                 );
-                inner.cached_epoch = cur_key;
+                inner.cached_face3d = face3d_key;
             }
             // Wire buffers are world-space, so a camera move alone doesn't
             // change them — only the view_proj uniform (uploaded every frame).
