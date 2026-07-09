@@ -125,3 +125,6 @@ web-sys = { version = "0.3", features = [
 # system fonts, so without it all iced text (ribbon labels, command line) is
 # blank. Features merge with the main `iced` dependency.
 iced = { version = "0.14", features = ["webgl", "fira-sans"] }
+
+[profile.release]
+strip = true
