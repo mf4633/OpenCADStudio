@@ -150,9 +150,9 @@ impl Parser {
         Ok(left)
     }
 
-    // product → power (('*' | '/' | '%') power)*
+    // product → unary (('*' | '/' | '%') unary)*
     fn parse_product(&mut self) -> Result<f64, ()> {
-        let mut left = self.parse_power()?;
+        let mut left = self.parse_unary()?;
         loop {
             let op = match self.peek().cloned() {
                 Some(Token::Star) => Some("*"),
@@ -163,12 +163,12 @@ impl Parser {
             match op {
                 Some("*") => {
                     self.advance();
-                    let right = self.parse_power()?;
+                    let right = self.parse_unary()?;
                     left = left * right;
                 }
                 Some("/") => {
                     self.advance();
-                    let right = self.parse_power()?;
+                    let right = self.parse_unary()?;
                     if right == 0.0 {
                         return Ok(if left > 0.0 { f64::INFINITY } else if left < 0.0 { f64::NEG_INFINITY } else { f64::NAN });
                     }
@@ -176,7 +176,12 @@ impl Parser {
                 }
                 Some("%") => {
                     self.advance();
-                    let right = self.parse_power()?;
+                    let right = self.parse_unary()?;
+                    // Modulo by zero is undefined; leave the expression
+                    // unevaluated rather than emitting "NaN" into a field.
+                    if right == 0.0 {
+                        return Err(());
+                    }
                     left = left % right;
                 }
                 _ => break,
@@ -185,9 +190,12 @@ impl Parser {
         Ok(left)
     }
 
-    // power → unary ('^' unary)?
+    // power → atom ('^' unary)?
+    // Right-associative and the exponent may carry its own sign, so
+    // 2^2^3 = 2^(2^3) = 256 and 2^-1 = 0.5. Unary minus binds looser than
+    // '^' (parse_unary calls parse_power), so -2^2 = -(2^2) = -4.
     fn parse_power(&mut self) -> Result<f64, ()> {
-        let base = self.parse_unary()?;
+        let base = self.parse_atom()?;
         if let Some(Token::Caret) = self.peek() {
             self.advance();
             let exp = self.parse_unary()?;
@@ -196,7 +204,7 @@ impl Parser {
         Ok(base)
     }
 
-    // unary → ('-' | '+') unary | atom
+    // unary → ('-' | '+') unary | power
     fn parse_unary(&mut self) -> Result<f64, ()> {
         if let Some(Token::Minus) = self.peek() {
             self.advance();
@@ -206,7 +214,7 @@ impl Parser {
             self.advance();
             return Ok(self.parse_unary()?);
         }
-        self.parse_atom()
+        self.parse_power()
     }
 
     // atom → NUMBER | NAME | NAME '(' args ')' | 'pi'
@@ -427,6 +435,21 @@ mod tests {
         assert_eq!(eval_to_string("2^3"), "8");
         assert_eq!(eval_to_string("10%3"), "1");
         assert_eq!(eval_to_string("100 * 2 + 50"), "250");
+    }
+
+    #[test]
+    fn power_is_right_associative_below_unary_minus() {
+        assert_eq!(eval_number("2^2^3"), Some(256.0)); // 2^(2^3), not (2^2)^3
+        assert_eq!(eval_number("2^3^2"), Some(512.0)); // 2^(3^2)
+        assert_eq!(eval_number("-2^2"), Some(-4.0)); // -(2^2), unary minus looser than ^
+        assert_eq!(eval_number("2^-1"), Some(0.5)); // signed exponent
+    }
+
+    #[test]
+    fn modulo_by_zero_is_not_nan() {
+        assert_eq!(eval_number("5%0"), None); // undefined → not evaluated
+        assert!(!eval_to_string("5%0").contains("NaN"));
+        assert_eq!(eval_number("10%3"), Some(1.0)); // normal modulo still works
     }
 
     #[test]
