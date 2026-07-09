@@ -230,8 +230,16 @@ pub fn build_derived_caches(doc: &CadDocument) -> DerivedCaches {
     let images: HashMap<Handle, ImageModel> = image_handles
         .par_iter()
         .filter_map(|&handle| {
-            if let EntityType::RasterImage(img) = doc.get_entity(handle)? {
-                ImageModel::from_raster_image(img).map(|m| (handle, m))
+            let e = doc.get_entity(handle)?;
+            if let EntityType::RasterImage(img) = e {
+                // Only model-space images take the world_offset; paper-space
+                // ones live in sheet coords (same rule as hatches above).
+                let offset = if e.common().owner_handle == model_block {
+                    world_offset
+                } else {
+                    [0.0; 3]
+                };
+                ImageModel::from_raster_image(img, offset).map(|m| (handle, m))
             } else {
                 None
             }
@@ -3392,7 +3400,7 @@ impl Scene {
             None
         };
         let image_seed = if let EntityType::RasterImage(img) = &entity {
-            ImageModel::from_raster_image(img)
+            ImageModel::from_raster_image(img, hatch_offset)
         } else {
             None
         };
@@ -4194,6 +4202,8 @@ impl Scene {
     /// Silently skips images whose files cannot be read.
     pub fn populate_images_from_document(&mut self) {
         self.images.clear();
+        let model_block = self.model_space_block_handle();
+        let world_offset = self.world_offset;
         let entries: Vec<(Handle, acadrust::entities::RasterImage)> = self
             .document
             .entities()
@@ -4206,7 +4216,14 @@ impl Scene {
             })
             .collect();
         for (handle, img) in entries {
-            if let Some(model) = ImageModel::from_raster_image(&img) {
+            // Only model-space images take the world_offset (same rule as
+            // populate_hatches_from_document); paper-space live in sheet coords.
+            let offset = if img.common.owner_handle == model_block {
+                world_offset
+            } else {
+                [0.0; 3]
+            };
+            if let Some(model) = ImageModel::from_raster_image(&img, offset) {
                 self.images.insert(handle, model);
             }
         }
@@ -4901,14 +4918,23 @@ impl Scene {
                     }
                 }
             }
-            EntityType::RasterImage(img) => match ImageModel::from_raster_image(img) {
-                Some(m) => {
-                    self.images.insert(handle, m);
+            EntityType::RasterImage(img) => {
+                // Only model-space images take the world_offset; paper-space
+                // ones live in sheet coords.
+                let img_offset = if img.common.owner_handle == self.model_space_block_handle() {
+                    woff
+                } else {
+                    [0.0; 3]
+                };
+                match ImageModel::from_raster_image(img, img_offset) {
+                    Some(m) => {
+                        self.images.insert(handle, m);
+                    }
+                    None => {
+                        self.images.remove(&handle);
+                    }
                 }
-                None => {
-                    self.images.remove(&handle);
-                }
-            },
+            }
             _ => {}
         }
     }
