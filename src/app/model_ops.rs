@@ -2,7 +2,6 @@
 // and the Design-group boolean operations (truck-shapeops) over the scene's
 // session-cached truck B-reps.
 
-use acadrust::entities::Solid3D;
 use acadrust::{EntityType, Handle};
 use iced::Task;
 use truck_modeling::Solid;
@@ -55,17 +54,46 @@ impl super::OpenCADStudio {
             return Task::none();
         };
 
+        // Tessellate the truck result up front so we can bail before mutating
+        // if it produces no geometry.
+        let woff = self.tabs[i].scene.world_offset;
+        let color = self.tabs[i].scene.entity_resolved_color(handles[0]);
+        let mesh = match crate::scene::truck_tess::tessellate_solid(&result, woff) {
+            crate::scene::truck_tess::TruckTessResult::Mesh {
+                verts,
+                normals,
+                indices,
+            } => crate::scene::mesh_model::MeshModel {
+                name: String::new(),
+                verts,
+                normals,
+                indices,
+                color,
+                selected: false,
+            },
+            _ => {
+                self.command_line
+                    .push_error("Boolean: result could not be tessellated.");
+                return Task::none();
+            }
+        };
+
         self.push_undo_snapshot(i, "BOOLEAN");
         // Remove the two operands (entity + mesh + cached B-rep).
         self.tabs[i].scene.erase_entities(&handles);
-        // The result is freshly combined geometry with no ACIS parametrisation,
-        // so it lives as a Solid3D whose render/boolean data is the injected
-        // truck mesh + cached B-rep; its edge wires make it pickable.
-        let mut s3d = Solid3D::new();
-        s3d.wires = model_solid::edge_wires(&result);
-        let handle = self.add_model_solid(EntityType::Solid3D(s3d), result);
+        // truck B-reps can't be written back to DWG/DXF as ACIS, so a bare
+        // Solid3D result (wires only, no body) was lost on save/reload and
+        // rebuilt to nothing on undo/redo. Persist the tessellation as a real
+        // Mesh (ACAD_MESH) entity — add_entity re-tessellates it into
+        // scene.meshes for shaded display, exactly like EXTRUDE/REVOLVE — and
+        // keep the truck B-rep in the session model_solids cache keyed by the
+        // new handle so the result stays booleanable for the rest of the
+        // session.
+        let entity = crate::scene::mesh_tess::mesh_entity_from_model(&mesh, woff);
+        let handle = self.tabs[i].scene.add_entity(entity);
         self.tabs[i].scene.deselect_all();
         if !handle.is_null() {
+            self.tabs[i].scene.model_solids.insert(handle, result);
             self.tabs[i].scene.select_entity(handle, false);
         }
         self.tabs[i].dirty = true;

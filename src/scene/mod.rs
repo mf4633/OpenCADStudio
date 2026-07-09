@@ -1040,6 +1040,17 @@ impl Scene {
     /// tessellate it into the shaded mesh pipeline under `handle`. The solid is
     /// in the same offset-relative frame the mesh pipeline uses, so the mesh is
     /// stored as-is (Model-tab geometry is authored at world_offset 0).
+    /// Resolved display colour (ByLayer/ByBlock/true-colour applied) of the
+    /// entity at `handle`, or a neutral solid-grey default when it is absent.
+    /// Lets callers outside the scene module (e.g. the boolean op) inherit an
+    /// operand's colour without reaching into the private `render_style`.
+    pub fn entity_resolved_color(&self, handle: Handle) -> [f32; 4] {
+        self.document
+            .get_entity(handle)
+            .map(|e| self.render_style(e).0)
+            .unwrap_or([0.8, 0.8, 0.85, 1.0])
+    }
+
     pub fn register_model_solid(&mut self, handle: Handle, solid: truck_modeling::Solid) {
         let color = self
             .document
