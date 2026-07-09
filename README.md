@@ -21,6 +21,7 @@ OCS is a CAD application for 2D drafting and 3D modeling, built with Rust. Reads
 - **STEP AP203** export (`STEPOUT`)
 - **OBJ** import (`IMPORTOBJ`)
 - **PDF** export (plot layouts to PDF)
+- **SVG** export (`SVGOUT` / `EXPORTSVG`) — model space, or paper-space layouts at sheet size
 - **WBLOCK** — write selected entities or a block to an external file
 - **XREF** — attach, reload, and auto-resolve external references
 
