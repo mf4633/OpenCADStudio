@@ -2238,30 +2238,47 @@ fn format_engineering(inches: f64, dec: usize) -> String {
 fn format_architectural(inches: f64, dimfrac: i16) -> String {
     let sign = if inches < 0.0 { "-" } else { "" };
     let abs = inches.abs();
-    let feet = (abs / 12.0).trunc();
+    let mut feet = (abs / 12.0).trunc();
     let rem_in_total = abs - feet * 12.0;
-    let whole = rem_in_total.trunc();
+    let mut whole = rem_in_total.trunc();
     let frac = rem_in_total - whole;
     let frac_str = fraction_string(frac, dimfrac);
+    // A fraction that rounds up to a full inch comes back as a bare integer
+    // ("1", no slash). Carry it into the inches — and on into feet — instead of
+    // printing the nonsensical `N 1"`. (e.g. 11.97" → 1'-0", not 0'-11 1".)
+    if !frac_str.is_empty() && !frac_str.contains('/') {
+        whole += frac_str.parse::<f64>().unwrap_or(0.0);
+        if whole >= 12.0 {
+            feet += (whole / 12.0).trunc();
+            whole %= 12.0;
+        }
+        return format!("{sign}{feet:.0}'-{whole:.0}\"");
+    }
     if frac_str.is_empty() {
-        format!("{}{:.0}'-{:.0}\"", sign, feet, whole)
+        format!("{sign}{feet:.0}'-{whole:.0}\"")
     } else {
-        format!("{}{:.0}'-{:.0} {}\"", sign, feet, whole, frac_str)
+        format!("{sign}{feet:.0}'-{whole:.0} {frac_str}\"")
     }
 }
 
 fn format_fractional(value: f64, dimfrac: i16) -> String {
     let sign = if value < 0.0 { "-" } else { "" };
     let abs = value.abs();
-    let whole = abs.trunc();
+    let mut whole = abs.trunc();
     let frac = abs - whole;
     let frac_str = fraction_string(frac, dimfrac);
+    // Carry a rounded-up fraction (bare integer, no slash) into the whole part
+    // so 2.97 with a 1/16 precision prints "3", not "2 1".
+    if !frac_str.is_empty() && !frac_str.contains('/') {
+        whole += frac_str.parse::<f64>().unwrap_or(0.0);
+        return format!("{sign}{whole:.0}");
+    }
     if frac_str.is_empty() {
-        format!("{}{:.0}", sign, whole)
+        format!("{sign}{whole:.0}")
     } else if whole == 0.0 {
-        format!("{}{}", sign, frac_str)
+        format!("{sign}{frac_str}")
     } else {
-        format!("{}{:.0} {}", sign, whole, frac_str)
+        format!("{sign}{whole:.0} {frac_str}")
     }
 }
 
@@ -2631,6 +2648,19 @@ mod tests {
         assert_eq!(format_architectural(-18.0, 4), "-1'-6\"");
         // 6.5" → half-inch fraction appended.
         assert_eq!(format_architectural(18.5, 4), "1'-6 1/2\"");
+        // A fraction that rounds up to a full inch carries into the inches,
+        // and a full-inch carry rolls into the feet (11.97" → 1'-0", not
+        // 0'-11 1"). dimfrac=2 → 1/16 precision, 0.97*16 = 15.5 → 16/16.
+        assert_eq!(format_architectural(11.97, 2), "1'-0\"");
+    }
+
+    #[test]
+    fn fractional_carries_rounded_up_fraction_into_whole() {
+        // 0.97 at 1/16 precision rounds to 16/16 → carry to the whole part.
+        assert_eq!(format_fractional(2.97, 2), "3");
+        assert_eq!(format_fractional(-2.97, 2), "-3");
+        // A carry from a zero whole part still yields a clean integer.
+        assert_eq!(format_fractional(0.99, 2), "1");
     }
 
     #[test]
