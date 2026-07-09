@@ -45,13 +45,19 @@ pub fn mesh_entity_from_model(mesh: &MeshModel, world_offset: [f64; 3]) -> Entit
     EntityType::Mesh(m)
 }
 
-/// Tessellate a `Mesh` entity into a WORLD-space single-LOD `MeshLodSet`.
+/// Tessellate a `Mesh` entity into a LOCAL-space single-LOD `MeshLodSet`.
 ///
-/// Mirrors the ACIS solid path: the caller subtracts `world_offset` via
-/// `offset_mesh_lod_set`. Faces with more than three vertices are
+/// `offset` is the scene world_offset: it is subtracted from every vertex in
+/// f64 BEFORE narrowing to f32, so a mesh authored at large (e.g. UTM)
+/// coordinates keeps sub-unit precision instead of being quantised by the f32
+/// cast and then shifted. Faces with more than three vertices are
 /// fan-triangulated; per-vertex normals are area-weighted from the incident
 /// triangles. Returns `None` for a non-`Mesh` entity or one with no geometry.
-pub fn tessellate_mesh_entity(entity: &EntityType, color: [f32; 4]) -> Option<MeshLodSet> {
+pub fn tessellate_mesh_entity(
+    entity: &EntityType,
+    color: [f32; 4],
+    offset: [f64; 3],
+) -> Option<MeshLodSet> {
     let mesh = match entity {
         EntityType::Mesh(m) => m,
         _ => return None,
@@ -60,10 +66,11 @@ pub fn tessellate_mesh_entity(entity: &EntityType, color: [f32; 4]) -> Option<Me
         return None;
     }
 
+    let [ox, oy, oz] = offset;
     let verts: Vec<[f32; 3]> = mesh
         .vertices
         .iter()
-        .map(|v| [v.x as f32, v.y as f32, v.z as f32])
+        .map(|v| [(v.x - ox) as f32, (v.y - oy) as f32, (v.z - oz) as f32])
         .collect();
 
     let mut indices: Vec<u32> = Vec::new();
@@ -164,7 +171,7 @@ mod tests {
         assert!((m.vertices[2].y - 21.0).abs() < 1e-6); // 1 + 20
 
         // Re-tessellate: vertices come back in WCS, ready for offset_mesh_lod_set.
-        let set = tessellate_mesh_entity(&entity, model.color).unwrap();
+        let set = tessellate_mesh_entity(&entity, model.color, [0.0, 0.0, 0.0]).unwrap();
         let back = &set.lods[0];
         assert_eq!(back.indices, vec![0, 1, 2]);
         assert!((back.verts[1][0] - 11.0).abs() < 1e-4);
@@ -192,7 +199,7 @@ mod tests {
             m.faces
                 .push(acadrust::entities::MeshFace::new(vec![0, 1, 3, 2]));
         }
-        let set = tessellate_mesh_entity(&entity, [1.0, 1.0, 1.0, 1.0]).unwrap();
+        let set = tessellate_mesh_entity(&entity, [1.0, 1.0, 1.0, 1.0], [0.0, 0.0, 0.0]).unwrap();
         // One quad → two triangles → six indices.
         assert_eq!(set.lods[0].indices.len(), 6);
     }
@@ -200,6 +207,37 @@ mod tests {
     #[test]
     fn non_mesh_entity_is_none() {
         let line = EntityType::Line(acadrust::entities::Line::new());
-        assert!(tessellate_mesh_entity(&line, [1.0, 1.0, 1.0, 1.0]).is_none());
+        assert!(tessellate_mesh_entity(&line, [1.0, 1.0, 1.0, 1.0], [0.0, 0.0, 0.0]).is_none());
+    }
+
+    #[test]
+    fn large_coordinates_keep_subunit_precision() {
+        // A drawing authored at UTM-scale: the interesting vertex sits at
+        // x = 5_000_000.25. f32 near 5e6 has ~0.5-unit resolution, so casting
+        // the absolute value first would round 0.25 away; subtracting the
+        // offset in f64 first preserves it.
+        let big = 5_000_000.0_f64;
+        let mut m = acadrust::entities::Mesh::from_triangles(
+            vec![
+                Vector3::new(big, 0.0, 0.0),
+                Vector3::new(big + 0.25, 0.0, 0.0),
+                Vector3::new(big, 1.0, 0.0),
+            ],
+            &[(0, 1, 2)],
+        );
+        m.common.color = Color::Rgb { r: 200, g: 200, b: 200 };
+        let entity = EntityType::Mesh(m);
+
+        let set =
+            tessellate_mesh_entity(&entity, [0.8, 0.8, 0.8, 1.0], [big, 0.0, 0.0]).unwrap();
+        let v = &set.lods[0].verts;
+        // Local x of the second vertex must come back as 0.25, not 0.0.
+        assert!(
+            (v[1][0] - 0.25).abs() < 1e-3,
+            "expected local x ~0.25, got {} (precision lost)",
+            v[1][0]
+        );
+        // And the first vertex sits at the local origin.
+        assert!(v[0][0].abs() < 1e-3, "expected local x ~0, got {}", v[0][0]);
     }
 }

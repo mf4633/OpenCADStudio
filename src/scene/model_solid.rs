@@ -246,7 +246,7 @@ mod tests {
         // as save/reload + undo do. The old bare-Solid3D path produced nothing
         // here; the Mesh path must yield shaded geometry.
         let entity = mesh_entity_from_model(&model, [0.0, 0.0, 0.0]);
-        let reloaded = tessellate_mesh_entity(&entity, [0.8, 0.8, 0.85, 1.0])
+        let reloaded = tessellate_mesh_entity(&entity, [0.8, 0.8, 0.85, 1.0], [0.0, 0.0, 0.0])
             .expect("Mesh entity re-tessellates");
         assert!(
             reloaded.lods[0].indices.len() >= model.indices.len().min(12),

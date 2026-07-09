@@ -67,6 +67,7 @@ fn tessellate_sat(
     name: String,
     color: [f32; 4],
     lod: LodConfig,
+    offset: [f64; 3],
 ) -> Option<MeshModel> {
     let mut verts: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
@@ -80,22 +81,22 @@ fn tessellate_sat(
         match surf_rec.entity_type.as_str() {
             "plane-surface" => {
                 if let Some(plane) = SatPlaneSurface::from_record(surf_rec) {
-                    tess_plane_face(sat, &face, &plane, &mut verts, &mut normals, &mut indices);
+                    tess_plane_face(sat, &face, &plane, offset, &mut verts, &mut normals, &mut indices);
                 }
             }
             "cone-surface" => {
                 if let Some(cone) = SatConeSurface::from_record(surf_rec) {
-                    tess_cone_face(sat, &face, &cone, lod, &mut verts, &mut normals, &mut indices);
+                    tess_cone_face(sat, &face, &cone, lod, offset, &mut verts, &mut normals, &mut indices);
                 }
             }
             "sphere-surface" => {
                 if let Some(sphere) = SatSphereSurface::from_record(surf_rec) {
-                    tess_sphere_face(&sphere, lod, &mut verts, &mut normals, &mut indices);
+                    tess_sphere_face(&sphere, lod, offset, &mut verts, &mut normals, &mut indices);
                 }
             }
             "torus-surface" => {
                 if let Some(torus) = SatTorusSurface::from_record(surf_rec) {
-                    tess_torus_face(&torus, lod, &mut verts, &mut normals, &mut indices);
+                    tess_torus_face(&torus, lod, offset, &mut verts, &mut normals, &mut indices);
                 }
             }
             _ => {}
@@ -121,12 +122,13 @@ fn tessellate_sat_lods(
     name: String,
     color: [f32; 4],
     facet_res: f64,
+    offset: [f64; 3],
 ) -> Option<MeshLodSet> {
     let configs = LodConfig::all();
     let mut lods: Vec<MeshModel> = Vec::with_capacity(3);
     for lod in configs {
         let scaled = scale_lod(lod, facet_res);
-        if let Some(m) = tessellate_sat(sat, name.clone(), color, scaled) {
+        if let Some(m) = tessellate_sat(sat, name.clone(), color, scaled, offset) {
             lods.push(m);
         }
     }
@@ -184,25 +186,35 @@ fn parse_acis(
 }
 
 /// Tessellate a `Region` entity (2D planar ACIS body) at all three LOD levels.
-pub fn tessellate_region(region: &Region, color: [f32; 4], facet_res: f64) -> Option<MeshLodSet> {
+pub fn tessellate_region(
+    region: &Region,
+    color: [f32; 4],
+    facet_res: f64,
+    offset: [f64; 3],
+) -> Option<MeshLodSet> {
     let sat = parse_acis(
         || region.parse_sat(),
         region.acis_data.is_binary,
         &region.acis_data.sab_data,
     )?;
     let name = region.common.handle.value().to_string();
-    tessellate_sat_lods(&sat, name, color, facet_res)
+    tessellate_sat_lods(&sat, name, color, facet_res, offset)
 }
 
 /// Tessellate a `Body` entity (3D ACIS body) at all three LOD levels.
-pub fn tessellate_body(body: &Body, color: [f32; 4], facet_res: f64) -> Option<MeshLodSet> {
+pub fn tessellate_body(
+    body: &Body,
+    color: [f32; 4],
+    facet_res: f64,
+    offset: [f64; 3],
+) -> Option<MeshLodSet> {
     let sat = parse_acis(
         || body.parse_sat(),
         body.acis_data.is_binary,
         &body.acis_data.sab_data,
     )?;
     let name = body.common.handle.value().to_string();
-    tessellate_sat_lods(&sat, name, color, facet_res)
+    tessellate_sat_lods(&sat, name, color, facet_res, offset)
 }
 
 /// Tessellate a `Solid3D` entity at all three LOD levels.
@@ -210,14 +222,19 @@ pub fn tessellate_body(body: &Body, color: [f32; 4], facet_res: f64) -> Option<M
 /// Returns `None` when the entity has no parseable SAT data or produces no
 /// triangles (e.g. the solid uses only unsupported surface types).
 /// `facet_res` mirrors the header FACETRES variable (0.01–10.0).
-pub fn tessellate_solid3d(solid: &Solid3D, color: [f32; 4], facet_res: f64) -> Option<MeshLodSet> {
+pub fn tessellate_solid3d(
+    solid: &Solid3D,
+    color: [f32; 4],
+    facet_res: f64,
+    offset: [f64; 3],
+) -> Option<MeshLodSet> {
     let sat = parse_acis(
         || solid.parse_sat(),
         solid.acis_data.is_binary,
         &solid.acis_data.sab_data,
     )?;
     let name = solid.common.handle.value().to_string();
-    tessellate_sat_lods(&sat, name, color, facet_res)
+    tessellate_sat_lods(&sat, name, color, facet_res, offset)
 }
 
 // ── Topology helpers ──────────────────────────────────────────────────────────
@@ -292,6 +309,20 @@ fn resolve_point(sat: &SatDocument, v_ptr: SatPointer) -> Option<[f64; 3]> {
 
 // ── Mesh builder helpers ──────────────────────────────────────────────────────
 
+/// Subtract the scene world_offset in f64, THEN narrow to f32. SAT bodies can
+/// carry coordinates in the millions (georeferenced drawings); casting the
+/// absolute value to f32 first would quantise it to ~0.5-unit steps and the
+/// later offset subtraction can't recover the lost bits. Doing the subtraction
+/// in f64 keeps sub-unit precision, exactly like the truck tessellator.
+#[inline]
+fn local_f32(pt: [f64; 3], off: [f64; 3]) -> [f32; 3] {
+    [
+        (pt[0] - off[0]) as f32,
+        (pt[1] - off[1]) as f32,
+        (pt[2] - off[2]) as f32,
+    ]
+}
+
 /// Append one quad (two triangles) to the mesh buffers.
 #[inline]
 fn push_quad(
@@ -300,11 +331,12 @@ fn push_quad(
     indices: &mut Vec<u32>,
     p: [[f64; 3]; 4],
     n: [f64; 3],
+    off: [f64; 3],
 ) {
     let base = verts.len() as u32;
     let nf = [n[0] as f32, n[1] as f32, n[2] as f32];
     for &pt in &p {
-        verts.push([pt[0] as f32, pt[1] as f32, pt[2] as f32]);
+        verts.push(local_f32(pt, off));
         normals.push(nf);
     }
     // Two CCW triangles: (0,1,2) and (0,2,3)
@@ -404,6 +436,7 @@ fn tess_plane_face(
     sat: &SatDocument,
     face: &SatFace,
     plane: &SatPlaneSurface,
+    offset: [f64; 3],
     verts: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
@@ -424,7 +457,7 @@ fn tess_plane_face(
 
     let base = verts.len() as u32;
     for &pt in &poly {
-        verts.push([pt[0] as f32, pt[1] as f32, pt[2] as f32]);
+        verts.push(local_f32(pt, offset));
         normals.push(nf);
     }
 
@@ -472,6 +505,7 @@ fn tess_cone_face(
     face: &SatFace,
     cone: &SatConeSurface,
     lod: LodConfig,
+    offset: [f64; 3],
     verts: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
@@ -550,7 +584,7 @@ fn tess_cone_face(
                 rad_dir[2] * cos_a - axis[2] * sin_a,
             ]);
 
-            push_quad(verts, normals, indices, p, n);
+            push_quad(verts, normals, indices, p, n, offset);
         }
     }
 }
@@ -627,6 +661,7 @@ fn angular_range(
 fn tess_sphere_face(
     sphere: &SatSphereSurface,
     lod: LodConfig,
+    offset: [f64; 3],
     verts: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
@@ -669,7 +704,7 @@ fn tess_sphere_face(
                 n00[2] + n10[2] + n11[2] + n01[2],
             ]);
 
-            push_quad(verts, normals, indices, p, nav);
+            push_quad(verts, normals, indices, p, nav, offset);
         }
     }
 }
@@ -693,6 +728,7 @@ fn sphere_dir(pole: [f64; 3], u_dir: [f64; 3], v_dir: [f64; 3], theta: f64, phi:
 fn tess_torus_face(
     torus: &SatTorusSurface,
     lod: LodConfig,
+    offset: [f64; 3],
     verts: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
@@ -747,7 +783,7 @@ fn tess_torus_face(
                 radial[2] * mid_theta.cos() + axis[2] * mid_theta.sin(),
             ]);
 
-            push_quad(verts, normals, indices, p, n);
+            push_quad(verts, normals, indices, p, n, offset);
         }
     }
 }

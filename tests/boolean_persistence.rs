@@ -68,7 +68,7 @@ fn round_trip(ext: &str) -> usize {
         .find(|e| matches!(e, EntityType::Mesh(_)))
         .unwrap_or_else(|| panic!("no Mesh entity after {ext} round-trip"));
 
-    let set = tessellate_mesh_entity(mesh_entity, [0.8, 0.8, 0.85, 1.0])
+    let set = tessellate_mesh_entity(mesh_entity, [0.8, 0.8, 0.85, 1.0], [0.0, 0.0, 0.0])
         .unwrap_or_else(|| panic!("reloaded {ext} boolean mesh did not tessellate"));
     set.lods[0].indices.len() / 3
 }

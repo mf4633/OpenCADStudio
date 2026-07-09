@@ -60,7 +60,7 @@ fn round_trip(ext: &str) -> (usize, [f64; 3]) {
         .unwrap_or_else(|| panic!("no Mesh entity after {ext} round-trip"));
 
     // The reloaded entity must still tessellate into a renderable mesh.
-    let set = tessellate_mesh_entity(mesh_entity, model.color)
+    let set = tessellate_mesh_entity(mesh_entity, model.color, [0.0, 0.0, 0.0])
         .unwrap_or_else(|| panic!("reloaded {ext} mesh did not tessellate"));
     let lod = &set.lods[0];
     assert_eq!(lod.indices.len(), 12, "{ext}: expected 4 triangles");
