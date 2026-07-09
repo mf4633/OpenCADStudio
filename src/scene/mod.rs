@@ -3418,7 +3418,11 @@ impl Scene {
         if let EntityType::RasterImage(ref mut img) = entity {
             if img.definition_handle.is_none() {
                 use acadrust::objects::{ImageDefinition, ObjectType};
-                let def_handle = Handle::new(self.document.next_handle());
+                // allocate_handle() reserves the id AND advances the counter;
+                // next_handle() only peeks, so the RasterImage added below would
+                // otherwise be given this same id — a duplicate handle that
+                // corrupts the saved DWG/DXF.
+                let def_handle = self.document.allocate_handle();
                 let mut img_def = ImageDefinition::with_dimensions(
                     &img.file_path,
                     img.size.x as u32,
