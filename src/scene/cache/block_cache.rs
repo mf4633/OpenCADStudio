@@ -609,17 +609,25 @@ pub fn expand_insert(
         insert_world[3] as f32,
     ];
 
-    // Whole-Insert frustum cull.
-    if let Some(view) = view_aabb {
-        if aabb_disjoint_xy(insert_local, view) {
-            return Some(vec![]);
+    // Whole-Insert frustum / pixel-size cull. Skipped for MINSERT arrays:
+    // `insert_local` is only the base cell (0,0), but the array's replicated
+    // cells (see `array_offsets`) extend far beyond it — culling on the base
+    // cell alone dropped the entire on-screen array once cell (0,0) panned out
+    // of view (or shrank the base cell below a pixel). The per-cell culls
+    // inside the offset loop (`expand_defn` receives view_aabb/world_per_pixel)
+    // still prune individual cells, so single INSERTs are unaffected.
+    if !ins.is_minsert() {
+        if let Some(view) = view_aabb {
+            if aabb_disjoint_xy(insert_local, view) {
+                return Some(vec![]);
+            }
         }
-    }
-    // Whole-Insert pixel-size LOD: if the entire Insert footprint projects
-    // to sub-pixel size, skip it entirely.
-    if let Some(wpp) = world_per_pixel {
-        if aabb_pixel_size(insert_local, wpp) < MIN_PIXEL_SIZE {
-            return Some(vec![]);
+        // Whole-Insert pixel-size LOD: if the entire Insert footprint projects
+        // to sub-pixel size, skip it entirely.
+        if let Some(wpp) = world_per_pixel {
+            if aabb_pixel_size(insert_local, wpp) < MIN_PIXEL_SIZE {
+                return Some(vec![]);
+            }
         }
     }
 
@@ -1339,7 +1347,16 @@ fn array_offsets(ins: &acadrust::entities::Insert) -> Vec<[f64; 3]> {
     if !ins.is_minsert() {
         return vec![[0.0; 3]];
     }
-    let mut offsets = Vec::with_capacity(ins.instance_count());
+    // Guard against a corrupt/crafted MINSERT whose row×column counts (both
+    // u16) are absurd — e.g. 65535×65535 → ~4.3e9 instances → a ~100 GB
+    // `with_capacity` that aborts the process on OOM. No real array is this
+    // large, so fall back to a single base instance instead.
+    const MAX_MINSERT: u64 = 1_000_000;
+    let total = (ins.row_count as u64).saturating_mul(ins.column_count as u64);
+    if total == 0 || total > MAX_MINSERT {
+        return vec![[0.0; 3]];
+    }
+    let mut offsets = Vec::with_capacity(total as usize);
     for row in 0..ins.row_count {
         for col in 0..ins.column_count {
             offsets.push([
