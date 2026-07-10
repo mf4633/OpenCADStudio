@@ -752,6 +752,10 @@ pub struct Scene {
     pub selection_filter: HashSet<String>,
     /// In-progress preview wires while a command is active (rubber-band + object ghosts).
     pub preview_wires: Vec<WireModel>,
+    /// In-progress preview SDF glyph quads (grip drag / command preview). Rides
+    /// a per-frame GPU buffer separate from the epoch-cached base text so the
+    /// dragged text stays visible while it's hidden from the base set (#316).
+    pub preview_text: Vec<crate::scene::pipeline::text_gpu::TextVertex>,
     /// Committed-segment wire drawn during multi-point commands (normal colour).
     pub interim_wire: Option<WireModel>,
     pub camera_generation: u64,
@@ -995,6 +999,7 @@ impl Scene {
             transparency_display: true,
             selection_filter: HashSet::default(),
             preview_wires: vec![],
+            preview_text: vec![],
             interim_wire: None,
             camera_generation: 0,
             geometry_epoch: GEOMETRY_EPOCH.fetch_add(1, Ordering::Relaxed),

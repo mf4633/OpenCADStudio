@@ -493,6 +493,8 @@ pub(super) fn on_tab_close(&mut self, idx: usize) -> Task<Message> {
                     // once, and drop the preview.
                     if let Some(h) = self.grip_preview_handle.take() {
                         let i = self.active_tab;
+                        self.grip_text_verts = Vec::new();
+                        self.grip_text_slide = false;
                         if let Some(orig) = self.grip_original.take() {
                             if let Some(e) = self.tabs[i].scene.document.get_entity_mut(h) {
                                 *e = orig;

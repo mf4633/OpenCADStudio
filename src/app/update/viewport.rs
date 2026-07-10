@@ -721,6 +721,25 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                         // block cache so the hide doesn't re-tessellate blocks.
                         self.tabs[i].scene.bump_geometry_no_blocks();
                         self.grip_preview_handle = Some(grip.handle);
+                        // Snapshot the entity's glyph quads once so each move can
+                        // slide the already-shaped text rather than re-shaping it
+                        // (issue #316). The fast slide path only runs for a rigid
+                        // whole-entity move of pure text: no wire geometry (so a
+                        // dimension re-tessellates) and a Square insertion grip (so
+                        // an MTEXT width handle, a Triangle, still re-tessellates so
+                        // the re-wrap is exact).
+                        let snap = self.tabs[i].scene.wire_models_for(&[grip.handle]);
+                        self.grip_text_verts =
+                            snap.iter().flat_map(|w| w.text_verts.iter().copied()).collect();
+                        let square_grip = self.tabs[i]
+                            .selected_grips
+                            .iter()
+                            .find(|g| g.id == grip.grip_id)
+                            .map(|g| g.shape == crate::scene::model::object::GripShape::Square)
+                            .unwrap_or(false);
+                        self.grip_text_slide = !self.grip_text_verts.is_empty()
+                            && snap.iter().all(|w| w.points.is_empty())
+                            && square_grip;
                     }
 
                     // The edited entity is hidden, so it's already absent from
@@ -778,10 +797,29 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                         .apply_grip(grip.handle, grip.grip_id, apply);
                     self.tabs[i].dirty = true;
                     self.tabs[i].active_grip.as_mut().unwrap().last_world = snapped;
-                    // Overlay the moved entity (hidden from the base) — no base
-                    // re-tessellation, just a one-entity preview tessellation.
-                    let preview = self.tabs[i].scene.wire_models_for(&[grip.handle]);
-                    self.tabs[i].scene.set_preview_wires(preview);
+                    // Overlay the moved entity (hidden from the base). Pure text
+                    // moved as a whole slides its drag-start glyphs — no re-shaping
+                    // and no wire re-tess. Anything else (wire geometry, or a point
+                    // grip that reshapes text) is re-tessellated for an exact
+                    // preview; either way the glyphs ride the preview-text buffer
+                    // so dragged text never vanishes mid-drag (issue #316).
+                    if self.grip_text_slide {
+                        let d = snapped - grip.origin_world;
+                        let slid = crate::scene::pipeline::text_gpu::translate_verts(
+                            &self.grip_text_verts,
+                            [d.x, d.y, d.z],
+                        );
+                        self.tabs[i].scene.set_preview_text(slid);
+                        self.tabs[i].scene.set_preview_wires(Vec::new());
+                    } else {
+                        let preview = self.tabs[i].scene.wire_models_for(&[grip.handle]);
+                        let ptext = preview
+                            .iter()
+                            .flat_map(|w| w.text_verts.iter().copied())
+                            .collect();
+                        self.tabs[i].scene.set_preview_text(ptext);
+                        self.tabs[i].scene.set_preview_wires(preview);
+                    }
                     self.refresh_selected_grips();
                     self.refresh_properties();
                     return Task::none();
@@ -1729,6 +1767,8 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                     // re-tessellate the base once, dropping the overlay preview.
                     if let Some(h) = self.grip_preview_handle.take() {
                         self.grip_original = None;
+                        self.grip_text_verts = Vec::new();
+                        self.grip_text_slide = false;
                         self.tabs[i].scene.hidden.remove(&h);
                         self.tabs[i].scene.clear_preview_wire();
                         // Only the dragged entity changed — re-tessellate just it.

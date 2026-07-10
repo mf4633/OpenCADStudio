@@ -14,11 +14,18 @@ impl Scene {
         self.preview_wires = wires;
     }
 
+    pub fn set_preview_text(&mut self, verts: Vec<crate::scene::pipeline::text_gpu::TextVertex>) {
+        // Overlay glyphs — same reasoning as `set_preview_wires`: no geometry
+        // bump. Uploaded to a dedicated per-frame text buffer in `prepare`.
+        self.preview_text = verts;
+    }
+
     pub fn clear_preview_wire(&mut self) {
         // No geometry bump — see `set_preview_wires`. Dropping the overlay
         // flips the wire content id back to the base tessellation id, which
         // re-uploads the base wires (without the preview) on the next frame.
         self.preview_wires = vec![];
+        self.preview_text = vec![];
         self.interim_wire = None;
     }
 

@@ -41,6 +41,11 @@ pub struct ViewportData {
     pub(in crate::scene) face3d_wires: Arc<Vec<WireModel>>,
     /// SDF text-quad vertices (Phase 2b). Empty unless `OCS_TEXT_SDF` is set.
     pub(in crate::scene) text_verts: Arc<Vec<crate::scene::pipeline::text_gpu::TextVertex>>,
+    /// Live grip-drag / command-preview glyph quads. Kept out of the epoch-cached
+    /// `text_verts` and uploaded to a per-frame buffer, so text dragged by a grip
+    /// stays visible even though it's hidden from the base text set (issue #316).
+    pub(in crate::scene) preview_text_verts:
+        Arc<Vec<crate::scene::pipeline::text_gpu::TextVertex>>,
     /// Per-entity normalized draw-order depth (handle.value() → (0,1)), used
     /// by the wire / face3d pipelines as a clip-z bias. WireModels carry no
     /// depth field (84 construction sites); the bias is looked up by handle
@@ -380,6 +385,7 @@ impl shader::Primitive for Primitive {
             // refreshed every frame it's present, so a drag never re-uploads
             // the resident base wire buffer.
             inner.upload_preview_wires(device, &vp.preview_wires[..], &vp.draw_depths);
+            inner.upload_preview_text(device, queue, &vp.preview_text_verts[..]);
             // Cull / scissor / LOD project AABBs relative-to-eye (matching the
             // GPU's RTE path) so the math stays precise at UTM-scale coords.
             let view_rot = vp.uniforms.view_rot;
@@ -523,6 +529,20 @@ fn render_signature(vp: &ViewportData, clip_w: u32, clip_h: u32) -> u64 {
             p[1].to_bits().hash(&mut h);
             p[2].to_bits().hash(&mut h);
         }
+    }
+    // Grip-drag / command-preview glyph quads (issue #316). A pure-text slide
+    // leaves `preview_wires` empty and moves ONLY these, so a signature that
+    // ignored them would let the scene-render cache freeze the dragged text at
+    // its first frame (re-blitting a stale texture) until release. Small — one
+    // dragged entity — so hashing every vertex is cheap. Hash the high AND low
+    // halves of the double-single position: a sub-unit slide at UTM scale shifts
+    // only the low residual, so hashing the high f32 alone would miss it.
+    vp.preview_text_verts.len().hash(&mut h);
+    for v in vp.preview_text_verts.iter() {
+        v.pos[0].to_bits().hash(&mut h);
+        v.pos[1].to_bits().hash(&mut h);
+        v.pos_low[0].to_bits().hash(&mut h);
+        v.pos_low[1].to_bits().hash(&mut h);
     }
     h.finish()
 }
@@ -1106,11 +1126,21 @@ impl Scene {
         // draws only the text that belongs to it. Cached on the wire content
         // id so an unchanged wire set is not re-walked every frame.
         let text_verts = self.gather_text_verts(&all_wires, wire_content_id);
+        // Grip-drag / command-preview glyphs live on `self.preview_text` (set by
+        // the edit handlers), excluded from the epoch-cached base gather above.
+        // Clone the (tiny — one dragged entity) set per frame so dragged text
+        // stays on screen without re-uploading the resident base buffer (#316).
+        let preview_text_verts = if self.preview_text.is_empty() {
+            Arc::new(Vec::new())
+        } else {
+            Arc::new(self.preview_text.clone())
+        };
         Some(ViewportData {
             wires: all_wires,
             preview_wires,
             face3d_wires,
             text_verts,
+            preview_text_verts,
             draw_depths: self.draw_depth_map(),
             hatches,
             wipeout_hatches,

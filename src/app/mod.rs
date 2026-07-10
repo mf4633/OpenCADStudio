@@ -377,6 +377,15 @@ pub(super) struct OpenCADStudio {
     /// the document live (so grips / properties track), so cancel reverts from
     /// this backup. Dropped (kept) on a normal commit.
     grip_original: Option<acadrust::EntityType>,
+    /// Drag-start snapshot of the dragged entity's SDF glyph quads. A whole-
+    /// entity text move slides these each frame (translating the already-shaped
+    /// glyphs) instead of re-tessellating the run every cursor move (issue #316).
+    grip_text_verts: Vec<crate::scene::pipeline::text_gpu::TextVertex>,
+    /// True when the current grip drag is a rigid whole-entity move of pure text
+    /// (TEXT / MTEXT, no wire geometry, insertion grip) — the case where the
+    /// glyphs can just be slid. A reshape grip (e.g. an MTEXT width handle) or an
+    /// entity with wires re-tessellates instead so the preview stays exact.
+    grip_text_slide: bool,
     /// Open Quick Select panel state. `None` = panel closed. Filters are
     /// applied via `Message::QSelectApply`; the panel is dismissed on
     /// Apply / Cancel / Esc / outside-click.
@@ -2101,6 +2110,8 @@ impl OpenCADStudio {
             grip_preview_handle: None,
             hover_dwell: None,
             grip_original: None,
+            grip_text_verts: Vec::new(),
+            grip_text_slide: false,
             qselect: None,
             show_ucs_icon: true,
             ucs_icon_at_origin: true,

@@ -1649,6 +1649,7 @@ impl Scene {
         self.document = CadDocument::new();
         self.selected = HashSet::default();
         self.preview_wires = vec![];
+        self.preview_text = vec![];
         self.current_layout = "Model".to_string();
         self.hatches = HashMap::default();
         self.meshes = HashMap::default();

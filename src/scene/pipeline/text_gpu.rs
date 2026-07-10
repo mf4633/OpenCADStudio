@@ -120,6 +120,29 @@ pub fn push_glyph_vertices(
     }
 }
 
+/// Slide every glyph vertex by a world-space delta, re-splitting the
+/// double-single position. Lets a grip drag move already-shaped text by
+/// translating the drag-start glyphs each frame instead of re-tessellating
+/// (re-shaping) the run on every cursor move (issue #316).
+pub fn translate_verts(verts: &[TextVertex], delta: [f64; 3]) -> Vec<TextVertex> {
+    verts
+        .iter()
+        .map(|v| {
+            let wx = v.pos[0] as f64 + v.pos_low[0] as f64 + delta[0];
+            let wy = v.pos[1] as f64 + v.pos_low[1] as f64 + delta[1];
+            let wz = v.pos[2] as f64 + v.pos_low[2] as f64 + delta[2];
+            let (xh, xl) = split_ds(wx);
+            let (yh, yl) = split_ds(wy);
+            let (zh, zl) = split_ds(wz);
+            TextVertex {
+                pos: [xh, yh, zh],
+                pos_low: [xl, yl, zl],
+                ..*v
+            }
+        })
+        .collect()
+}
+
 // ── Atlas texture ───────────────────────────────────────────────────────────
 
 /// The shared glyph atlas on the GPU: a single-channel (R8) SDF texture plus

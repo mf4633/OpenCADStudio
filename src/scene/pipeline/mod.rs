@@ -90,6 +90,14 @@ pub struct Pipeline {
     /// analogue of the selected-wire xray overlay). Rebuilt on selection change.
     text_highlight_vbuf: Option<wgpu::Buffer>,
     text_highlight_vcount: u32,
+    /// Live grip-drag / command-preview SDF glyph quads. The base text buffer
+    /// only re-uploads on a geometry-epoch change, but a grip drag hides the
+    /// dragged entity from the base wire set and shows it as a per-frame
+    /// overlay — so its glyphs ride here, re-uploaded every frame like
+    /// `gpu_preview_wires`, or the dragged text vanishes until release re-tesses
+    /// it back into the base set (issue #316).
+    text_preview_vbuf: Option<wgpu::Buffer>,
+    text_preview_vcount: u32,
     /// Last requested render size (the full viewport rect, in pixels). The
     /// geometry passes render at this size; the blit UV is scaled by
     /// `depth_texture_size / alloc_size` so it samples only the filled region.
@@ -1161,6 +1169,8 @@ impl Pipeline {
             text_vcount: 0,
             text_highlight_vbuf: None,
             text_highlight_vcount: 0,
+            text_preview_vbuf: None,
+            text_preview_vcount: 0,
             mesh_pipeline,
             mesh_transparent_pipeline,
             mesh_highlight_pipeline,
@@ -1381,6 +1391,39 @@ impl Pipeline {
         } else {
             WireGpu::from_run(device, wires, depth_map, None, false, self.wire_const_bgl.as_ref())
         };
+    }
+
+    /// Upload the live grip-drag / command-preview SDF glyph quads. Re-uploaded
+    /// every frame they're present, kept separate from the epoch-cached base
+    /// text buffer so a drag never re-uploads the (potentially huge) resident
+    /// text set — and so the dragged entity's glyphs (hidden from the base set
+    /// while the drag is live) still reach the GPU each frame (issue #316).
+    pub fn upload_preview_text(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        verts: &[text_gpu::TextVertex],
+    ) {
+        if verts.is_empty() {
+            self.text_preview_vbuf = None;
+            self.text_preview_vcount = 0;
+            return;
+        }
+        // Ensure the glyph atlas exists / is current even when the base text
+        // pass didn't run this frame (e.g. the dragged text is the only text).
+        if let Ok(mut atlas) = crate::scene::text::sdf_atlas::text_atlas().lock() {
+            if self.text_atlas_gpu.is_none() || atlas.is_dirty() {
+                self.text_atlas_gpu = Some(text_gpu::TextAtlasGpu::upload(
+                    device,
+                    queue,
+                    &atlas,
+                    &self.text_atlas_bgl,
+                ));
+                atlas.clear_dirty();
+            }
+        }
+        self.text_preview_vbuf = text_gpu::upload_vertices(device, verts);
+        self.text_preview_vcount = verts.len() as u32;
     }
 
     /// Recompute pixel scissor rects for viewport-clipped wires from the current view_proj.
@@ -2143,7 +2186,9 @@ impl Pipeline {
         if let Some(atlas) = &self.text_atlas_gpu {
             let have_base = self.text_vbuf.is_some() && self.text_vcount > 0;
             let have_hl = self.text_highlight_vbuf.is_some() && self.text_highlight_vcount > 0;
-            if have_base || have_hl {
+            let have_preview =
+                self.text_preview_vbuf.is_some() && self.text_preview_vcount > 0;
+            if have_base || have_hl || have_preview {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("text.render_pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2180,6 +2225,13 @@ impl Pipeline {
                     if self.text_highlight_vcount > 0 {
                         pass.set_vertex_buffer(0, hlbuf.slice(..));
                         pass.draw(0..self.text_highlight_vcount, 0..1);
+                    }
+                }
+                // Grip-drag / command-preview glyphs, drawn over the base text.
+                if let Some(pbuf) = &self.text_preview_vbuf {
+                    if self.text_preview_vcount > 0 {
+                        pass.set_vertex_buffer(0, pbuf.slice(..));
+                        pass.draw(0..self.text_preview_vcount, 0..1);
                     }
                 }
             }
