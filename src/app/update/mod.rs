@@ -1575,6 +1575,7 @@ impl OpenCADStudio {
             }
             Message::ToggleViewCube => {
                 self.show_viewcube ^= true;
+                self.ribbon.set_viewcube(self.show_viewcube);
                 Task::none()
             }
             Message::ToggleProperties => {
