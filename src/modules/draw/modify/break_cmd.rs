@@ -200,17 +200,21 @@ fn break_ellipse(ell: &EllipseEnt, p1: Vec3, p2: Vec3) -> Vec<EntityType> {
     if a < 1e-9 {
         return vec![EntityType::Ellipse(ell.clone())];
     }
-    let _b = a * ell.minor_axis_ratio;
+    let b = a * ell.minor_axis_ratio;
     let nx = ell.major_axis.x / a;
     let ny = ell.major_axis.y / a;
 
-    // Project a point onto the ellipse parameter (eccentric anomaly)
+    // Project a point onto the ellipse parameter (eccentric anomaly). The
+    // break point is stored directly as the surviving arc's start/end
+    // parameter, so it must be the true eccentric anomaly atan2(yl/b, xl/a) —
+    // the polar angle atan2(yl, xl) placed the break at the wrong geometric
+    // point on every non-circular ellipse.
     let param_of = |pt: Vec3| -> f64 {
         let rx = pt.x as f64 - cx;
         let ry = pt.y as f64 - cy;
         let xl = rx * nx + ry * ny;
         let yl = -rx * ny + ry * nx;
-        yl.atan2(xl) // atan2(yl/b*b, xl/a*a) simplifies to atan2(yl,xl) for ordering
+        (yl / b).atan2(xl / a)
     };
 
     let t0 = ell.start_parameter;

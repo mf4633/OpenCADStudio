@@ -200,7 +200,12 @@ fn le(
         .map(|s| {
             let xl = xl0 + s * dxl;
             let yl = yl0 + s * dyl;
-            let t = yl.atan2(xl); // ≡ atan2(yl/b, xl/a) but faster since sign is preserved
+            // Eccentric anomaly: for P(t) = c + a·cos t·n + b·sin t·v the local
+            // coords are (a·cos t, b·sin t), so the parameter is atan2(yl/b,
+            // xl/a). Plain atan2(yl, xl) is the polar angle and only equals t
+            // for a circle (a == b), so it placed the cut at the wrong point on
+            // every non-circular ellipse.
+            let t = (yl / b).atan2(xl / a);
             (s, t)
         })
         .collect()
@@ -704,7 +709,7 @@ fn ellipse_boundary_angles_for_arc(
             let py = cy + r * alpha_hit.sin() - ecy;
             let xl = px * nx + py * ny;
             let yl = -px * ny + py * nx;
-            let t_ell = yl.atan2(xl);
+            let t_ell = (yl / eb).atan2(xl / ea);
             if in_arc(t_ell, et0, et1) {
                 hits.push(alpha_hit);
             }
@@ -925,7 +930,7 @@ fn ellipse_seg_ts(
                             let [phx, phy] = ellipse_pt(t_hit);
                             let xl = (phx - ecx2) * nx2 + (phy - ecy2) * ny2;
                             let yl = -(phx - ecx2) * ny2 + (phy - ecy2) * nx2;
-                            let t_ell2 = yl.atan2(xl);
+                            let t_ell2 = (yl / eb2).atan2(xl / ea2);
                             if in_arc(t_ell2, *et02, *et12) {
                                 ts.push(arc_t(t_hit, t0, t0 + span));
                             }
@@ -2160,7 +2165,7 @@ impl CadCommand for TrimCommand {
                 let ry = pt.y as f64 - e.center.y;
                 let xl = rx * nx + ry * ny;
                 let yl = -rx * ny + ry * nx;
-                let t_ell = yl.atan2(xl);
+                let t_ell = (yl / b).atan2(xl / a);
                 let t_click = arc_t(t_ell, t0, t1);
                 Some(trim_ellipse(e, &ts, t_click))
             }
@@ -2433,7 +2438,7 @@ impl CadCommand for TrimCommand {
                 let ry = pt.y as f64 - e.center.y;
                 let xl = rx * nx + ry * ny;
                 let yl = -rx * ny + ry * nx;
-                let t_click = arc_t(yl.atan2(xl), t0, t1);
+                let t_click = arc_t((yl / b).atan2(xl / a), t0, t1);
                 let survivors = trim_ellipse(e, &ts, t_click);
                 let orig_pts =
                     ellipse_pts(e.center.x, e.center.y, a, b, nx, ny, t0, t1, e.center.z);
@@ -2595,7 +2600,7 @@ impl CadCommand for ExtendCommand {
                 let ry = pt.y as f64 - e.center.y;
                 let xl = rx * nx + ry * ny;
                 let yl = -rx * ny + ry * nx;
-                let t_click = arc_t(yl.atan2(xl), t0, t1);
+                let t_click = arc_t((yl / (a * e.minor_axis_ratio)).atan2(xl / a), t0, t1);
                 let _ = span;
                 extend_ellipse(e, t_click, &self.geos)
             }
@@ -2695,7 +2700,7 @@ impl CadCommand for ExtendCommand {
                     let ry = pt.y as f64 - e.center.y;
                     let xl = rx * nx + ry * ny;
                     let yl = -rx * ny + ry * nx;
-                    let t_click = arc_t(yl.atan2(xl), t0, t1);
+                    let t_click = arc_t((yl / (a * e.minor_axis_ratio)).atan2(xl / a), t0, t1);
                     if let Some(ext) = extend_ellipse(e, t_click, &self.geos) {
                         return vec![WireModel::solid(
                             "extend_prev".into(),
@@ -2758,6 +2763,21 @@ inventory::submit!(crate::command::CommandRegistration { names: &["TRIM"] });  /
 mod tests {
     use super::*;
     use std::f64::consts::PI;
+
+    #[test]
+    fn le_returns_eccentric_anomaly_not_polar_angle() {
+        use std::f64::consts::FRAC_PI_3;
+        // Ellipse a=2, b=1 at the origin; the vertical line x=1 crosses it at
+        // local (1, ±√3/2). The ellipse parameter (eccentric anomaly) there is
+        // ±π/3 — NOT the polar angle atan2(√3/2, 1) ≈ 0.7137 the old code
+        // returned, which cut/trimmed the wrong point on non-circular ellipses.
+        let hits = le(1.0, -10.0, 0.0, 1.0, 0.0, 0.0, 2.0, 1.0, 1.0, 0.0);
+        assert_eq!(hits.len(), 2, "line should cross the ellipse twice");
+        let ts: Vec<f64> = hits.iter().map(|&(_, t)| t).collect();
+        let has = |x: f64| ts.iter().any(|&t| (t - x).abs() < 1e-6);
+        assert!(has(FRAC_PI_3), "expected +π/3, got {ts:?}");
+        assert!(has(-FRAC_PI_3), "expected -π/3, got {ts:?}");
+    }
 
     fn circle(r: f64) -> CircleEnt {
         let mut c = CircleEnt::new();
