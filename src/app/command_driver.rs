@@ -790,7 +790,7 @@ impl OpenCADStudio {
                 if self.clipboard.is_empty() {
                     self.command_line.push_error("Clipboard is empty.");
                 } else {
-                    let delta = base_pt - self.clipboard_centroid;
+                    let delta = base_pt - self.clipboard_base;
                     let translate = crate::command::EntityTransform::Translate(delta);
                     self.push_undo_snapshot(i, "PASTECLIP");
                     let count = self.clipboard.len();

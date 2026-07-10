@@ -32,8 +32,9 @@ pub struct PasteCommand {
     /// just this 5-point rectangle instead — O(1) per frame. `None` = ghost the
     /// full wires.
     bbox_wire: Option<WireModel>,
-    /// Centroid of the clipboard entities (offset origin for translation).
-    centroid: Vec3,
+    /// Paste anchor — lower-left corner of the clipboard entities (offset origin
+    /// for translation; the point that tracks the cursor).
+    base: Vec3,
 }
 
 impl PasteCommand {
@@ -44,17 +45,17 @@ impl PasteCommand {
     const MAX_PREVIEW_WIRES: usize = 20_000;
     const MAX_PREVIEW_POINTS: usize = 300_000;
 
-    pub fn new(wires: Vec<WireModel>, centroid: Vec3) -> Self {
+    pub fn new(wires: Vec<WireModel>, base: Vec3) -> Self {
         let total_points: usize = wires.iter().map(|w| w.points.len()).sum();
         let too_heavy =
             wires.len() > Self::MAX_PREVIEW_WIRES || total_points > Self::MAX_PREVIEW_POINTS;
         if too_heavy {
             if let Some(bbox_wire) = Self::bbox_outline(&wires) {
                 // Drop the full wires — the box is all the ghost needs now.
-                return Self { wires: Vec::new(), bbox_wire: Some(bbox_wire), centroid };
+                return Self { wires: Vec::new(), bbox_wire: Some(bbox_wire), base };
             }
         }
-        Self { wires, bbox_wire: None, centroid }
+        Self { wires, bbox_wire: None, base }
     }
 
     /// Build a closed rectangle outline around the XY extent of `wires`, in the
@@ -119,7 +120,7 @@ impl CadCommand for PasteCommand {
 
     fn on_preview_wires(&mut self, pt: DVec3) -> Vec<WireModel> {
         let pt = pt.as_vec3();
-        let delta = pt - self.centroid;
+        let delta = pt - self.base;
         // Large clipboard: ghost just the bounding box — O(1) per frame.
         if let Some(bbox) = &self.bbox_wire {
             return vec![bbox.translated(delta)];

@@ -70,7 +70,7 @@ impl OpenCADStudio {
                         .iter()
                         .filter_map(|&h| self.tabs[i].scene.document.get_entity(h).cloned())
                         .collect();
-                    self.clipboard_centroid = super::super::helpers::entities_centroid_by_bbox(
+                    self.clipboard_base = super::super::helpers::entities_lower_left_by_bbox(
                         &self.tabs[i].scene.document,
                         &handles,
                     );
@@ -87,7 +87,7 @@ impl OpenCADStudio {
             }
 
             // COPYBASE — copy the selection to the clipboard with a picked base
-            // point (vs COPYCLIP, which uses the selection centroid).
+            // point (vs COPYCLIP, which uses the selection's lower-left corner).
             "COPYBASE" => {
                 let handles: Vec<_> = self.tabs[i]
                     .scene
@@ -127,7 +127,7 @@ impl OpenCADStudio {
                         .iter()
                         .filter_map(|&h| self.tabs[i].scene.document.get_entity(h).cloned())
                         .collect();
-                    self.clipboard_centroid = base;
+                    self.clipboard_base = base;
                     self.clipboard = entities;
                     self.clipboard_deps = super::super::ClipboardDeps::capture(
                         &self.tabs[i].scene.document,
@@ -159,7 +159,7 @@ impl OpenCADStudio {
                         .iter()
                         .filter_map(|&h| self.tabs[i].scene.document.get_entity(h).cloned())
                         .collect();
-                    self.clipboard_centroid = super::super::helpers::entities_centroid_by_bbox(
+                    self.clipboard_base = super::super::helpers::entities_lower_left_by_bbox(
                         &self.tabs[i].scene.document,
                         &handles,
                     );
@@ -184,11 +184,11 @@ impl OpenCADStudio {
                     self.command_line.push_error("Clipboard is empty.");
                 } else {
                     let wires = self.tabs[i].scene.wires_for_entities(&self.clipboard);
-                    let centroid = self.clipboard_centroid;
+                    let base = self.clipboard_base;
                     use crate::modules::draw::clipboard::paste::PasteCommand;
                     // The ghost anchor is a display-only offset; the precise
                     // paste delta is computed in f64 at commit time.
-                    let cmd = PasteCommand::new(wires, centroid.as_vec3());
+                    let cmd = PasteCommand::new(wires, base.as_vec3());
                     self.command_line.push_info(&cmd.prompt());
                     self.tabs[i].active_cmd = Some(Box::new(cmd));
                 }
@@ -232,7 +232,7 @@ impl OpenCADStudio {
                     // block's nested insert keeps its clip. (#xclip-paste)
                     let ext_roots = self.recreate_clipboard_ext_roots(i);
                     let name = self.unique_block_name("Block");
-                    let base = self.clipboard_centroid;
+                    let base = self.clipboard_base;
                     let mut entities = self.clipboard.clone();
                     for (idx, root) in ext_roots {
                         if let Some(e) = entities.get_mut(idx) {
@@ -246,7 +246,7 @@ impl OpenCADStudio {
                         Ok(()) => {
                             // Block defined; now place it interactively so the
                             // user picks the drop point (insertion uses the
-                            // clipboard centroid as the block's base). The
+                            // clipboard lower-left corner as the block's base). The
                             // clipboard wires rubber-band under the cursor.
                             self.tabs[i].scene.populate_meshes_from_document();
                             self.tabs[i].dirty = true;

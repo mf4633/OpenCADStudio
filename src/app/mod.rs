@@ -500,8 +500,10 @@ pub(super) struct OpenCADStudio {
     clipboard: Vec<acadrust::EntityType>,
     /// Entities removed by the most recent ERASE, kept so OOPS can restore them.
     oops_cache: Vec<acadrust::EntityType>,
-    /// Centroid of the clipboard entities (world XY plane).
-    clipboard_centroid: glam::DVec3,
+    /// Paste anchor: lower-left corner of the clipboard entities' bounding box
+    /// (or the point picked by COPYBASE). This point lands under the cursor at
+    /// paste time.
+    clipboard_base: glam::DVec3,
     /// Table records (layer / linetype / text + dim style) the clipboard
     /// entities reference, captured from the source drawing at copy time so a
     /// paste into a *different* drawing can recreate any that are missing —
@@ -2152,7 +2154,7 @@ impl OpenCADStudio {
             update_notice_body: None,
             clipboard: Vec::new(),
             oops_cache: Vec::new(),
-            clipboard_centroid: glam::DVec3::ZERO,
+            clipboard_base: glam::DVec3::ZERO,
             clipboard_deps: ClipboardDeps::default(),
             shift_down: false,
             ctrl_down: false,

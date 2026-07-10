@@ -252,32 +252,31 @@ pub(super) fn polar_constrain_near(
 
 // ── Clipboard / selection helpers ──────────────────────────────────────────
 
-/// Cheap copy/paste anchor: the mean of each entity's bounding-box centre.
-/// Replaces averaging every tessellated wire vertex, which cost O(total
-/// geometry) and stalled a whole-drawing copy. The anchor only sets which point
-/// of the selection sits under the cursor, so a per-entity bbox centre is an
-/// equally valid, far cheaper origin.
-pub(super) fn entities_centroid_by_bbox(
+/// Copy/paste anchor: the lower-left corner of the bounding box that encloses
+/// every copied entity. Standard clipboard behaviour puts this corner under the
+/// cursor at paste time, so the whole selection drops down-and-right of the pick.
+///
+/// Unions each entity's own bounding box (O(entities)) rather than averaging
+/// every tessellated wire vertex, which cost O(total geometry) and stalled a
+/// whole-drawing copy. The per-entity `min` corners give the exact enclosing
+/// box's lower-left.
+pub(super) fn entities_lower_left_by_bbox(
     doc: &acadrust::CadDocument,
     handles: &[acadrust::Handle],
 ) -> glam::DVec3 {
-    let mut sum = glam::DVec3::ZERO;
-    let mut count = 0usize;
+    let mut min = glam::DVec3::splat(f64::INFINITY);
+    let mut any = false;
     for &h in handles {
         let Some(e) = doc.get_entity(h) else { continue };
         let bb = e.as_entity().bounding_box();
-        let c = glam::DVec3::new(
-            (bb.min.x + bb.max.x) * 0.5,
-            (bb.min.y + bb.max.y) * 0.5,
-            (bb.min.z + bb.max.z) * 0.5,
-        );
-        if c.x.is_finite() && c.y.is_finite() && c.z.is_finite() {
-            sum += c;
-            count += 1;
+        let lo = glam::DVec3::new(bb.min.x, bb.min.y, bb.min.z);
+        if lo.x.is_finite() && lo.y.is_finite() && lo.z.is_finite() {
+            min = min.min(lo);
+            any = true;
         }
     }
-    if count > 0 {
-        sum / count as f64
+    if any {
+        min
     } else {
         glam::DVec3::ZERO
     }

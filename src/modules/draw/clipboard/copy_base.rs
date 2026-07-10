@@ -1,6 +1,6 @@
 // COPYBASE — copy the current selection to the clipboard using a base point the
-// user picks (rather than the selection's centroid, as COPYCLIP does). The
-// command only collects the base point; the host performs the copy when it
+// user picks (rather than the selection's lower-left corner, as COPYCLIP does).
+// The command only collects the base point; the host performs the copy when it
 // receives the dispatched `COPYBASE_AT <x> <y> <z>` token.
 
 use glam::DVec3;
