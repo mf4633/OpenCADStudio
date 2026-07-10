@@ -1536,7 +1536,16 @@ fn seg_intersect_xy(a0: glam::DVec3, a1: glam::DVec3, b0: glam::DVec3, b1: glam:
     if t < 0.0 || t > 1.0 || s < 0.0 || s > 1.0 {
         return None;
     }
-    Some(glam::DVec3::new(a0.x + t * d1x, a0.y + t * d1y, 0.0))
+    // Interpolate Z from segment a instead of forcing 0.0 (a real crossing is
+    // coplanar). The hard-coded 0.0 snapped the intersection to z=0 for
+    // geometry drawn on an elevated plane, so in a top-down view the command
+    // placed the point far below the drawing. The extended-intersection path
+    // already preserves a0.z this way.
+    Some(glam::DVec3::new(
+        a0.x + t * d1x,
+        a0.y + t * d1y,
+        a0.z + t * (a1.z - a0.z),
+    ))
 }
 
 /// Intersection of two infinite lines in the XY plane, each given by an origin
@@ -1829,6 +1838,21 @@ fn t_on_segment(p: Point, a: Point, b: Point) -> f32 {
 #[cfg(test)]
 mod ext_tests {
     use super::*;
+
+    #[test]
+    fn seg_intersect_xy_preserves_elevation() {
+        // Two segments on the z=100 plane crossing at (0,0): the intersection
+        // must keep z=100, not snap to z=0.
+        let hit = seg_intersect_xy(
+            glam::DVec3::new(-1.0, 0.0, 100.0),
+            glam::DVec3::new(1.0, 0.0, 100.0),
+            glam::DVec3::new(0.0, -1.0, 100.0),
+            glam::DVec3::new(0.0, 1.0, 100.0),
+        )
+        .expect("segments cross");
+        assert!((hit.x).abs() < 1e-9 && (hit.y).abs() < 1e-9);
+        assert!((hit.z - 100.0).abs() < 1e-9, "z should be 100, got {}", hit.z);
+    }
 
     #[test]
     fn tracking_active_covers_otrack_and_extension() {
