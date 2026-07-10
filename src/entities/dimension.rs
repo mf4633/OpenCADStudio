@@ -2594,19 +2594,41 @@ fn format_with_unit(value: f64, unit: i16, dec: usize, dimfrac: i16, zin: i16) -
 fn format_engineering(inches: f64, dec: usize) -> String {
     let sign = if inches < 0.0 { "-" } else { "" };
     let abs = inches.abs();
-    let feet = (abs / 12.0).trunc();
-    let rem_in = abs - feet * 12.0;
-    format!("{}{:.0}'-{:.*}\"", sign, feet, dec, rem_in)
+    let mut feet = (abs / 12.0).trunc();
+    // Round the residual inches to the display precision FIRST, then carry
+    // 12" → 1'. Formatting the raw residual let 11.99" print the invalid
+    // 0'-12.00" instead of 1'-0.00".
+    let f = 10f64.powi(dec as i32);
+    let mut rem = ((abs - feet * 12.0) * f).round() / f;
+    if rem >= 12.0 {
+        rem -= 12.0;
+        feet += 1.0;
+    }
+    format!("{}{:.0}'-{:.*}\"", sign, feet, dec, rem)
 }
 
 fn format_architectural(inches: f64, dimfrac: i16, zin: i16) -> String {
     let sign = if inches < 0.0 { "-" } else { "" };
     let abs = inches.abs();
-    let feet = (abs / 12.0).trunc();
+    let mut feet = (abs / 12.0).trunc();
     let rem_in_total = abs - feet * 12.0;
-    let whole = rem_in_total.trunc();
+    let mut whole = rem_in_total.trunc();
     let frac = rem_in_total - whole;
     let frac_str = fraction_string(frac, dimfrac);
+    // A fraction that rounds up to a full inch comes back from fraction_string
+    // as a bare integer ("1", no slash — its documented "whole-number
+    // overflow"). Carry it into the inches, and a full 12" on into the feet,
+    // BEFORE the zero suppression — else 11.97" printed 0'-11 1" not 1'-0".
+    let frac_str = if !frac_str.is_empty() && !frac_str.contains('/') {
+        whole += frac_str.parse::<f64>().unwrap_or(0.0);
+        if whole >= 12.0 {
+            feet += (whole / 12.0).trunc();
+            whole %= 12.0;
+        }
+        String::new()
+    } else {
+        frac_str
+    };
 
     // DIMZIN feet/inch suppression:
     //   0 suppress zero feet & zero inches, 1 include both,
@@ -2645,9 +2667,15 @@ fn format_architectural(inches: f64, dimfrac: i16, zin: i16) -> String {
 fn format_fractional(value: f64, dimfrac: i16) -> String {
     let sign = if value < 0.0 { "-" } else { "" };
     let abs = value.abs();
-    let whole = abs.trunc();
+    let mut whole = abs.trunc();
     let frac = abs - whole;
     let frac_str = fraction_string(frac, dimfrac);
+    // Carry a rounded-up fraction (bare integer, no slash) into the whole part
+    // so 2.97 at 1/16 precision prints "3", not "2 1".
+    if !frac_str.is_empty() && !frac_str.contains('/') {
+        whole += frac_str.parse::<f64>().unwrap_or(0.0);
+        return format!("{}{:.0}", sign, whole);
+    }
     if frac_str.is_empty() {
         format!("{}{:.0}", sign, whole)
     } else if whole == 0.0 {
@@ -2716,10 +2744,22 @@ fn format_angular_value(measurement_deg: f64, style: Option<&DimStyle>) -> Strin
 fn format_dms(deg: f64, sec_dec: usize, azin: i16) -> String {
     let sign = if deg < 0.0 { "-" } else { "" };
     let abs = deg.abs();
-    let d = abs.floor();
+    let mut d = abs.floor();
     let m_full = (abs - d) * 60.0;
-    let m = m_full.floor();
-    let s = (m_full - m) * 60.0;
+    let mut m = m_full.floor();
+    // Round the seconds to the display precision FIRST, then carry 60" → 1' and
+    // 60' → 1°. Formatting the raw seconds let a value that rounds up to 60
+    // print the invalid reading 44°59'60" instead of 45°0'0".
+    let f = 10f64.powi(sec_dec as i32);
+    let mut s = ((m_full - m) * 60.0 * f).round() / f;
+    if s >= 60.0 {
+        s -= 60.0;
+        m += 1.0;
+    }
+    if m >= 60.0 {
+        m -= 60.0;
+        d += 1.0;
+    }
     let s_str = format!("{:.*}", sec_dec, s);
     let mut out = format!("{}{:.0}°{:.0}'{}\"", sign, d, m, s_str);
     if azin & 4 != 0 {
@@ -3103,5 +3143,40 @@ mod dimtad_tests {
             "outside must clear the object side, got {}",
             below.y
         );
+    }
+}
+
+#[cfg(test)]
+mod format_carry_tests {
+    use super::{format_architectural, format_dms, format_engineering, format_fractional};
+
+    #[test]
+    fn dms_carries_seconds_into_minutes_and_degrees() {
+        // 44.99993° rounds its seconds up to 60 → must read 45°0'0", not 44°59'60".
+        assert_eq!(format_dms(44.99993, 0, 0), "45°0'0\"");
+        // A value not near a boundary is unaffected.
+        assert_eq!(format_dms(30.5, 0, 0), "30°30'0\"");
+    }
+
+    #[test]
+    fn engineering_carries_inches_into_feet() {
+        // 11.99" rounds up to 12" at 0 dp → 1'-0", not 0'-12".
+        assert_eq!(format_engineering(11.99, 0), "1'-0\"");
+        assert_eq!(format_engineering(6.0, 0), "0'-6\"");
+    }
+
+    #[test]
+    fn fractional_carries_rounded_up_fraction() {
+        // 0.97 at 1/16 precision rounds to 16/16 → carry into the whole.
+        assert_eq!(format_fractional(2.97, 2), "3");
+        assert_eq!(format_fractional(-2.97, 2), "-3");
+        assert_eq!(format_fractional(2.5, 2), "2 1/2"); // regression guard
+    }
+
+    #[test]
+    fn architectural_carries_into_inches_and_feet() {
+        // 11.97" carries the rounded inch into a full foot: 1'-0", not 0'-11 1".
+        assert_eq!(format_architectural(11.97, 2, 1), "1'-0\"");
+        assert_eq!(format_architectural(18.5, 4, 1), "1'-6 1/2\""); // regression guard
     }
 }
