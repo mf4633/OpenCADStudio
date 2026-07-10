@@ -204,9 +204,13 @@ pub fn build_step(meshes: &[&MeshModel]) -> Option<String> {
     )
     .ok();
 
-    // Shape representation.
+    // Shape representation. The geometric context MUST assign the length unit,
+    // otherwise the mm LENGTH_UNIT is orphaned and importers read the solid as
+    // unit-less / mis-scaled. Emit the standard AP203 complex context that
+    // references both the unit (#pu_id) and an uncertainty (#unc_id).
     let sr_id = alloc();
     let pu_id = alloc();
+    let unc_id = alloc();
     let gc_id = alloc();
     writeln!(
         data,
@@ -214,7 +218,22 @@ pub fn build_step(meshes: &[&MeshModel]) -> Option<String> {
         pu_id
     )
     .ok();
-    writeln!(data, "#{} = GEOMETRIC_REPRESENTATION_CONTEXT(3);", gc_id).ok();
+    writeln!(
+        data,
+        "#{} = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-06),#{},\
+         'distance_accuracy_value','confusion accuracy');",
+        unc_id, pu_id
+    )
+    .ok();
+    writeln!(
+        data,
+        "#{} = ( GEOMETRIC_REPRESENTATION_CONTEXT(3) \
+         GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{})) \
+         GLOBAL_UNIT_ASSIGNED_CONTEXT((#{})) \
+         REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY') );",
+        gc_id, unc_id, pu_id
+    )
+    .ok();
     writeln!(
         data,
         "#{sr_id} = SHAPE_REPRESENTATION('OpenCADStudio_Shape',(#{}),#{gc_id});",
@@ -256,10 +275,44 @@ fn chrono_timestamp() -> String {
     let hh = hours % 24;
     let mm = mins % 60;
     let ss = s % 60;
-    // Days since epoch → year/month/day (approximate, ignoring leap years).
-    let year = 1970 + days / 365;
-    let doy = days % 365;
-    let month = doy / 30 + 1;
-    let day = doy % 30 + 1;
+    let (year, month, day) = civil_from_days(days);
     format!("{year:04}-{month:02}-{day:02}T{hh:02}:{mm:02}:{ss:02}")
+}
+
+/// Days since the Unix epoch (1970-01-01) → `(year, month, day)`, correct
+/// across leap years and variable month lengths (Howard Hinnant's
+/// `civil_from_days`). The previous fixed 365-day/30-day approximation drifted
+/// by weeks and could emit an invalid month 13 for days-of-year 360–364.
+fn civil_from_days(days: u64) -> (i64, u32, u32) {
+    let z = days as i64 + 719_468; // shift epoch to 0000-03-01
+    let era = z / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
+    let year = if m <= 2 { y + 1 } else { y };
+    (year, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::civil_from_days;
+
+    #[test]
+    fn civil_from_days_is_leap_correct() {
+        // Anchors across the leap cycle (1972 is a leap year).
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(365), (1971, 1, 1));
+        assert_eq!(civil_from_days(730), (1972, 1, 1));
+        assert_eq!(civil_from_days(1096), (1973, 1, 1)); // 1972 had 366 days
+        assert_eq!(civil_from_days(59), (1970, 3, 1)); // Jan(31)+Feb(28)
+        // The exact case the old 30-day approximation broke: day-of-year 364
+        // used to yield an invalid "month 13".
+        assert_eq!(civil_from_days(364), (1970, 12, 31));
+        let (_, m, _) = civil_from_days(363);
+        assert!(m <= 12);
+    }
 }
