@@ -1148,8 +1148,12 @@ fn extend_spline(spl: &SplineEnt, t_click: f64, geos: &[Geo]) -> Option<EntityTy
 
     let best_t = seg_ts.into_iter().filter(|&t| t > 1e-6).reduce(f64::min)?;
 
-    let hit_x = ep.x + best_t * (ray_end_x - ep.x) * TRIM_EXTENT;
-    let hit_y = ep.y + best_t * (ray_end_y - ep.y) * TRIM_EXTENT;
+    // `best_t` is already the fraction along the segment ep→ray_end (which
+    // itself spans dir·TRIM_EXTENT), so the hit point is a plain lerp. The
+    // earlier extra `* TRIM_EXTENT` factor placed the new endpoint ~1e6× past
+    // the boundary, ballooning the extended spline off-screen.
+    let hit_x = ep.x + best_t * (ray_end_x - ep.x);
+    let hit_y = ep.y + best_t * (ray_end_y - ep.y);
 
     // Add a new control point at the hit location by appending/prepending.
     let z = spl.control_points.first().map(|v| v.z).unwrap_or(0.0);

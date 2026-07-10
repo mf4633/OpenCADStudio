@@ -187,7 +187,12 @@ fn arc_from_se_radius(s: DVec3, e: DVec3, radius_pt: DVec3) -> Option<(DVec3, f6
         return None;
     }
     let unit_chord = (e - s) / chord_len;
-    let perp = DVec3::new(-unit_chord.y, 0.0, unit_chord.x);
+    // In-plane (XY) perpendicular, matching every other construction here. A
+    // `(-y, 0, x)` perp lives in the XZ plane, so for an axis-aligned chord the
+    // dot below is 0 (centre collapses to the midpoint) and for an oblique
+    // chord the centre is pushed off the drawing plane — the arc then misses
+    // its endpoints. The typed-radius path already uses the XY perpendicular.
+    let perp = DVec3::new(-unit_chord.y, unit_chord.x, 0.0);
     let mid = (s + e) * 0.5;
     let h_sign = (radius_pt - mid).dot(perp).signum();
     let d = (r * r - (chord_len * 0.5) * (chord_len * 0.5))
@@ -1400,3 +1405,27 @@ inventory::submit!(crate::command::CommandRegistration { names: &["ARC_SEA"] });
 inventory::submit!(crate::command::CommandRegistration { names: &["ARC_SED"] });  // ArcSEDCommand
 inventory::submit!(crate::command::CommandRegistration { names: &["ARC_SER"] });  // ArcSERCommand
 inventory::submit!(crate::command::CommandRegistration { names: &["ARC_CONT"] });  // ArcContCommand
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-6
+    }
+
+    #[test]
+    fn arc_from_se_radius_centre_stays_in_xy_plane() {
+        // s=(0,0), e=(2,0), radius pick √2 from s → r=√2; correct centre is
+        // (1,∓1,0): equidistant from both endpoints AND on z=0. The old
+        // XZ-plane perpendicular put the centre at z=∓1 (still equidistant in
+        // 3D, so only the z check distinguishes the bug).
+        let s = DVec3::new(0.0, 0.0, 0.0);
+        let e = DVec3::new(2.0, 0.0, 0.0);
+        let rp = DVec3::new(1.0, 1.0, 0.0);
+        let (c, r) = arc_from_se_radius(s, e, rp).unwrap();
+        assert!(approx(c.z, 0.0), "centre left the XY plane: z={}", c.z);
+        assert!(approx(c.distance(s), r));
+        assert!(approx(c.distance(e), r));
+    }
+}
