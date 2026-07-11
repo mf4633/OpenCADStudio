@@ -90,6 +90,11 @@ pub fn tessellate(
     // (flag 0x02, "use drawing window colour") so the mask erases geometry
     // behind the text the way a wipeout does.
     bg_color: [f32; 4],
+    // When true, TEXT/MTEXT run-groups ALSO emit their glyph outline strokes as
+    // polyline points (not just SDF quads). The in-app MTEXT editor preview
+    // draws those strokes on a 2D canvas that can't run the SDF shader; every
+    // other caller passes false and gets the normal SDF-only text.
+    force_text_strokes: bool,
 ) -> Vec<WireModel> {
     let color = if selected {
         WireModel::SELECTED
@@ -210,7 +215,10 @@ pub fn tessellate(
                 // and text into one Text object (a tolerance frame: box lines =
                 // run-less, cell text = run-groups) keeps the geometry as
                 // strokes and draws only the text as SDF.
-                for group in stroke_groups.iter().filter(|g| g.run.is_none()) {
+                for group in stroke_groups
+                    .iter()
+                    .filter(|g| force_text_strokes || g.run.is_none())
+                {
                     let lx_v = group.origin[0];
                     let ly_v = group.origin[1];
                     let slx_v = (lx_v - ref_lx_v) * anno + ref_lx_v;

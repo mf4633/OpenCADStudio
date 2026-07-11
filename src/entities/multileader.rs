@@ -1357,6 +1357,7 @@ impl MultiLeaderTess for MultiLeader {
                         1.0,
                         None,
                         bg_color,
+                        false,
                     );
                     for w in &mut sub_wires {
                         w.name = name.clone();

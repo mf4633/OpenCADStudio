@@ -409,6 +409,9 @@ impl super::OpenCADStudio {
             anno,
             None,
             bg,
+            // Editor preview draws on a 2D canvas with no SDF shader — force the
+            // glyph outline strokes so the text is visible (#308).
+            true,
         );
         // Per-character boxes share the preview wires' absolute coordinate frame.
         let boxes = crate::entities::mtext::glyph_boxes(&mt, &self.tabs[i].scene.document);
@@ -509,6 +512,21 @@ impl super::OpenCADStudio {
 
     /// Insert text (or replace the current selection) at the preview caret.
     pub(super) fn mtext_type(&mut self, s: &str) {
+        // MTEXT stores a hard line break as the `\P` code. A literal newline —
+        // from Enter or a multi-line paste — is not a break to the layout (only
+        // the caret logic honours it), so the preview would stay on one line.
+        // Normalise every literal newline to `\P` so it breaks and the saved
+        // value stays standard (#308).
+        let normalized;
+        let s: &str = if s.contains(['\n', '\r']) {
+            normalized = s
+                .replace("\r\n", "\\P")
+                .replace('\n', "\\P")
+                .replace('\r', "\\P");
+            &normalized
+        } else {
+            s
+        };
         if let Some(ed) = self.mtext_editor.as_mut() {
             let raw0 = ed.content.text();
             let raw = raw0.clone();
