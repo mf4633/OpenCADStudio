@@ -13,6 +13,12 @@ impl OpenCADStudio {
                 self.command_line.push_info("Opening OCS Web...");
             }
 
+            "HELP" => {
+                crate::sys::open_url("https://github.com/HakanSeven12/OpenCADStudio/discussions");
+                self.command_line
+                    .push_info("Opening OCS Discussions for help and questions...");
+            }
+
             // ── DWGPROPS — print round-trip-only HeaderVariables ─────────
             // No UI dialog for these yet; the command surfaces them so
             // users can confirm the values that the parser populated and
