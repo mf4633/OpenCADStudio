@@ -6,7 +6,10 @@
 // change so the user sees the actual drawing result while typing.
 
 use acadrust::entities::mtext::AttachmentPoint;
-use acadrust::entities::mtext_format::{parse_mtext, MTextDocument, StackingType};
+use acadrust::entities::mtext_format::{
+    parse_mtext, MTextDocument, MTextParagraph, MTextSpan, SpanProperties, StackingData,
+    StackingType,
+};
 use acadrust::types::Vector3;
 use acadrust::{EntityType, Handle, MText};
 use glam::Vec3;
@@ -231,81 +234,179 @@ fn parse_non_default(s: &str, default: f64) -> Option<f64> {
     }
 }
 
-/// Map each visible character of a raw MText value to its byte span
-/// `(start, end)` in that raw string, in the same reading order the layout
-/// counts glyph boxes (paragraphs split on `\P`/`\n`/`\N`, leading/trailing
-/// spaces trimmed per paragraph, inline codes skipped). Lets a preview
-/// selection (visible-char range) be spliced back into the raw value.
-/// A slot in the flat visible-index space of a structured MText document — the
-/// structured replacement for [`visible_spans`]. `doc_vis_map(doc).len()` is the
-/// caret index space (`0..=count`) and each entry locates that visible slot
-/// inside the document. Built to match `layout_mtext`'s glyph-box `vis`
-/// assignment (`text_support.rs`) so the caret and the rendered glyphs never
-/// desync — one caret slot per paragraph break, one per visible char, and
-/// none for a tab (which has no glyph box).
-// Consumed by the caret/selection + edit ops in the next phase (structured
-// model migration); defined here so the map is ready and reviewed in isolation.
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum VisSlot {
-    /// A visible glyph: the char at byte `byte` of
-    /// `doc.paragraphs[para].spans[span].text`.
-    Char { para: usize, span: usize, byte: usize },
-    /// The zero-width caret slot at the start of paragraph `para` (a `\P` break).
-    Break { para: usize },
+/// One editable unit in the MText editor's flat visible-index space — exactly
+/// one per caret slot, replacing the raw-string `visible_spans` walker for
+/// editing. The editor flattens its `doc` to a `Vec<Cell>`, splices/drains it
+/// (trivial), and rebuilds a structured `MTextDocument`; the flat index IS the
+/// caret index, so caret/selection stay verbatim.
+#[derive(Clone, Debug, PartialEq)]
+enum Cell {
+    /// A visible character carrying its span's formatting. Tabs count as a
+    /// normal char here (one slot), matching the previous caret model.
+    Char(char, SpanProperties),
+    /// A paragraph break (`\P`).
+    Break,
+    /// One flattened glyph of a stacking (`\S`) span, kept atomic: continuation
+    /// cells (`head=false`) extend the run begun by a `head=true` one, and edits
+    /// never split a run.
+    Stack {
+        data: StackingData,
+        props: SpanProperties,
+        head: bool,
+    },
 }
 
-/// Flatten a structured MText document into the editor's visible-index space.
-/// Mirrors the layout's `vis` counting so `doc_vis_map(doc).len()` equals
-/// `glyph_boxes(mt).len()` for the same document.
-#[allow(dead_code)]
-pub(super) fn doc_vis_map(doc: &MTextDocument) -> Vec<VisSlot> {
-    let mut out: Vec<VisSlot> = Vec::new();
+impl Cell {
+    fn is_stack_cont(&self) -> bool {
+        matches!(self, Cell::Stack { head: false, .. })
+    }
+}
+
+/// The flattened `num<sep>den` glyphs of a stacking span, in reading order.
+fn flatten_stack(st: &StackingData) -> String {
+    let sep = match st.stacking_type {
+        StackingType::Limit => '^',
+        StackingType::Diagonal => '#',
+        StackingType::Horizontal => '/',
+    };
+    let mut flat = st.numerator.clone();
+    if !st.denominator.is_empty() {
+        flat.push(sep);
+        flat.push_str(&st.denominator);
+    }
+    flat
+}
+
+/// Flatten a document into one cell per visible slot (same order + count as the
+/// layout's glyph boxes). This is the editor's caret index space.
+fn doc_to_cells(doc: &MTextDocument) -> Vec<Cell> {
+    let mut cells = Vec::new();
     for (pi, para) in doc.paragraphs.iter().enumerate() {
-        // Every paragraph after the first opens with a caret slot for its break
-        // (mirrors the `i > 0 && is_first_in_paragraph` line-start box).
         if pi > 0 {
-            out.push(VisSlot::Break { para: pi });
+            cells.push(Cell::Break);
         }
-        for (si, span) in para.spans.iter().enumerate() {
-            // A stacking span (`\S`) renders its flattened `num<sep>den`; count
-            // one slot per flattened char (edits inside are clamped to the span
-            // boundary in later phases).
+        for span in &para.spans {
             if let Some(st) = &span.stacking {
-                let sep = if st.stacking_type == StackingType::Limit {
-                    '^'
-                } else {
-                    '/'
-                };
-                let mut flat = st.numerator.clone();
-                if !st.denominator.is_empty() {
-                    flat.push(sep);
-                    flat.push_str(&st.denominator);
-                }
-                for _ in flat.chars() {
-                    out.push(VisSlot::Char {
-                        para: pi,
-                        span: si,
-                        byte: 0,
+                let mut head = true;
+                for _ in flatten_stack(st).chars() {
+                    cells.push(Cell::Stack {
+                        data: st.clone(),
+                        props: span.properties.clone(),
+                        head,
                     });
+                    head = false;
                 }
-                continue;
-            }
-            for (byte, ch) in span.text.char_indices() {
-                // Tab has no glyph box (`AtomKind::Tab`) → no vis slot.
-                if ch == '\t' {
-                    continue;
+            } else {
+                for ch in span.text.chars() {
+                    cells.push(Cell::Char(ch, span.properties.clone()));
                 }
-                out.push(VisSlot::Char {
-                    para: pi,
-                    span: si,
-                    byte,
-                });
             }
         }
     }
-    out
+    cells
 }
+
+/// Rebuild a document from an edited cell list. Adjacent `Char` cells with equal
+/// properties coalesce into one span; a `Break` starts a new paragraph; a
+/// `Stack` run's head cell re-emits the whole stacking span.
+fn cells_to_doc(cells: &[Cell]) -> MTextDocument {
+    let mut doc = MTextDocument::new();
+    doc.paragraphs.clear();
+    let mut para = MTextParagraph::new();
+    for cell in cells {
+        match cell {
+            Cell::Break => {
+                doc.paragraphs
+                    .push(std::mem::replace(&mut para, MTextParagraph::new()));
+            }
+            Cell::Char(ch, props) => match para.spans.last_mut() {
+                Some(s) if s.stacking.is_none() && &s.properties == props => s.text.push(*ch),
+                _ => para.spans.push(MTextSpan::new(ch.to_string(), props.clone())),
+            },
+            Cell::Stack { data, props, head } => {
+                if *head {
+                    let mut s = MTextSpan::new(String::new(), props.clone());
+                    s.stacking = Some(data.clone());
+                    para.spans.push(s);
+                }
+            }
+        }
+    }
+    doc.paragraphs.push(para);
+    doc
+}
+
+/// Turn an inserted string (which may carry `\P` breaks) into cells, tagging
+/// every plain char with `props`.
+fn str_to_cells(s: &str, props: &SpanProperties) -> Vec<Cell> {
+    let mut cells = Vec::new();
+    for (i, seg) in s.split("\\P").enumerate() {
+        if i > 0 {
+            cells.push(Cell::Break);
+        }
+        for ch in seg.chars() {
+            cells.push(Cell::Char(ch, props.clone()));
+        }
+    }
+    cells
+}
+
+/// Properties newly-typed text at `caret` inherits — the cell to its left, or
+/// the default at the start of a paragraph / document.
+fn insert_props(cells: &[Cell], caret: usize) -> SpanProperties {
+    match caret.checked_sub(1).and_then(|i| cells.get(i)) {
+        Some(Cell::Char(_, p)) | Some(Cell::Stack { props: p, .. }) => p.clone(),
+        _ => SpanProperties::default(),
+    }
+}
+
+/// Nudge an insertion index out of the interior of a stacking run (never split
+/// a fraction): step forward past any continuation cells.
+fn clamp_insert(cells: &[Cell], mut caret: usize) -> usize {
+    while caret < cells.len() && cells[caret].is_stack_cont() {
+        caret += 1;
+    }
+    caret
+}
+
+/// True when the serialized MText value ends with a hard paragraph break —
+/// i.e. a trailing empty paragraph, which `parse_mtext` drops. `to_mtext_string`
+/// wraps multi-paragraph output in `{…}`, so strip a trailing `}` first, then
+/// require an ODD run of backslashes before a final `P` (an even run is an
+/// escaped literal `\\`, not the `\P` break code).
+fn content_has_trailing_break(raw: &str) -> bool {
+    let s = raw.trim_end();
+    let s = s.strip_suffix('}').unwrap_or(s);
+    match s.strip_suffix('P') {
+        Some(rest) => rest.chars().rev().take_while(|&c| c == '\\').count() % 2 == 1,
+        None => false,
+    }
+}
+
+/// Delete cells `[a, b)`, first widening the range so it never cuts a stacking
+/// run in half. Returns the (possibly widened) start index — the new caret.
+fn cells_delete_range(cells: &mut Vec<Cell>, mut a: usize, mut b: usize) -> usize {
+    let n = cells.len();
+    a = a.min(n);
+    b = b.clamp(a, n);
+    // Never start inside a stacking run — back up to its head cell.
+    while a < cells.len() && cells[a].is_stack_cont() {
+        a -= 1;
+    }
+    // ...and never stop inside one — extend to the run's end.
+    while b < cells.len() && cells[b].is_stack_cont() {
+        b += 1;
+    }
+    cells.drain(a..b);
+    a
+}
+
+/// Map each visible character of a raw MText value to its byte span
+/// `(start, end)` in that raw string, in the same reading order the layout
+/// counts glyph boxes (paragraphs split on `\P`/`\n`/`\N`, leading/trailing
+/// spaces trimmed per paragraph, inline codes skipped). Still used by the
+/// formatting (`\L`/`\Q`/…) splice path, which stays on the raw string until a
+/// later phase.
 
 pub fn visible_spans(raw: &str) -> Vec<(usize, usize)> {
     let mut result: Vec<(usize, usize)> = Vec::new();
@@ -471,7 +572,19 @@ impl super::OpenCADStudio {
     pub(super) fn rebuild_mtext_preview(&mut self) {
         let i = self.active_tab;
         let Some(ed) = self.mtext_editor.as_ref() else { return };
-        let mt = ed.build_mtext();
+        let mut mt = ed.build_mtext();
+        // A trailing empty paragraph (a fresh line after Enter) is dropped by the
+        // layout's parser, so it emits no caret box there and the caret would be
+        // invisible on that line. Inject a space into the PREVIEW value only
+        // (never committed) so the layout lays the line out and the caret gets a
+        // box on it. Keyed off the current content — `ed.doc` is only re-synced
+        // further down in this function, so it is still stale here.
+        if content_has_trailing_break(&ed.content.text()) {
+            match mt.value.rfind('}') {
+                Some(pos) => mt.value.insert(pos, ' '),
+                None => mt.value.push(' '),
+            }
+        }
         let entity = EntityType::MText(mt.clone());
         let anno = self.tabs[i].scene.annotation_scale;
         let bg = self.tabs[i].scene.bg_color;
@@ -496,10 +609,17 @@ impl super::OpenCADStudio {
         if let Some(ed) = self.mtext_editor.as_mut() {
             ed.preview_wires = wires;
             ed.glyph_boxes = boxes;
-            // Phase 1: keep the structured mirror in sync with the raw content.
-            // The doc is passive (nothing consumes it yet), so this cannot change
-            // behaviour — it just makes the model available for the next phase.
-            ed.doc = parse_mtext(&ed.content.text(), true);
+            // Re-sync the structured doc from the (authoritative) content — the
+            // single sync point, since every edit path ends in a rebuild.
+            // `parse_mtext` drops a trailing empty paragraph, so restore it when
+            // the content ends in a hard break, else Enter at the end would lose
+            // the new line.
+            let raw = ed.content.text();
+            let mut d = parse_mtext(&raw, true);
+            if content_has_trailing_break(&raw) {
+                d.paragraphs.push(MTextParagraph::new());
+            }
+            ed.doc = d;
         }
     }
 
@@ -610,27 +730,24 @@ impl super::OpenCADStudio {
             s
         };
         if let Some(ed) = self.mtext_editor.as_mut() {
-            let raw0 = ed.content.text();
-            let raw = raw0.clone();
-            let spans = visible_spans(&raw);
-            let added = visible_spans(s).len();
-            let (new_text, new_caret) = match ed.sel {
-                Some((a, b)) if a < b && a < spans.len() && b <= spans.len() => {
-                    let (start, end) = (spans[a].0, spans[b - 1].1);
-                    let mut t = raw.clone();
-                    t.replace_range(start..end, s);
-                    (t, a + added)
-                }
-                _ => {
-                    let byte = spans.get(ed.caret).map(|s| s.0).unwrap_or(raw.len());
-                    let mut t = raw.clone();
-                    t.insert_str(byte, s);
-                    (t, ed.caret + added)
-                }
+            // Edit the structured document as a flat cell list, then serialize
+            // it back into the raw content the preview/commit still read.
+            let mut cells = doc_to_cells(&ed.doc);
+            let count = cells.len();
+            let mut caret = match ed.sel {
+                Some((a, b)) if a < b && b <= count => cells_delete_range(&mut cells, a, b),
+                _ => ed.caret.min(count),
             };
-            ed.content = iced::widget::text_editor::Content::with_text(&new_text);
-            ed.caret = new_caret;
-            ed.sel = Some((new_caret, new_caret));
+            caret = clamp_insert(&cells, caret);
+            let props = insert_props(&cells, caret);
+            let ins = str_to_cells(s, &props);
+            let added = ins.len();
+            cells.splice(caret..caret, ins);
+            caret += added;
+            ed.content =
+                text_editor::Content::with_text(&cells_to_doc(&cells).to_mtext_string());
+            ed.caret = caret;
+            ed.sel = Some((caret, caret));
             ed.caret_blink_on = true;
         }
         self.rebuild_mtext_preview();
@@ -639,27 +756,19 @@ impl super::OpenCADStudio {
     /// Delete the selection, or the visible character before the caret.
     pub(super) fn mtext_backspace(&mut self) {
         if let Some(ed) = self.mtext_editor.as_mut() {
-            let raw0 = ed.content.text();
-            let raw = raw0.clone();
-            let spans = visible_spans(&raw);
-            let (new_text, new_caret) = match ed.sel {
-                Some((a, b)) if a < b && a < spans.len() && b <= spans.len() => {
-                    let (start, end) = (spans[a].0, spans[b - 1].1);
-                    let mut t = raw.clone();
-                    t.replace_range(start..end, "");
-                    (t, a)
+            let mut cells = doc_to_cells(&ed.doc);
+            let count = cells.len();
+            let caret = match ed.sel {
+                Some((a, b)) if a < b && b <= count => cells_delete_range(&mut cells, a, b),
+                _ if ed.caret > 0 && ed.caret <= count => {
+                    cells_delete_range(&mut cells, ed.caret - 1, ed.caret)
                 }
-                _ if ed.caret > 0 && ed.caret <= spans.len() => {
-                    let (start, end) = (spans[ed.caret - 1].0, spans[ed.caret - 1].1);
-                    let mut t = raw.clone();
-                    t.replace_range(start..end, "");
-                    (t, ed.caret - 1)
-                }
-                _ => (raw, ed.caret),
+                _ => ed.caret.min(count),
             };
-            ed.content = iced::widget::text_editor::Content::with_text(&new_text);
-            ed.caret = new_caret;
-            ed.sel = Some((new_caret, new_caret));
+            ed.content =
+                text_editor::Content::with_text(&cells_to_doc(&cells).to_mtext_string());
+            ed.caret = caret;
+            ed.sel = Some((caret, caret));
             ed.caret_blink_on = true;
         }
         self.rebuild_mtext_preview();
@@ -668,27 +777,19 @@ impl super::OpenCADStudio {
     /// Delete the selection, or the visible character at the caret.
     pub(super) fn mtext_delete(&mut self) {
         if let Some(ed) = self.mtext_editor.as_mut() {
-            let raw0 = ed.content.text();
-            let raw = raw0.clone();
-            let spans = visible_spans(&raw);
-            let (new_text, new_caret) = match ed.sel {
-                Some((a, b)) if a < b && a < spans.len() && b <= spans.len() => {
-                    let (start, end) = (spans[a].0, spans[b - 1].1);
-                    let mut t = raw.clone();
-                    t.replace_range(start..end, "");
-                    (t, a)
+            let mut cells = doc_to_cells(&ed.doc);
+            let count = cells.len();
+            let caret = match ed.sel {
+                Some((a, b)) if a < b && b <= count => cells_delete_range(&mut cells, a, b),
+                _ if ed.caret < count => {
+                    cells_delete_range(&mut cells, ed.caret, ed.caret + 1)
                 }
-                _ if ed.caret < spans.len() => {
-                    let (start, end) = (spans[ed.caret].0, spans[ed.caret].1);
-                    let mut t = raw.clone();
-                    t.replace_range(start..end, "");
-                    (t, ed.caret)
-                }
-                _ => (raw, ed.caret),
+                _ => ed.caret.min(count),
             };
-            ed.content = iced::widget::text_editor::Content::with_text(&new_text);
-            ed.caret = new_caret;
-            ed.sel = Some((new_caret, new_caret));
+            ed.content =
+                text_editor::Content::with_text(&cells_to_doc(&cells).to_mtext_string());
+            ed.caret = caret;
+            ed.sel = Some((caret, caret));
             ed.caret_blink_on = true;
         }
         self.rebuild_mtext_preview();
@@ -697,9 +798,7 @@ impl super::OpenCADStudio {
     /// Move the caret by `delta` visible characters (clears the selection).
     pub(super) fn mtext_caret_move(&mut self, delta: i32) {
         if let Some(ed) = self.mtext_editor.as_mut() {
-            let raw0 = ed.content.text();
-            let raw = raw0.as_str();
-            let n = visible_spans(raw).len() as i32;
+            let n = doc_to_cells(&ed.doc).len() as i32;
             let c = (ed.caret as i32 + delta).clamp(0, n) as usize;
             ed.caret = c;
             ed.sel = Some((c, c));
@@ -711,11 +810,7 @@ impl super::OpenCADStudio {
     pub(super) fn mtext_vis_count(&self) -> usize {
         self.mtext_editor
             .as_ref()
-            .map(|ed| {
-                let raw0 = ed.content.text();
-                let raw = raw0.as_str();
-                visible_spans(raw).len()
-            })
+            .map(|ed| doc_to_cells(&ed.doc).len())
             .unwrap_or(0)
     }
 
@@ -766,5 +861,118 @@ impl super::OpenCADStudio {
     /// Discard the editor without changing the drawing.
     pub(super) fn mtext_cancel(&mut self) {
         self.mtext_editor = None;
+    }
+}
+
+#[cfg(test)]
+mod cell_tests {
+    use super::*;
+
+    fn rt(s: &str) -> String {
+        cells_to_doc(&doc_to_cells(&parse_mtext(s, true))).to_mtext_string()
+    }
+    fn paras(s: &str) -> Vec<String> {
+        parse_mtext(s, true)
+            .paragraphs
+            .iter()
+            .map(|p| p.spans.iter().map(|sp| sp.text.clone()).collect())
+            .collect()
+    }
+    fn cells_of(s: &str) -> Vec<Cell> {
+        doc_to_cells(&parse_mtext(s, true))
+    }
+
+    #[test]
+    fn roundtrip_idempotent() {
+        for s in ["hello", "a b c", "one\\Ptwo", "a\\Pb\\Pc", "trailing\\P", "a  b", "\\S1/2;"] {
+            let once = rt(s);
+            let twice = rt(&once);
+            assert_eq!(once, twice, "not idempotent for {s:?}: {once:?} vs {twice:?}");
+        }
+    }
+
+    #[test]
+    fn cell_count_matches_plain() {
+        assert_eq!(cells_of("ab\\Pcd").len(), 5); // a b Break c d
+        // parse_mtext drops the trailing empty paragraph; the app restores it in
+        // rebuild() (raw.ends_with("\\P")), so this pure-parse count is 2.
+        assert_eq!(cells_of("ab\\P").len(), 2);
+    }
+
+    #[test]
+    fn trailing_break_survives_doc_roundtrip() {
+        // A trailing Break must round-trip at the DOC level (the level the ops
+        // work at) even though to_mtext_string+parse would drop it.
+        let cells = vec![
+            Cell::Char('a', SpanProperties::default()),
+            Cell::Char('b', SpanProperties::default()),
+            Cell::Break,
+        ];
+        let back = doc_to_cells(&cells_to_doc(&cells));
+        assert_eq!(back, cells);
+        // Typing after the trailing break lands on the new (empty) paragraph.
+        let mut c2 = cells.clone();
+        c2.splice(3..3, str_to_cells("x", &SpanProperties::default()));
+        assert_eq!(paras(&cells_to_doc(&c2).to_mtext_string()), vec!["ab", "x"]);
+    }
+
+    #[test]
+    fn insert_break_splits_paragraph() {
+        let mut cells = cells_of("abcd");
+        cells.splice(2..2, str_to_cells("\\P", &SpanProperties::default()));
+        assert_eq!(paras(&cells_to_doc(&cells).to_mtext_string()), vec!["ab", "cd"]);
+    }
+
+    #[test]
+    fn backspace_break_merges_paragraphs() {
+        let mut cells = cells_of("ab\\Pcd"); // [a,b,Break,c,d]
+        let caret = cells_delete_range(&mut cells, 2, 3); // delete the Break slot
+        assert_eq!(caret, 2);
+        assert_eq!(paras(&cells_to_doc(&cells).to_mtext_string()), vec!["abcd"]);
+    }
+
+    #[test]
+    fn delete_range_across_paragraphs() {
+        let mut cells = cells_of("abc\\Pdef"); // [a,b,c,Break,d,e,f]
+        cells_delete_range(&mut cells, 1, 5); // b c Break d
+        assert_eq!(paras(&cells_to_doc(&cells).to_mtext_string()), vec!["aef"]);
+    }
+
+    #[test]
+    fn stacking_is_atomic() {
+        let cells = cells_of("\\S1/2;");
+        assert_eq!(cells.len(), 3);
+        assert!(matches!(cells[0], Cell::Stack { head: true, .. }));
+        assert!(cells[1].is_stack_cont() && cells[2].is_stack_cont());
+        let mut c2 = cells.clone();
+        let start = cells_delete_range(&mut c2, 1, 2); // interior delete widens to whole run
+        assert_eq!(start, 0);
+        assert!(c2.is_empty());
+    }
+
+    #[test]
+    fn trailing_break_detection() {
+        assert!(content_has_trailing_break("{ab\\P}")); // braced (to_mtext_string form)
+        assert!(content_has_trailing_break("ab\\P")); // unbraced
+        assert!(!content_has_trailing_break("{a\\Pb}")); // break in the middle
+        assert!(!content_has_trailing_break("ab"));
+        assert!(!content_has_trailing_break("{x\\\\P}")); // escaped literal backslash + P
+    }
+
+    #[test]
+    fn enter_at_end_survives_rebuild() {
+        // Type "ab", Enter at end -> cells [a, b, Break].
+        let cells = vec![
+            Cell::Char('a', SpanProperties::default()),
+            Cell::Char('b', SpanProperties::default()),
+            Cell::Break,
+        ];
+        let raw = cells_to_doc(&cells).to_mtext_string();
+        // rebuild() re-parses + restores the trailing empty paragraph.
+        let mut d = parse_mtext(&raw, true);
+        if content_has_trailing_break(&raw) {
+            d.paragraphs.push(MTextParagraph::new());
+        }
+        assert_eq!(doc_to_cells(&d).len(), 3, "trailing break must survive rebuild");
     }
 }
