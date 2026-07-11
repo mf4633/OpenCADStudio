@@ -111,9 +111,10 @@ pub struct GlyphAtlas {
     height: u32,
     /// R8 SDF texels, row-major, row 0 = top.
     data: Vec<u8>,
-    /// Cache keyed by (font family, char). `None` = a whitespace/empty glyph
-    /// with no ink (nothing to draw), cached so we do not re-resolve it.
-    entries: HashMap<(String, char), Option<AtlasEntry>>,
+    /// Cache keyed by (font family, char, bold). `None` = a whitespace/empty
+    /// glyph with no ink (nothing to draw), cached so we do not re-resolve it.
+    /// Bold bakes the same glyph with a wider pen (a separate atlas entry).
+    entries: HashMap<(String, char, bool), Option<AtlasEntry>>,
     // Shelf packer cursor.
     cursor_x: u32,
     cursor_y: u32,
@@ -201,15 +202,21 @@ impl GlyphAtlas {
     /// Returns `None` for whitespace/empty glyphs (nothing to draw) and when the
     /// atlas is full (Phase 1 is single-page; callers should treat `None` as
     /// "skip / fall back").
-    pub fn get_or_insert(&mut self, family: &str, ch: char) -> Option<AtlasEntry> {
-        let key = (family.to_string(), ch);
+    pub fn get_or_insert(&mut self, family: &str, ch: char, bold: bool) -> Option<AtlasEntry> {
+        let key = (family.to_string(), ch, bold);
         if let Some(cached) = self.entries.get(&key) {
             return *cached;
         }
+        // Bold stroke glyphs bake with a wider pen band (same shapes, thicker).
+        let pen_half = if bold {
+            PEN_HALF_UNITS * 1.7
+        } else {
+            PEN_HALF_UNITS
+        };
         let face = Face::resolve(family);
         let entry = face
             .glyph(ch)
-            .and_then(|g| bake_glyph(&g))
+            .and_then(|g| bake_glyph(&g, pen_half))
             .and_then(|tile| self.pack(tile));
         self.entries.insert(key, entry);
         entry
@@ -252,7 +259,7 @@ impl GlyphAtlas {
 // ── Baking ─────────────────────────────────────────────────────────────────
 
 /// Rasterize a glyph into an SDF tile. `None` if the glyph has no ink.
-fn bake_glyph(g: &Glyph) -> Option<BakedTile> {
+fn bake_glyph(g: &Glyph, pen_half: f32) -> Option<BakedTile> {
     // TEXTFILL 0 renders TrueType glyphs hollow: bake them as a stroke field
     // (outline) instead of a signed fill field. Stroke fonts (no fill tris) are
     // unaffected.
@@ -304,8 +311,8 @@ fn bake_glyph(g: &Glyph) -> Option<BakedTile> {
                     -d
                 }
             } else {
-                // Band around the pen path.
-                PEN_HALF_UNITS - d
+                // Band around the pen path (wider for bold).
+                pen_half - d
             };
             let t = (0.5 + sd / (2.0 * SPREAD_UNITS)).clamp(0.0, 1.0);
             data[(py * w + px) as usize] = (t * 255.0).round() as u8;
@@ -423,7 +430,7 @@ mod tests {
 
     #[test]
     fn filled_glyph_inside_is_high_outside_is_low() {
-        let tile = bake_glyph(&filled_square()).expect("square bakes");
+        let tile = bake_glyph(&filled_square(), PEN_HALF_UNITS).expect("square bakes");
         // Deep inside the fill -> well above the 0.5 (128) edge.
         assert!(sample(&tile, 2.0, 2.0) > 200, "center should read as inside");
         // Well outside the fill -> below the edge.
@@ -435,7 +442,7 @@ mod tests {
 
     #[test]
     fn stroke_glyph_on_line_is_high_off_line_is_low() {
-        let tile = bake_glyph(&diagonal_stroke()).expect("stroke bakes");
+        let tile = bake_glyph(&diagonal_stroke(), PEN_HALF_UNITS).expect("stroke bakes");
         // On the diagonal -> inside the pen band.
         assert!(sample(&tile, 2.0, 2.0) > 128, "on-stroke should be inside band");
         // Off the diagonal by more than the pen half-width -> outside.
@@ -452,14 +459,14 @@ mod tests {
             advance: 4.5,
             fill_tris: vec![],
         };
-        assert!(bake_glyph(&space).is_none());
+        assert!(bake_glyph(&space, PEN_HALF_UNITS).is_none());
     }
 
     #[test]
     fn packing_places_tiles_without_overlap() {
         let mut atlas = GlyphAtlas::new(256, 256);
-        let a = atlas.pack(bake_glyph(&filled_square()).unwrap()).unwrap();
-        let b = atlas.pack(bake_glyph(&diagonal_stroke()).unwrap()).unwrap();
+        let a = atlas.pack(bake_glyph(&filled_square(), PEN_HALF_UNITS).unwrap()).unwrap();
+        let b = atlas.pack(bake_glyph(&diagonal_stroke(), PEN_HALF_UNITS).unwrap()).unwrap();
         assert!(atlas.is_dirty());
         // UVs are within the atlas.
         for e in [&a, &b] {
@@ -476,7 +483,7 @@ mod tests {
     fn full_atlas_returns_none() {
         // A tiny atlas cannot fit even one padded tile.
         let mut atlas = GlyphAtlas::new(4, 4);
-        assert!(atlas.pack(bake_glyph(&filled_square()).unwrap()).is_none());
+        assert!(atlas.pack(bake_glyph(&filled_square(), PEN_HALF_UNITS).unwrap()).is_none());
     }
 
     // Full path over a real, embedded stroke font (no system fonts needed):
@@ -484,7 +491,7 @@ mod tests {
     #[test]
     fn real_lff_glyph_bakes_and_packs() {
         let mut atlas = GlyphAtlas::new(512, 512);
-        let e = atlas.get_or_insert("txt", 'A').expect("LFF 'A' bakes");
+        let e = atlas.get_or_insert("txt", 'A', false).expect("LFF 'A' bakes");
         assert!(atlas.is_dirty());
         assert!(
             e.plane_max[0] > e.plane_min[0] && e.plane_max[1] > e.plane_min[1],
@@ -499,7 +506,7 @@ mod tests {
         );
         assert!(e.advance > 0.0);
         // Second lookup is cached: identical placement, no re-pack.
-        let e2 = atlas.get_or_insert("txt", 'A').expect("cached");
+        let e2 = atlas.get_or_insert("txt", 'A', false).expect("cached");
         assert_eq!(e.uv_min, e2.uv_min);
         assert_eq!(e.uv_max, e2.uv_max);
     }

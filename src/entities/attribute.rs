@@ -306,6 +306,7 @@ fn build_attr_truck(input: AttrTextInputs<'_>, document: &acadrust::CadDocument)
                 width_factor,
                 oblique: oblique_angle,
                 tracking: 1.0,
+                bold: false,
             }),
         });
     }

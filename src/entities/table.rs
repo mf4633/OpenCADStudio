@@ -724,6 +724,7 @@ pub fn tessellate_table(
                         run.oblique,
                         run.tracking,
                         &run.font,
+                        run.bold,
                         &run.text,
                     );
                     crate::scene::pipeline::text_gpu::push_glyph_vertices(

@@ -43,6 +43,7 @@ pub fn layout_glyph_quads(
     oblique_angle: f32,
     tracking: f32,
     font_name: &str,
+    bold: bool,
     text: &str,
 ) -> Vec<GlyphQuad> {
     if text.is_empty() || height <= 0.0 {
@@ -129,7 +130,7 @@ pub fn layout_glyph_quads(
                 continue;
             }
         };
-        match atlas.get_or_insert(font_name, ch) {
+        match atlas.get_or_insert(font_name, ch, bold) {
             Some(e) => {
                 let (lo, hi) = (e.plane_min, e.plane_max);
                 quads.push(GlyphQuad {
@@ -195,7 +196,7 @@ mod tests {
     #[test]
     fn glyphs_advance_rightward() {
         let mut atlas = GlyphAtlas::new(512, 512);
-        let quads = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", "AA");
+        let quads = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", false, "AA");
         assert_eq!(quads.len(), 2, "two inked glyphs -> two quads");
         assert!(
             center(&quads[1])[0] > center(&quads[0])[0],
@@ -213,8 +214,8 @@ mod tests {
     #[test]
     fn space_emits_no_quad_but_advances() {
         let mut atlas = GlyphAtlas::new(512, 512);
-        let ab = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", "AA");
-        let a_sp_a = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", "A A");
+        let ab = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", false, "AA");
+        let a_sp_a = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", false, "A A");
         assert_eq!(a_sp_a.len(), 2, "space produces no quad");
         assert!(
             center(&a_sp_a[1])[0] > center(&ab[1])[0],
@@ -228,7 +229,7 @@ mod tests {
         // Use the baseline advance direction (glyph0 -> glyph1), which is +x when
         // flat and swings to +y after a 90° turn — independent of where a single
         // glyph's box centre sits within the cap height.
-        let flat = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", "AA");
+        let flat = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", false, "AA");
         let turned = layout_glyph_quads(
             &mut atlas,
             10.0,
@@ -237,6 +238,7 @@ mod tests {
             0.0,
             1.0,
             "txt",
+            false,
             "AA",
         );
         let adv = |qs: &[GlyphQuad]| {
@@ -252,8 +254,8 @@ mod tests {
     #[test]
     fn taller_text_makes_bigger_quads() {
         let mut atlas = GlyphAtlas::new(512, 512);
-        let small = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", "A");
-        let big = layout_glyph_quads(&mut atlas, 20.0, 0.0, 1.0, 0.0, 1.0, "txt", "A");
+        let small = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", false, "A");
+        let big = layout_glyph_quads(&mut atlas, 20.0, 0.0, 1.0, 0.0, 1.0, "txt", false, "A");
         let extent = |q: &GlyphQuad| {
             let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
             for p in &q.corners {
@@ -274,9 +276,9 @@ mod tests {
     #[test]
     fn underline_emits_an_extra_solid_quad() {
         let mut atlas = GlyphAtlas::new(512, 512);
-        let plain = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", "AB");
+        let plain = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", false, "AB");
         // `\L…\l` underlines the run — same glyph quads plus one decoration quad.
-        let under = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", "\\LAB\\l");
+        let under = layout_glyph_quads(&mut atlas, 10.0, 0.0, 1.0, 0.0, 1.0, "txt", false, "\\LAB\\l");
         assert_eq!(under.len(), plain.len() + 1, "underline adds one quad");
         // The decoration quad samples the atlas's solid texel (degenerate UV).
         let deco = under.last().unwrap();

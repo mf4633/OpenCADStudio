@@ -538,6 +538,12 @@ pub(super) struct OpenCADStudio {
     last_vp_click_time: Option<Instant>,
     /// Screen position of the previous viewport left-click release.
     last_vp_click_pos: Option<Point>,
+    /// MText preview click tracking for double-click (select word) / triple-click
+    /// (select all): the previous click's time + visible offset, and the run
+    /// length of quick same-spot clicks (1..=3).
+    mtext_click_time: Option<Instant>,
+    mtext_click_off: usize,
+    mtext_click_count: u8,
     /// Plot scale for model-space window plots: "Fit" | "1:1" | … | "2:1".
     plot_scale: String,
     /// Pending model-space plot window (x0, y0, x1, y1) in world XY, or None.
@@ -789,6 +795,8 @@ pub enum ColorPickTarget {
     Ribbon,
     /// A layer's colour, by panel row index.
     Layer(usize),
+    /// The MText editor's selection (or global) colour.
+    MText,
 }
 
 /// Table records the clipboard entities depend on, snapshotted from the source
@@ -1758,8 +1766,11 @@ pub enum Message {
     MTextWidth(String),
     /// Toolbar character-spacing field changed.
     MTextCharSpace(String),
-    /// Toolbar colour dropdown — global text colour (ACI index, 256 = ByLayer).
-    MTextColor(u16),
+    /// Toolbar colour picker (same widget as Properties) — applies to the
+    /// selection, or the whole text when nothing is selected.
+    MTextColorChanged(AcadColor),
+    /// Open / close the MText colour picker popup.
+    MTextColorPickerToggle,
     /// Toolbar justification / attachment-point change.
     MTextJustify(acadrust::entities::mtext::AttachmentPoint),
     /// Toolbar paragraph-alignment change.
@@ -2194,6 +2205,9 @@ impl OpenCADStudio {
             layout_rename_state: None,
             last_vp_click_time: None,
             last_vp_click_pos: None,
+            mtext_click_time: None,
+            mtext_click_off: 0,
+            mtext_click_count: 0,
             plot_scale: "Fit".to_string(),
             plot_window: None,
             plot_format: crate::io::paper_sizes::PaperSize::A4,

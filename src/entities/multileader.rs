@@ -1529,6 +1529,7 @@ impl MultiLeaderTess for MultiLeader {
                             run.oblique,
                             run.tracking,
                             &run.font,
+                            run.bold,
                             &run.text,
                         );
                         crate::scene::pipeline::text_gpu::push_glyph_vertices(

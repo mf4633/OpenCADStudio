@@ -179,9 +179,11 @@ pub fn tessellate(
                 // Selection forces a single uniform colour — never split.
                 let split_by_color = !selected;
 
-                // Bins: key = Some(rgb)
+                // Bins: key = (Some(rgb), bold). Bold strokes bin separately so
+                // the editor preview can draw them with a wider pen.
                 struct TextBin {
                     color: Option<[f32; 3]>,
+                    bold: bool,
                     pts: Vec<[f32; 3]>,
                     pts_low: Vec<[f32; 3]>,
                     fill_tris: Vec<[f32; 3]>,
@@ -189,22 +191,26 @@ pub fn tessellate(
                 }
                 let mut bins: Vec<TextBin> = Vec::new();
                 let mut bin_first: Vec<bool> = Vec::new();
-                let find_or_make =
-                    |key: Option<[f32; 3]>, bins: &mut Vec<TextBin>, firsts: &mut Vec<bool>| -> usize {
-                        if let Some(i) = bins.iter().position(|b| b.color == key) {
-                            i
-                        } else {
-                            bins.push(TextBin {
-                                color: key,
-                                pts: Vec::new(),
-                                pts_low: Vec::new(),
-                                fill_tris: Vec::new(),
-                                fill_tris_low: Vec::new(),
-                            });
-                            firsts.push(true);
-                            bins.len() - 1
-                        }
-                    };
+                let find_or_make = |key: Option<[f32; 3]>,
+                                    bold: bool,
+                                    bins: &mut Vec<TextBin>,
+                                    firsts: &mut Vec<bool>|
+                 -> usize {
+                    if let Some(i) = bins.iter().position(|b| b.color == key && b.bold == bold) {
+                        i
+                    } else {
+                        bins.push(TextBin {
+                            color: key,
+                            bold,
+                            pts: Vec::new(),
+                            pts_low: Vec::new(),
+                            fill_tris: Vec::new(),
+                            fill_tris_low: Vec::new(),
+                        });
+                        firsts.push(true);
+                        bins.len() - 1
+                    }
+                };
 
                 let anno = anno_scale as f64;
                 // SDF text is decided PER GROUP by whether the group carries a
@@ -224,7 +230,8 @@ pub fn tessellate(
                     let slx_v = (lx_v - ref_lx_v) * anno + ref_lx_v;
                     let sly_v = (ly_v - ref_ly_v) * anno + ref_ly_v;
                     let bin_key = if split_by_color { group.color } else { None };
-                    let bi = find_or_make(bin_key, &mut bins, &mut bin_first);
+                    let group_bold = group.run.as_ref().is_some_and(|r| r.bold);
+                    let bi = find_or_make(bin_key, group_bold, &mut bins, &mut bin_first);
                     
                     // 1. Process outline strokes
                     for stroke in &group.strokes {
@@ -287,6 +294,7 @@ pub fn tessellate(
                                 run.oblique,
                                 run.tracking,
                                 &run.font,
+                                run.bold,
                                 &run.text,
                             );
                             crate::scene::pipeline::text_gpu::push_glyph_vertices(
@@ -499,7 +507,16 @@ pub fn tessellate(
                         Some([r, g, b]) => [r, g, b, color[3]],
                         None => color,
                     };
-                    
+                    // Bold text strokes carry a wider pen so the editor preview
+                    // draws them thicker (these stroke wires exist only when
+                    // strokes are forced, i.e. the preview; the main render uses
+                    // SDF where bold is a wider baked pen).
+                    let bin_lw = if bin.bold {
+                        line_weight_px.max(1.0) * 2.4
+                    } else {
+                        line_weight_px
+                    };
+
                     if !bin.pts.is_empty() {
                         let (snap, keys, tangents) = if is_first {
                             is_first = false;
@@ -520,7 +537,7 @@ pub fn tessellate(
                             selected,
                             pattern_length: 0.0,
                             pattern: [0.0; 8],
-                            line_weight_px,
+                            line_weight_px: bin_lw,
                             snap_pts: snap,
                             tangent_geoms: tangents,
                             aci: 0,

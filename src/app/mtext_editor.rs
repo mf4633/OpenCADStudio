@@ -7,8 +7,8 @@
 
 use acadrust::entities::mtext::AttachmentPoint;
 use acadrust::entities::mtext_format::{
-    parse_mtext, MTextDocument, MTextParagraph, MTextSpan, SpanProperties, StackingData,
-    StackingType,
+    parse_mtext, MTextColor, MTextDocument, MTextFont, MTextParagraph, MTextParagraphAlignment,
+    MTextSpan, ParagraphProperties, SpanProperties, StackingData, StackingType,
 };
 use acadrust::types::Vector3;
 use acadrust::{EntityType, Handle, MText};
@@ -36,17 +36,6 @@ pub enum ParaAlign {
     Center,
     Right,
     Justify,
-}
-
-impl ParaAlign {
-    pub fn code(self) -> &'static str {
-        match self {
-            ParaAlign::Left => "l",
-            ParaAlign::Center => "c",
-            ParaAlign::Right => "r",
-            ParaAlign::Justify => "j",
-        }
-    }
 }
 
 /// `pick_list`-friendly wrapper for the 9 attachment points.
@@ -123,6 +112,8 @@ pub struct MTextEditorState {
     /// When true the panel shows the rendered preview; when false the raw
     /// code/text input. Toggled so the two never stack.
     pub show_preview: bool,
+    /// Whether the toolbar colour picker popup is open.
+    pub color_picker_open: bool,
     /// Per-visible-character boxes (world XY, world_offset already removed) for
     /// click-to-select in the preview, and the current selection as a visible-
     /// character range `[start, end)`.
@@ -159,6 +150,7 @@ impl MTextEditorState {
             char_space: "0".to_string(),
             preview_wires: Vec::new(),
             show_preview: true,
+            color_picker_open: false,
             glyph_boxes: Vec::new(),
             sel: None,
             sel_anchor: 0,
@@ -178,39 +170,60 @@ impl MTextEditorState {
         self.height.trim().parse::<f64>().ok().filter(|h| *h > 0.0).unwrap_or(0.25)
     }
 
-    /// Compose the raw editor text with the global leading inline codes
-    /// (font / colour / oblique / width / char-spacing) the toolbar's
-    /// dropdowns and value fields set. Per-selection toggles already live
-    /// inside the text.
-    pub fn composed_value(&self) -> String {
-        // No trailing-newline strip: a trailing line break is a real empty
-        // line the user typed; keeping it lets the layout emit the caret slot
-        // so the caret shows on the new line right after Enter.
-        let body = self.content.text();
-        let mut prefix = String::new();
-        if !self.font.trim().is_empty() {
-            prefix.push_str(&format!("\\f{};", self.font.trim()));
+    /// Fold the toolbar's global defaults (font / colour / oblique / width /
+    /// char-spacing) onto every span that does not already override them. This
+    /// replaces the old hand-built `\f;\C;…` prefix so the value is produced
+    /// purely by acadrust's `to_mtext_string`.
+    fn apply_globals(&self, doc: &mut MTextDocument) {
+        let font = self.font.trim();
+        let color =
+            (self.color_aci != 256 && self.color_aci != 0).then(|| MTextColor::Index(self.color_aci));
+        let oblique = parse_non_default(&self.oblique, 0.0);
+        let width = parse_non_default(&self.width, 1.0);
+        let tracking = parse_non_default(&self.char_space, 0.0);
+        for para in &mut doc.paragraphs {
+            for span in &mut para.spans {
+                let p = &mut span.properties;
+                if !font.is_empty() && p.font.is_none() {
+                    p.font = Some(MTextFont::from_name(font));
+                }
+                if p.color.is_none() && p.color_rgb.is_none() {
+                    if let Some(ref c) = color {
+                        p.color = Some(c.clone());
+                    }
+                }
+                if p.oblique_angle.is_none() {
+                    p.oblique_angle = oblique;
+                }
+                if p.width_factor.is_none() {
+                    p.width_factor = width;
+                }
+                if p.tracking.is_none() {
+                    p.tracking = tracking;
+                }
+            }
         }
-        if self.color_aci != 256 {
-            prefix.push_str(&format!("\\C{};", self.color_aci));
+    }
+
+    /// The committed / previewed MText value: the structured body with the
+    /// global toolbar defaults folded in, serialized by acadrust.
+    fn folded_value(&self) -> String {
+        let raw = self.content.text();
+        let mut doc = parse_mtext(&raw, true);
+        // parse_mtext drops a trailing empty paragraph; restore it so Enter at
+        // the end keeps its new (empty) line.
+        if content_has_trailing_break(&raw) {
+            doc.paragraphs.push(MTextParagraph::new());
         }
-        if let Some(v) = parse_non_default(&self.oblique, 0.0) {
-            prefix.push_str(&format!("\\Q{};", v));
-        }
-        if let Some(v) = parse_non_default(&self.width, 1.0) {
-            prefix.push_str(&format!("\\W{};", v));
-        }
-        if let Some(v) = parse_non_default(&self.char_space, 0.0) {
-            prefix.push_str(&format!("\\T{};", v));
-        }
-        format!("{prefix}{body}")
+        self.apply_globals(&mut doc);
+        doc.to_mtext_string()
     }
 
     /// Build the MText entity from the current editor state for preview/commit.
     pub fn build_mtext(&self) -> MText {
         let h = self.height_value();
         MText {
-            value: self.composed_value(),
+            value: self.folded_value(),
             insertion_point: Vector3::new(self.pos.x as f64, self.pos.y as f64, self.pos.z as f64),
             height: h,
             rectangle_width: self.rect_width,
@@ -220,7 +233,6 @@ impl MTextEditorState {
             ..Default::default()
         }
     }
-
 }
 
 /// Parse a numeric field, returning `Some(v)` only when it differs from the
@@ -244,8 +256,9 @@ enum Cell {
     /// A visible character carrying its span's formatting. Tabs count as a
     /// normal char here (one slot), matching the previous caret model.
     Char(char, SpanProperties),
-    /// A paragraph break (`\P`).
-    Break,
+    /// A paragraph break (`\P`), carrying the paragraph properties (alignment,
+    /// indents…) of the paragraph it opens, so they survive an edit round-trip.
+    Break(ParagraphProperties),
     /// One flattened glyph of a stacking (`\S`) span, kept atomic: continuation
     /// cells (`head=false`) extend the run begun by a `head=true` one, and edits
     /// never split a run.
@@ -278,12 +291,14 @@ fn flatten_stack(st: &StackingData) -> String {
 }
 
 /// Flatten a document into one cell per visible slot (same order + count as the
-/// layout's glyph boxes). This is the editor's caret index space.
+/// layout's glyph boxes). This is the editor's caret index space. The first
+/// paragraph's properties are the implicit para-0 default (see [`doc_para0`]);
+/// each `Break` carries the properties of the paragraph it opens.
 fn doc_to_cells(doc: &MTextDocument) -> Vec<Cell> {
     let mut cells = Vec::new();
     for (pi, para) in doc.paragraphs.iter().enumerate() {
         if pi > 0 {
-            cells.push(Cell::Break);
+            cells.push(Cell::Break(para.properties.clone()));
         }
         for span in &para.spans {
             if let Some(st) = &span.stacking {
@@ -306,18 +321,30 @@ fn doc_to_cells(doc: &MTextDocument) -> Vec<Cell> {
     cells
 }
 
+/// The first paragraph's properties (the para-0 default not carried by any
+/// `Break`), or the default for an empty document.
+fn doc_para0(doc: &MTextDocument) -> ParagraphProperties {
+    doc.paragraphs
+        .first()
+        .map(|p| p.properties.clone())
+        .unwrap_or_default()
+}
+
 /// Rebuild a document from an edited cell list. Adjacent `Char` cells with equal
-/// properties coalesce into one span; a `Break` starts a new paragraph; a
-/// `Stack` run's head cell re-emits the whole stacking span.
-fn cells_to_doc(cells: &[Cell]) -> MTextDocument {
+/// properties coalesce into one span; a `Break` starts a new paragraph carrying
+/// its stored properties; a `Stack` run's head cell re-emits the stacking span.
+/// `para0` supplies the first paragraph's properties.
+fn cells_to_doc(para0: &ParagraphProperties, cells: &[Cell]) -> MTextDocument {
     let mut doc = MTextDocument::new();
     doc.paragraphs.clear();
     let mut para = MTextParagraph::new();
+    para.properties = para0.clone();
     for cell in cells {
         match cell {
-            Cell::Break => {
+            Cell::Break(props) => {
                 doc.paragraphs
                     .push(std::mem::replace(&mut para, MTextParagraph::new()));
+                para.properties = props.clone();
             }
             Cell::Char(ch, props) => match para.spans.last_mut() {
                 Some(s) if s.stacking.is_none() && &s.properties == props => s.text.push(*ch),
@@ -336,16 +363,29 @@ fn cells_to_doc(cells: &[Cell]) -> MTextDocument {
     doc
 }
 
+/// The paragraph properties in force at flat index `caret` — the last `Break`
+/// before it, or the para-0 default. Used so a newly inserted break clones the
+/// current paragraph's properties.
+fn para_props_at(para0: &ParagraphProperties, cells: &[Cell], caret: usize) -> ParagraphProperties {
+    let mut props = para0.clone();
+    for cell in cells.iter().take(caret) {
+        if let Cell::Break(p) = cell {
+            props = p.clone();
+        }
+    }
+    props
+}
+
 /// Turn an inserted string (which may carry `\P` breaks) into cells, tagging
-/// every plain char with `props`.
-fn str_to_cells(s: &str, props: &SpanProperties) -> Vec<Cell> {
+/// every plain char with `span_props` and every break with `para_props`.
+fn str_to_cells(s: &str, span_props: &SpanProperties, para_props: &ParagraphProperties) -> Vec<Cell> {
     let mut cells = Vec::new();
     for (i, seg) in s.split("\\P").enumerate() {
         if i > 0 {
-            cells.push(Cell::Break);
+            cells.push(Cell::Break(para_props.clone()));
         }
         for ch in seg.chars() {
-            cells.push(Cell::Char(ch, props.clone()));
+            cells.push(Cell::Char(ch, span_props.clone()));
         }
     }
     cells
@@ -383,6 +423,48 @@ fn content_has_trailing_break(raw: &str) -> bool {
     }
 }
 
+/// Character class for double-click word selection: a word run, a whitespace
+/// run, or a paragraph break (each selects a maximal same-class run).
+#[derive(PartialEq)]
+enum Class {
+    Word,
+    Space,
+    Break,
+}
+
+fn cell_class(c: &Cell) -> Class {
+    match c {
+        Cell::Break(_) => Class::Break,
+        Cell::Char(ch, _) if ch.is_whitespace() => Class::Space,
+        // A char or an atomic stacking glyph is part of a word.
+        _ => Class::Word,
+    }
+}
+
+/// The `[start, end)` visible range of the word at flat index `off` — the
+/// maximal run of the same character class around it. Used for double-click.
+fn word_range(cells: &[Cell], off: usize) -> (usize, usize) {
+    let n = cells.len();
+    if n == 0 {
+        return (0, 0);
+    }
+    // Reference the cell at `off`, or the one before it when past the end.
+    let idx = off.min(n - 1);
+    let class = cell_class(&cells[idx]);
+    if class == Class::Break {
+        return (idx, idx + 1);
+    }
+    let mut a = idx;
+    while a > 0 && cell_class(&cells[a - 1]) == class {
+        a -= 1;
+    }
+    let mut b = idx + 1;
+    while b < n && cell_class(&cells[b]) == class {
+        b += 1;
+    }
+    (a, b)
+}
+
 /// Delete cells `[a, b)`, first widening the range so it never cuts a stacking
 /// run in half. Returns the (possibly widened) start index — the new caret.
 fn cells_delete_range(cells: &mut Vec<Cell>, mut a: usize, mut b: usize) -> usize {
@@ -401,111 +483,11 @@ fn cells_delete_range(cells: &mut Vec<Cell>, mut a: usize, mut b: usize) -> usiz
     a
 }
 
-/// Map each visible character of a raw MText value to its byte span
-/// `(start, end)` in that raw string, in the same reading order the layout
-/// counts glyph boxes (paragraphs split on `\P`/`\n`/`\N`, leading/trailing
-/// spaces trimmed per paragraph, inline codes skipped). Still used by the
-/// formatting (`\L`/`\Q`/…) splice path, which stays on the raw string until a
-/// later phase.
-
-pub fn visible_spans(raw: &str) -> Vec<(usize, usize)> {
-    let mut result: Vec<(usize, usize)> = Vec::new();
-    let mut para: Vec<(usize, usize, char)> = Vec::new();
-    // No leading/trailing-space trim here: the editor's layout keeps those
-    // boxes (want_glyph_boxes), so caret offsets must count every space.
-    let flush = |para: &mut Vec<(usize, usize, char)>, result: &mut Vec<(usize, usize)>| {
-        for t in para.drain(..) {
-            result.push((t.0, t.1));
-        }
-    };
-    let mut it = raw.char_indices().peekable();
-    while let Some((i, ch)) = it.next() {
-        match ch {
-            '\\' => match it.peek().map(|&(_, c)| c) {
-                Some('P') | Some('n') | Some('N') => {
-                    let (j, c) = it.next().unwrap();
-                    // Paragraph break gets a caret slot (matches the layout's
-                    // line-start box), then the paragraph flushes.
-                    para.push((i, j + c.len_utf8(), '\n'));
-                    flush(&mut para, &mut result);
-                }
-                Some('~') => {
-                    let (j, c) = it.next().unwrap();
-                    para.push((i, j + c.len_utf8(), '\u{00A0}'));
-                }
-                Some('\\') | Some('{') | Some('}') => {
-                    let (j, c) = it.next().unwrap();
-                    para.push((i, j + c.len_utf8(), c));
-                }
-                Some(c) if "LlOoKk".contains(c) => {
-                    it.next(); // value-less toggle, no visible glyph
-                }
-                Some(_) => {
-                    // Value code (\f… \C… \H… \pxq… \U… etc) — skip to ';'.
-                    it.next();
-                    while let Some(&(_, c)) = it.peek() {
-                        it.next();
-                        if c == ';' {
-                            break;
-                        }
-                    }
-                }
-                None => {}
-            },
-            '{' | '}' => { /* group markers — not visible */ }
-            '\n' | '\r' => {
-                // Raw line break = paragraph break with a caret slot.
-                para.push((i, i + ch.len_utf8(), '\n'));
-                flush(&mut para, &mut result);
-            }
-            '%' if it.peek().map(|&(_, c)| c) == Some('%') => {
-                it.next(); // second '%'
-                match it.peek().copied() {
-                    Some((k, '%')) => {
-                        it.next();
-                        para.push((i, k + 1, '%'));
-                    }
-                    Some((_, d)) if d.is_ascii_digit() => {
-                        let mut last = i;
-                        let mut n = 0;
-                        while n < 3 {
-                            match it.peek().copied() {
-                                Some((m, c)) if c.is_ascii_digit() => {
-                                    last = m;
-                                    it.next();
-                                    n += 1;
-                                }
-                                _ => break,
-                            }
-                        }
-                        para.push((i, last + 1, '\u{25A1}'));
-                    }
-                    Some((m, c)) => {
-                        it.next();
-                        let g = match c {
-                            'd' | 'D' => '°',
-                            'c' | 'C' => 'Ø',
-                            'p' | 'P' => '±',
-                            other => other,
-                        };
-                        para.push((i, m + c.len_utf8(), g));
-                    }
-                    None => para.push((i, i + 1, '%')),
-                }
-            }
-            _ => para.push((i, i + ch.len_utf8(), ch)),
-        }
-    }
-    flush(&mut para, &mut result);
-    result
-}
 
 // ── App-side editor driver ──────────────────────────────────────────────────
 
 use crate::scene::convert::tessellate;
 use crate::scene::model::wire_model::WireModel;
-use iced::widget::text_editor::{Action, Edit};
-use std::sync::Arc;
 
 impl super::OpenCADStudio {
     /// Open the in-place editor for a new (`handle = None`) or existing MText.
@@ -626,86 +608,156 @@ impl super::OpenCADStudio {
     /// Splice text around the preview selection (visible-char range) in the
     /// raw value. `case` optionally transforms the selected slice. Returns
     /// true when a preview selection was present and applied.
-    fn mtext_splice_sel(&mut self, prefix: &str, suffix: &str, case: Option<bool>) -> bool {
-        let Some(ed) = self.mtext_editor.as_mut() else { return false };
-        let Some((a, b)) = ed.sel else { return false };
-        if a >= b {
-            return false;
-        }
-        let raw = ed.content.text();
-        let spans = visible_spans(&raw);
-        if a >= spans.len() || b > spans.len() {
-            return false;
-        }
-        let start = spans[a].0;
-        let end = spans[b - 1].1;
-        let mut s = raw;
-        if let Some(upper) = case {
-            let slice = &s[start..end];
-            let repl = if upper { slice.to_uppercase() } else { slice.to_lowercase() };
-            s.replace_range(start..end, &repl);
-            // Length may change; recompute end for the suffix insert.
-            let new_end = start + repl.len();
-            s.insert_str(new_end, suffix);
-            s.insert_str(start, prefix);
-        } else {
-            s.insert_str(end, suffix);
-            s.insert_str(start, prefix);
-        }
-        ed.content = iced::widget::text_editor::Content::with_text(&s);
-        ed.sel = None;
-        true
-    }
-
-    /// Apply a character-format toggle to the preview selection (preferred) or
-    /// the Edit-box selection. The stroke-font renderer has no true bold /
-    /// italic, so Bold switches the run to the heavier Gothic stroke font and
-    /// Italic applies an oblique slant — both produce a visible effect.
+    /// Toggle a character format over the preview selection, on the structured
+    /// span properties. The stroke-font renderer has no true bold, so Bold
+    /// switches the run to the heavier "Gothic" face; Italic applies a 15°
+    /// oblique; underline / overline / strike flip the stroke flags; case
+    /// rewrites the glyphs. All are true ON/OFF toggles.
     pub(super) fn mtext_apply_fmt(&mut self, kind: MTextFmt) {
-        // Font to restore to after a Bold run (the current global font).
-        let restore = self
-            .mtext_editor
-            .as_ref()
-            .map(|e| {
-                if e.font.trim().is_empty() {
-                    "Standard".to_string()
-                } else {
-                    e.font.clone()
-                }
+        // Does every span-carrying cell in the range satisfy `get`?
+        fn all_have(cells: &[Cell], get: impl Fn(&SpanProperties) -> bool) -> bool {
+            cells.iter().all(|c| match c {
+                Cell::Char(_, p) | Cell::Stack { props: p, .. } => get(p),
+                Cell::Break(_) => true,
             })
-            .unwrap_or_else(|| "Standard".to_string());
-        let (pre, suf, case): (String, String, Option<bool>) = match kind {
-            MTextFmt::Bold => ("\\fGothic;".into(), format!("\\f{restore};"), None),
-            MTextFmt::Italic => ("\\Q15;".into(), "\\Q0;".into(), None),
-            MTextFmt::Underline => ("\\L".into(), "\\l".into(), None),
-            MTextFmt::Overline => ("\\O".into(), "\\o".into(), None),
-            MTextFmt::Strike => ("\\K".into(), "\\k".into(), None),
-            MTextFmt::Uppercase => (String::new(), String::new(), Some(true)),
-            MTextFmt::Lowercase => (String::new(), String::new(), Some(false)),
-        };
-        if !self.mtext_splice_sel(&pre, &suf, case) {
-            if let Some(ed) = self.mtext_editor.as_mut() {
-                let sel = ed.content.selection().unwrap_or_default();
-                let text = match case {
-                    Some(true) => sel.to_uppercase(),
-                    Some(false) => sel.to_lowercase(),
-                    None => format!("{pre}{sel}{suf}"),
-                };
-                ed.content.perform(Action::Edit(Edit::Paste(Arc::new(text))));
+        }
+        // Apply `f` to every span-carrying cell's properties in the range.
+        fn each(cells: &mut [Cell], mut f: impl FnMut(&mut SpanProperties)) {
+            for c in cells {
+                match c {
+                    Cell::Char(_, p) | Cell::Stack { props: p, .. } => f(p),
+                    Cell::Break(_) => {}
+                }
             }
+        }
+        // The effective font name to stamp on bold runs. `to_mtext_string` drops
+        // a font code whose name is empty, which would lose the bold flag on the
+        // round-trip; stamping the resolved style (or global) font keeps bold AND
+        // renders the same font, just with the wider bold pen.
+        let bold_font: String = if matches!(kind, MTextFmt::Bold) {
+            let doc = &self.tabs[self.active_tab].scene.document;
+            self.mtext_editor
+                .as_ref()
+                .map(|ed| {
+                    if !ed.font.trim().is_empty() {
+                        ed.font.clone()
+                    } else {
+                        crate::entities::text_support::resolve_text_style(&ed.style, doc)
+                            .font_name
+                    }
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if let Some(ed) = self.mtext_editor.as_mut() {
+            let Some((a, b)) = ed.sel.filter(|&(a, b)| a < b) else {
+                return;
+            };
+            let para0 = doc_para0(&ed.doc);
+            let mut cells = doc_to_cells(&ed.doc);
+            let b = b.min(cells.len());
+            if a >= b {
+                return;
+            }
+            match kind {
+                MTextFmt::Underline => {
+                    let on = !all_have(&cells[a..b], |p| p.underline());
+                    each(&mut cells[a..b], |p| p.set_underline(on));
+                }
+                MTextFmt::Overline => {
+                    let on = !all_have(&cells[a..b], |p| p.overline());
+                    each(&mut cells[a..b], |p| p.set_overline(on));
+                }
+                MTextFmt::Strike => {
+                    let on = !all_have(&cells[a..b], |p| p.strikethrough());
+                    each(&mut cells[a..b], |p| p.set_strikethrough(on));
+                }
+                MTextFmt::Italic => {
+                    let on = !all_have(&cells[a..b], |p| p.oblique_angle == Some(15.0));
+                    each(&mut cells[a..b], |p| p.oblique_angle = on.then_some(15.0));
+                }
+                MTextFmt::Bold => {
+                    // Real bold: set the font's bold flag (the SDF renderer bakes
+                    // a wider pen), keeping the run's font name + italic.
+                    let on = !all_have(&cells[a..b], |p| {
+                        p.font.as_ref().is_some_and(|f| f.bold)
+                    });
+                    each(&mut cells[a..b], |p| {
+                        let (name, italic) = p
+                            .font
+                            .as_ref()
+                            .map(|f| (f.name.clone(), f.italic))
+                            .unwrap_or_default();
+                        // Bold needs a non-empty name to serialize; stamp the
+                        // effective font when the run had none.
+                        let name = if name.trim().is_empty() {
+                            bold_font.clone()
+                        } else {
+                            name
+                        };
+                        p.font = if on {
+                            Some(MTextFont::with_flags(name, true, italic))
+                        } else if !italic && (name.is_empty() || name == bold_font) {
+                            None // bold was the only reason for the font override
+                        } else {
+                            Some(MTextFont::with_flags(name, false, italic))
+                        };
+                    });
+                }
+                MTextFmt::Uppercase | MTextFmt::Lowercase => {
+                    let up = kind == MTextFmt::Uppercase;
+                    for c in &mut cells[a..b] {
+                        if let Cell::Char(ch, _) = c {
+                            let mapped = if up {
+                                ch.to_uppercase().next()
+                            } else {
+                                ch.to_lowercase().next()
+                            };
+                            *ch = mapped.unwrap_or(*ch);
+                        }
+                    }
+                }
+            }
+            ed.content =
+                text_editor::Content::with_text(&cells_to_doc(&para0, &cells).to_mtext_string());
+            ed.sel = Some((a, b));
+            ed.caret = b;
+            ed.caret_blink_on = true;
         }
         self.rebuild_mtext_preview();
     }
 
-    /// Prefix the selection (or cursor) with a paragraph-alignment code.
+    /// Set the alignment of every paragraph the selection (or caret) touches.
     pub(super) fn mtext_apply_align(&mut self, align: ParaAlign) {
-        let code = format!("\\pxq{};", align.code());
-        if !self.mtext_splice_sel(&code, "", None) {
-            if let Some(ed) = self.mtext_editor.as_mut() {
-                let sel = ed.content.selection().unwrap_or_default();
-                let text = format!("{code}{sel}");
-                ed.content.perform(Action::Edit(Edit::Paste(Arc::new(text))));
+        if let Some(ed) = self.mtext_editor.as_mut() {
+            let para0 = doc_para0(&ed.doc);
+            let cells = doc_to_cells(&ed.doc);
+            let (a, b) = ed
+                .sel
+                .filter(|&(a, b)| a < b)
+                .unwrap_or((ed.caret, ed.caret));
+            let a = a.min(cells.len());
+            let b = b.min(cells.len());
+            let want = Some(match align {
+                ParaAlign::Left => MTextParagraphAlignment::Left,
+                ParaAlign::Center => MTextParagraphAlignment::Center,
+                ParaAlign::Right => MTextParagraphAlignment::Right,
+                ParaAlign::Justify => MTextParagraphAlignment::Justified,
+            });
+            // Paragraph index of a cell = number of breaks before it.
+            let para_of =
+                |idx: usize| cells.iter().take(idx).filter(|c| matches!(c, Cell::Break(_))).count();
+            let last_cell = if b > a { b - 1 } else { a };
+            let first = para_of(a);
+            let last = para_of(last_cell);
+            let mut doc = cells_to_doc(&para0, &cells);
+            let end = last.min(doc.paragraphs.len().saturating_sub(1));
+            for p in first..=end {
+                doc.paragraphs[p].properties.alignment = want;
             }
+            ed.content = text_editor::Content::with_text(&doc.to_mtext_string());
+            ed.caret_blink_on = true;
         }
         self.rebuild_mtext_preview();
     }
@@ -732,6 +784,7 @@ impl super::OpenCADStudio {
         if let Some(ed) = self.mtext_editor.as_mut() {
             // Edit the structured document as a flat cell list, then serialize
             // it back into the raw content the preview/commit still read.
+            let para0 = doc_para0(&ed.doc);
             let mut cells = doc_to_cells(&ed.doc);
             let count = cells.len();
             let mut caret = match ed.sel {
@@ -740,12 +793,13 @@ impl super::OpenCADStudio {
             };
             caret = clamp_insert(&cells, caret);
             let props = insert_props(&cells, caret);
-            let ins = str_to_cells(s, &props);
+            let para_props = para_props_at(&para0, &cells, caret);
+            let ins = str_to_cells(s, &props, &para_props);
             let added = ins.len();
             cells.splice(caret..caret, ins);
             caret += added;
             ed.content =
-                text_editor::Content::with_text(&cells_to_doc(&cells).to_mtext_string());
+                text_editor::Content::with_text(&cells_to_doc(&para0, &cells).to_mtext_string());
             ed.caret = caret;
             ed.sel = Some((caret, caret));
             ed.caret_blink_on = true;
@@ -756,6 +810,7 @@ impl super::OpenCADStudio {
     /// Delete the selection, or the visible character before the caret.
     pub(super) fn mtext_backspace(&mut self) {
         if let Some(ed) = self.mtext_editor.as_mut() {
+            let para0 = doc_para0(&ed.doc);
             let mut cells = doc_to_cells(&ed.doc);
             let count = cells.len();
             let caret = match ed.sel {
@@ -766,7 +821,7 @@ impl super::OpenCADStudio {
                 _ => ed.caret.min(count),
             };
             ed.content =
-                text_editor::Content::with_text(&cells_to_doc(&cells).to_mtext_string());
+                text_editor::Content::with_text(&cells_to_doc(&para0, &cells).to_mtext_string());
             ed.caret = caret;
             ed.sel = Some((caret, caret));
             ed.caret_blink_on = true;
@@ -777,6 +832,7 @@ impl super::OpenCADStudio {
     /// Delete the selection, or the visible character at the caret.
     pub(super) fn mtext_delete(&mut self) {
         if let Some(ed) = self.mtext_editor.as_mut() {
+            let para0 = doc_para0(&ed.doc);
             let mut cells = doc_to_cells(&ed.doc);
             let count = cells.len();
             let caret = match ed.sel {
@@ -787,7 +843,7 @@ impl super::OpenCADStudio {
                 _ => ed.caret.min(count),
             };
             ed.content =
-                text_editor::Content::with_text(&cells_to_doc(&cells).to_mtext_string());
+                text_editor::Content::with_text(&cells_to_doc(&para0, &cells).to_mtext_string());
             ed.caret = caret;
             ed.sel = Some((caret, caret));
             ed.caret_blink_on = true;
@@ -812,6 +868,148 @@ impl super::OpenCADStudio {
             .as_ref()
             .map(|ed| doc_to_cells(&ed.doc).len())
             .unwrap_or(0)
+    }
+
+    /// Select the whole editor text (Ctrl+A / triple-click).
+    pub(super) fn mtext_select_all(&mut self) {
+        if let Some(ed) = self.mtext_editor.as_mut() {
+            let n = doc_to_cells(&ed.doc).len();
+            ed.sel_anchor = 0;
+            ed.sel = Some((0, n));
+            ed.caret = n;
+            ed.caret_blink_on = true;
+        }
+    }
+
+    /// Apply a font choice: to the current selection (per-run) when there is
+    /// one, otherwise to the whole text via the global font. `font` is a family
+    /// name or `"[Style default]"`.
+    pub(super) fn mtext_apply_font(&mut self, font: &str) {
+        let default = font == "[Style default]";
+        // Effective name to stamp — never empty (so bold/italic survive
+        // serialization): the picked font, or the resolved style font.
+        let name: String = if default {
+            let doc = &self.tabs[self.active_tab].scene.document;
+            self.mtext_editor
+                .as_ref()
+                .map(|ed| {
+                    crate::entities::text_support::resolve_text_style(&ed.style, doc).font_name
+                })
+                .unwrap_or_default()
+        } else {
+            font.to_string()
+        };
+        let has_sel = self
+            .mtext_editor
+            .as_ref()
+            .and_then(|e| e.sel)
+            .is_some_and(|(a, b)| a < b);
+        if has_sel {
+            if let Some(ed) = self.mtext_editor.as_mut() {
+                let (a, b) = ed.sel.unwrap();
+                let para0 = doc_para0(&ed.doc);
+                let mut cells = doc_to_cells(&ed.doc);
+                let b = b.min(cells.len());
+                if a < b {
+                    for c in &mut cells[a..b] {
+                        if let Cell::Char(_, p) | Cell::Stack { props: p, .. } = c {
+                            let (bold, italic) = p
+                                .font
+                                .as_ref()
+                                .map(|f| (f.bold, f.italic))
+                                .unwrap_or_default();
+                            p.font = if default && !bold && !italic {
+                                None // reset to inherit the style font
+                            } else {
+                                Some(MTextFont::with_flags(name.clone(), bold, italic))
+                            };
+                        }
+                    }
+                    ed.content = text_editor::Content::with_text(
+                        &cells_to_doc(&para0, &cells).to_mtext_string(),
+                    );
+                    ed.sel = Some((a, b));
+                    ed.caret = b;
+                    ed.caret_blink_on = true;
+                }
+            }
+        } else if let Some(ed) = self.mtext_editor.as_mut() {
+            // No selection: the global font applies to the whole text.
+            ed.font = if default { String::new() } else { font.to_string() };
+        }
+        self.rebuild_mtext_preview();
+    }
+
+    /// Apply a colour from the shared Properties-style picker: to the selection
+    /// (per-run) when there is one, else the whole text via the global colour.
+    /// Closes the picker popup.
+    pub(super) fn mtext_apply_color(&mut self, color: acadrust::types::Color) {
+        use acadrust::types::Color as C;
+        let (mcolor, rgb): (Option<MTextColor>, Option<(u8, u8, u8)>) = match color {
+            C::Index(i) => (Some(MTextColor::Index(i as u16)), None),
+            C::Rgb { r, g, b } => (None, Some((r, g, b))),
+            _ => (None, None), // ByLayer / ByBlock → inherit
+        };
+        let has_sel = self
+            .mtext_editor
+            .as_ref()
+            .and_then(|e| e.sel)
+            .is_some_and(|(a, b)| a < b);
+        if has_sel {
+            if let Some(ed) = self.mtext_editor.as_mut() {
+                let (a, b) = ed.sel.unwrap();
+                let para0 = doc_para0(&ed.doc);
+                let mut cells = doc_to_cells(&ed.doc);
+                let b = b.min(cells.len());
+                if a < b {
+                    for c in &mut cells[a..b] {
+                        if let Cell::Char(_, p) | Cell::Stack { props: p, .. } = c {
+                            p.color = mcolor.clone();
+                            p.color_rgb = rgb;
+                        }
+                    }
+                    ed.content = text_editor::Content::with_text(
+                        &cells_to_doc(&para0, &cells).to_mtext_string(),
+                    );
+                    ed.sel = Some((a, b));
+                    ed.caret = b;
+                    ed.caret_blink_on = true;
+                }
+            }
+        } else if let Some(ed) = self.mtext_editor.as_mut() {
+            // No selection: the global colour applies (ACI only; a true colour
+            // with no selection falls back to ByLayer).
+            ed.color_aci = match color {
+                C::Index(i) => i as u16,
+                _ => 256,
+            };
+        }
+        if let Some(ed) = self.mtext_editor.as_mut() {
+            ed.color_picker_open = false;
+        }
+        self.rebuild_mtext_preview();
+    }
+
+    /// Select the word at visible offset `off` (double-click).
+    pub(super) fn mtext_select_word(&mut self, off: usize) {
+        if let Some(ed) = self.mtext_editor.as_mut() {
+            let cells = doc_to_cells(&ed.doc);
+            let (a, b) = word_range(&cells, off);
+            ed.sel_anchor = a;
+            ed.sel = Some((a, b));
+            ed.caret = b;
+            ed.caret_blink_on = true;
+        }
+    }
+
+    /// The currently selected text as plain text (for Ctrl+C), or `None` when
+    /// the selection is empty.
+    pub(super) fn mtext_selected_text(&self) -> Option<String> {
+        let ed = self.mtext_editor.as_ref()?;
+        let (a, b) = ed.sel.filter(|&(a, b)| a < b)?;
+        let cells = doc_to_cells(&ed.doc);
+        let slice = cells.get(a..b.min(cells.len()))?;
+        Some(cells_to_doc(&ParagraphProperties::default(), slice).to_plain_text())
     }
 
     /// Commit the editor — create a new MText or update the edited one.
@@ -869,7 +1067,8 @@ mod cell_tests {
     use super::*;
 
     fn rt(s: &str) -> String {
-        cells_to_doc(&doc_to_cells(&parse_mtext(s, true))).to_mtext_string()
+        let doc = parse_mtext(s, true);
+        cells_to_doc(&doc_para0(&doc), &doc_to_cells(&doc)).to_mtext_string()
     }
     fn paras(s: &str) -> Vec<String> {
         parse_mtext(s, true)
@@ -906,21 +1105,24 @@ mod cell_tests {
         let cells = vec![
             Cell::Char('a', SpanProperties::default()),
             Cell::Char('b', SpanProperties::default()),
-            Cell::Break,
+            Cell::Break(ParagraphProperties::default()),
         ];
-        let back = doc_to_cells(&cells_to_doc(&cells));
+        let back = doc_to_cells(&cells_to_doc(&ParagraphProperties::default(), &cells));
         assert_eq!(back, cells);
         // Typing after the trailing break lands on the new (empty) paragraph.
         let mut c2 = cells.clone();
-        c2.splice(3..3, str_to_cells("x", &SpanProperties::default()));
-        assert_eq!(paras(&cells_to_doc(&c2).to_mtext_string()), vec!["ab", "x"]);
+        c2.splice(3..3, str_to_cells("x", &SpanProperties::default(), &ParagraphProperties::default()));
+        assert_eq!(
+            paras(&cells_to_doc(&ParagraphProperties::default(), &c2).to_mtext_string()),
+            vec!["ab", "x"]
+        );
     }
 
     #[test]
     fn insert_break_splits_paragraph() {
         let mut cells = cells_of("abcd");
-        cells.splice(2..2, str_to_cells("\\P", &SpanProperties::default()));
-        assert_eq!(paras(&cells_to_doc(&cells).to_mtext_string()), vec!["ab", "cd"]);
+        cells.splice(2..2, str_to_cells("\\P", &SpanProperties::default(), &ParagraphProperties::default()));
+        assert_eq!(paras(&cells_to_doc(&ParagraphProperties::default(), &cells).to_mtext_string()), vec!["ab", "cd"]);
     }
 
     #[test]
@@ -928,14 +1130,14 @@ mod cell_tests {
         let mut cells = cells_of("ab\\Pcd"); // [a,b,Break,c,d]
         let caret = cells_delete_range(&mut cells, 2, 3); // delete the Break slot
         assert_eq!(caret, 2);
-        assert_eq!(paras(&cells_to_doc(&cells).to_mtext_string()), vec!["abcd"]);
+        assert_eq!(paras(&cells_to_doc(&ParagraphProperties::default(), &cells).to_mtext_string()), vec!["abcd"]);
     }
 
     #[test]
     fn delete_range_across_paragraphs() {
         let mut cells = cells_of("abc\\Pdef"); // [a,b,c,Break,d,e,f]
         cells_delete_range(&mut cells, 1, 5); // b c Break d
-        assert_eq!(paras(&cells_to_doc(&cells).to_mtext_string()), vec!["aef"]);
+        assert_eq!(paras(&cells_to_doc(&ParagraphProperties::default(), &cells).to_mtext_string()), vec!["aef"]);
     }
 
     #[test]
@@ -948,6 +1150,102 @@ mod cell_tests {
         let start = cells_delete_range(&mut c2, 1, 2); // interior delete widens to whole run
         assert_eq!(start, 0);
         assert!(c2.is_empty());
+    }
+
+    fn centred_para(text: &str) -> MTextParagraph {
+        let mut p = MTextParagraph::new();
+        p.properties.alignment = Some(MTextParagraphAlignment::Center);
+        p.spans.push(MTextSpan::plain(text));
+        p
+    }
+
+    #[test]
+    fn paragraph_props_survive_edit() {
+        // Two paragraphs, the 2nd centre-aligned; round-trip through the cell
+        // model (as every edit does) must keep the alignment.
+        let mut doc = MTextDocument::new();
+        doc.paragraphs.clear();
+        let mut p0 = MTextParagraph::new();
+        p0.spans.push(MTextSpan::plain("ab"));
+        doc.paragraphs.push(p0);
+        doc.paragraphs.push(centred_para("cd"));
+        let cells = doc_to_cells(&doc);
+        let back = cells_to_doc(&doc_para0(&doc), &cells);
+        assert_eq!(
+            back.paragraphs[1].properties.alignment,
+            Some(MTextParagraphAlignment::Center),
+            "alignment must survive the cell round-trip"
+        );
+
+        // A newly inserted break clones the current paragraph's alignment.
+        let mut doc2 = MTextDocument::new();
+        doc2.paragraphs.clear();
+        doc2.paragraphs.push(centred_para("abc"));
+        let p0 = doc_para0(&doc2);
+        let mut cells2 = doc_to_cells(&doc2);
+        let pp = para_props_at(&p0, &cells2, 2);
+        cells2.splice(2..2, str_to_cells("\\P", &SpanProperties::default(), &pp));
+        let out = cells_to_doc(&p0, &cells2);
+        assert_eq!(out.paragraphs.len(), 2);
+        assert_eq!(
+            out.paragraphs[0].properties.alignment,
+            Some(MTextParagraphAlignment::Center)
+        );
+        assert_eq!(
+            out.paragraphs[1].properties.alignment,
+            Some(MTextParagraphAlignment::Center),
+            "split paragraph inherits alignment"
+        );
+    }
+
+    #[test]
+    fn word_range_selection() {
+        let cells = cells_of("hello world"); // h e l l o _ w o r l d
+        assert_eq!(word_range(&cells, 2), (0, 5)); // inside "hello"
+        assert_eq!(word_range(&cells, 8), (6, 11)); // inside "world"
+        assert_eq!(word_range(&cells, 5), (5, 6)); // the space itself
+        assert_eq!(word_range(&cells, 11), (6, 11)); // past end → last word
+        // Double-click does not cross a paragraph break.
+        let c2 = cells_of("ab\\Pcd"); // a b Break c d
+        assert_eq!(word_range(&c2, 0), (0, 2)); // "ab"
+        assert_eq!(word_range(&c2, 2), (2, 3)); // the break alone
+        assert_eq!(word_range(&c2, 3), (3, 5)); // "cd"
+    }
+
+    // Per-selection colour/font must survive the doc → to_mtext_string → parse
+    // round-trip so the renderer actually sees them.
+    #[test]
+    fn per_run_color_and_font_persist() {
+        use acadrust::entities::mtext_format::{MTextColor, MTextFont};
+        let mut p = SpanProperties::default();
+        p.color = Some(MTextColor::Index(1)); // red
+        p.font = Some(MTextFont::with_flags("Arial".to_string(), true, false)); // bold Arial
+        let cells = vec![Cell::Char('X', p)];
+        let s = cells_to_doc(&ParagraphProperties::default(), &cells).to_mtext_string();
+        let back = parse_mtext(&s, true);
+        let sp = &back.paragraphs[0].spans[0];
+        assert_eq!(sp.properties.color, Some(MTextColor::Index(1)));
+        let f = sp.properties.font.as_ref().unwrap();
+        assert_eq!(f.name, "Arial");
+        assert!(f.bold);
+    }
+
+    // The global toolbar defaults fold onto the text as real span properties
+    // (replacing the old hand-built `\f;\C;…` prefix), and survive serialization.
+    #[test]
+    fn global_defaults_fold_into_spans() {
+        let mut ed = MTextEditorState::new(Vec3::ZERO, "hello world", 2.5, None);
+        ed.font = "Arial".to_string();
+        ed.color_aci = 1; // red
+        ed.oblique = "15".to_string();
+        ed.width = "2".to_string();
+        let doc = parse_mtext(&ed.folded_value(), true);
+        assert_eq!(doc.to_plain_text(), "hello world");
+        let p = &doc.paragraphs[0].spans[0].properties;
+        assert_eq!(p.font.as_ref().map(|f| f.name.as_str()), Some("Arial"));
+        assert_eq!(p.color, Some(MTextColor::Index(1)));
+        assert_eq!(p.oblique_angle, Some(15.0));
+        assert_eq!(p.width_factor, Some(2.0));
     }
 
     #[test]
@@ -965,9 +1263,9 @@ mod cell_tests {
         let cells = vec![
             Cell::Char('a', SpanProperties::default()),
             Cell::Char('b', SpanProperties::default()),
-            Cell::Break,
+            Cell::Break(ParagraphProperties::default()),
         ];
-        let raw = cells_to_doc(&cells).to_mtext_string();
+        let raw = cells_to_doc(&ParagraphProperties::default(), &cells).to_mtext_string();
         // rebuild() re-parses + restores the trailing empty paragraph.
         let mut d = parse_mtext(&raw, true);
         if content_has_trailing_break(&raw) {

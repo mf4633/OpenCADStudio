@@ -123,6 +123,7 @@ fn to_truck(t: &Text, document: &acadrust::CadDocument) -> TruckEntity {
                 width_factor: p.width_factor,
                 oblique: p.oblique_angle,
                 tracking: 1.0,
+                bold: false,
             }),
         }]),
         snap_pts: vec![(snap_pt, SnapHint::Insertion)],

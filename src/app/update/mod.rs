@@ -1865,11 +1865,14 @@ impl OpenCADStudio {
                 self.rebuild_mtext_preview();
                 Task::none()
             }
-            Message::MTextColor(aci) => {
+            Message::MTextColorChanged(color) => {
+                self.mtext_apply_color(color);
+                Task::none()
+            }
+            Message::MTextColorPickerToggle => {
                 if let Some(ed) = self.mtext_editor.as_mut() {
-                    ed.color_aci = aci;
+                    ed.color_picker_open = !ed.color_picker_open;
                 }
-                self.rebuild_mtext_preview();
                 Task::none()
             }
             Message::MTextStyle(s) => {
@@ -1880,14 +1883,7 @@ impl OpenCADStudio {
                 Task::none()
             }
             Message::MTextFont(f) => {
-                if let Some(ed) = self.mtext_editor.as_mut() {
-                    ed.font = if f == "[Style default]" {
-                        String::new()
-                    } else {
-                        f
-                    };
-                }
-                self.rebuild_mtext_preview();
+                self.mtext_apply_font(&f);
                 Task::none()
             }
             Message::MTextOblique(s) => {
@@ -1945,11 +1941,32 @@ impl OpenCADStudio {
                 }
             }
             Message::MTextSelStart(off) => {
-                if let Some(ed) = self.mtext_editor.as_mut() {
-                    ed.sel_anchor = off;
-                    ed.sel = Some((off, off));
-                    ed.caret = off;
-                    ed.caret_blink_on = true;
+                // Count quick same-spot clicks: 1 = place caret, 2 = select the
+                // word, 3 = select all.
+                let now = Instant::now();
+                let count = match self.mtext_click_time {
+                    Some(t)
+                        if now.duration_since(t).as_millis() < 400
+                            && off.abs_diff(self.mtext_click_off) <= 1 =>
+                    {
+                        (self.mtext_click_count + 1).min(3)
+                    }
+                    _ => 1,
+                };
+                self.mtext_click_time = Some(now);
+                self.mtext_click_off = off;
+                self.mtext_click_count = count;
+                match count {
+                    2 => self.mtext_select_word(off),
+                    3 => self.mtext_select_all(),
+                    _ => {
+                        if let Some(ed) = self.mtext_editor.as_mut() {
+                            ed.sel_anchor = off;
+                            ed.sel = Some((off, off));
+                            ed.caret = off;
+                            ed.caret_blink_on = true;
+                        }
+                    }
                 }
                 Task::none()
             }
@@ -1997,7 +2014,11 @@ impl OpenCADStudio {
 
             Message::SelectAllShortcut => {
                 let i = self.active_tab;
-                if self.active_modal == Some(super::ModalKind::Layers) {
+                if self.mtext_editor.as_ref().is_some_and(|e| e.show_preview) {
+                    // Ctrl+A in the MText editor selects all of its text.
+                    self.mtext_select_all();
+                    Task::none()
+                } else if self.active_modal == Some(super::ModalKind::Layers) {
                     // Select every row in the Layer Manager (#236).
                     let n = self.tabs[i].layers.layers.len();
                     self.tabs[i].layers.selected_multi = (0..n).collect();

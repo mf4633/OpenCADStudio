@@ -38,6 +38,8 @@ pub struct GlyphRun {
     pub width_factor: f32,
     pub oblique: f32,
     pub tracking: f32,
+    /// Bold run — the SDF glyph bakes with a wider pen (thicker strokes).
+    pub bold: bool,
 }
 
 #[allow(dead_code)]

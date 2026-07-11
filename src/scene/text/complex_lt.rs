@@ -189,6 +189,7 @@ pub fn apply_along(
                             0.0,
                             0.0,
                             style,
+                            false,
                             &resolved,
                         );
                         crate::scene::pipeline::text_gpu::push_glyph_vertices(

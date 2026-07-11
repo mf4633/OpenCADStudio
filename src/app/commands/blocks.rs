@@ -54,6 +54,18 @@ impl OpenCADStudio {
             }
 
             "COPYCLIP" => {
+                // MText editor open: Ctrl+C copies its selected text, not the
+                // drawing's entities.
+                if self.mtext_editor.as_ref().is_some_and(|e| e.show_preview) {
+                    return match self.mtext_selected_text() {
+                        Some(text) => {
+                            self.command_line
+                                .push_info("Copied selected text to clipboard.");
+                            Some(iced::clipboard::write(text))
+                        }
+                        None => Some(Task::none()),
+                    };
+                }
                 let handles: Vec<_> = self.tabs[i]
                     .scene
                     .selected_entities()

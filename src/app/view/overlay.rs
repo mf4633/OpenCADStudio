@@ -95,17 +95,6 @@ const MTEXT_FONTS: [&str; 10] = [
     "RomanC",
 ];
 /// (label, ACI). 256 = ByLayer.
-const MTEXT_COLORS: [(&str, u16); 8] = [
-    ("ByLayer", 256),
-    ("Red", 1),
-    ("Yellow", 2),
-    ("Green", 3),
-    ("Cyan", 4),
-    ("Blue", 5),
-    ("Magenta", 6),
-    ("White", 7),
-];
-
 /// Canvas program that renders the tessellated MText strokes inside the
 /// editor's own preview area (never on the drawing). Strokes lie in the
 /// world XY plane; the program fits + vertically flips them into the box.
@@ -113,7 +102,7 @@ const MTEXT_PREVIEW_PAD: f32 = 12.0;
 
 struct MTextPreview {
     /// Disconnected polylines as (x, y) world points + colour (NaN-split done).
-    segments: Vec<(Vec<(f32, f32)>, Color)>,
+    segments: Vec<(Vec<(f32, f32)>, Color, f32)>,
     /// Per-visible-character boxes (world frame) for click-to-select.
     boxes: Vec<crate::entities::text_support::GlyphBox>,
     /// Current selection as a visible-char range.
@@ -253,7 +242,7 @@ impl iced::widget::canvas::Program<Message> for MTextPreview {
                 }
             }
         }
-        for (seg, col) in &self.segments {
+        for (seg, col, width) in &self.segments {
             if seg.len() < 2 {
                 continue;
             }
@@ -263,7 +252,7 @@ impl iced::widget::canvas::Program<Message> for MTextPreview {
                     p.line_to(map(x, y));
                 }
             });
-            frame.stroke(&path, Stroke::default().with_color(*col).with_width(1.4));
+            frame.stroke(&path, Stroke::default().with_color(*col).with_width(*width));
         }
         // Caret — a vertical bar at the caret's glyph boundary, shown when the
         // selection is empty (a plain text cursor).
@@ -326,11 +315,12 @@ impl iced::widget::canvas::Program<Message> for MTextPreview {
 }
 
 /// Split every preview WireModel into finite (x, y) polyline runs, each
-/// carrying its wire's colour so inline `\C` / the colour dropdown shows.
+/// carrying its wire's colour (so inline `\C` / the colour dropdown shows) and a
+/// stroke width (bold runs carry a wider pen via `line_weight_px`).
 fn mtext_preview_segments(
     ed: &super::super::mtext_editor::MTextEditorState,
-) -> Vec<(Vec<(f32, f32)>, Color)> {
-    let mut out: Vec<(Vec<(f32, f32)>, Color)> = Vec::new();
+) -> Vec<(Vec<(f32, f32)>, Color, f32)> {
+    let mut out: Vec<(Vec<(f32, f32)>, Color, f32)> = Vec::new();
     for w in &ed.preview_wires {
         let col = Color {
             r: w.color[0],
@@ -338,16 +328,18 @@ fn mtext_preview_segments(
             b: w.color[2],
             a: 1.0,
         };
+        // Bold text wires bake a wider pen (line_weight_px ~2.4); draw them thick.
+        let width = if w.line_weight_px > 1.5 { 2.6 } else { 1.4 };
         let mut run: Vec<(f32, f32)> = Vec::new();
         for p in &w.points {
             if p[0].is_finite() && p[1].is_finite() {
                 run.push((p[0], p[1]));
             } else if !run.is_empty() {
-                out.push((std::mem::take(&mut run), col));
+                out.push((std::mem::take(&mut run), col, width));
             }
         }
         if !run.is_empty() {
-            out.push((run, col));
+            out.push((run, col, width));
         }
     }
     out
@@ -359,7 +351,7 @@ pub(super) fn mtext_editor_overlay<'a>(
     canvas_size: (f32, f32),
 ) -> Element<'a, Message> {
     use super::super::mtext_editor::{JustifyChoice, MTextFmt, ParaAlign};
-    use iced::widget::{canvas, svg, text_editor};
+    use iced::widget::{canvas, svg};
 
     const PANEL_BG: Color = Color {
         r: 0.16,
@@ -455,28 +447,20 @@ pub(super) fn mtext_editor_overlay<'a>(
     )
     .text_size(11)
     .width(iced::Length::Fixed(120.0));
-    let color_sel = MTEXT_COLORS
-        .iter()
-        .find(|(_, a)| *a == ed.color_aci)
-        .map(|(n, _)| n.to_string())
-        .unwrap_or_else(|| "ByLayer".to_string());
-    let color_pl = pick_list(
-        MTEXT_COLORS
-            .iter()
-            .map(|(n, _)| n.to_string())
-            .collect::<Vec<_>>(),
-        Some(color_sel),
-        |name: String| {
-            let aci = MTEXT_COLORS
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map(|(_, a)| *a)
-                .unwrap_or(256);
-            Message::MTextColor(aci)
+    // Same colour picker as the Properties panel (named swatches + "More…" full
+    // palette), applied to the selection or the whole text.
+    let color_pl = iced::widget::container(crate::ui::color_select::color_selector(
+        acadrust::types::Color::from_index(ed.color_aci as i16),
+        ed.color_picker_open,
+        crate::ui::color_select::ColorExtras {
+            by_layer: true,
+            by_block: false,
         },
-    )
-    .text_size(11)
-    .width(iced::Length::Fixed(96.0));
+        Message::MTextColorChanged,
+        Message::MTextColorPickerToggle,
+        Message::OpenColorWindow(crate::app::ColorPickTarget::MText),
+    ))
+    .width(iced::Length::Fixed(150.0));
 
     let row1 = row![
         style_pl,
@@ -578,62 +562,12 @@ pub(super) fn mtext_editor_overlay<'a>(
     .align_y(iced::Alignment::Center);
 
     // ── Segmented Edit | Preview toggle (between toolbar and body) ────────
-    let seg_btn =
-        move |label: &'static str, active: bool, on: Message| -> Element<'static, Message> {
-            button(text(label).size(12).color(if active {
-                Color::WHITE
-            } else {
-                Color {
-                    r: 0.80,
-                    g: 0.80,
-                    b: 0.80,
-                    a: 1.0,
-                }
-            }))
-            .on_press(on)
-            .padding([4, 14])
-            .style(move |_: &Theme, _| button::Style {
-                background: Some(Background::Color(if active {
-                    Color {
-                        r: 0.20,
-                        g: 0.42,
-                        b: 0.72,
-                        a: 1.0,
-                    }
-                } else {
-                    Color {
-                        r: 0.20,
-                        g: 0.20,
-                        b: 0.20,
-                        a: 1.0,
-                    }
-                })),
-                text_color: TEXT_COL,
-                border: Border {
-                    color: BORDER,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                shadow: iced::Shadow::default(),
-                snap: false,
-            })
-            .into()
-        };
-    let toggle = container(
-        row![
-            seg_btn("Edit", !ed.show_preview, Message::MTextShowPreview(false)),
-            seg_btn("Preview", ed.show_preview, Message::MTextShowPreview(true)),
-        ]
-        .spacing(0),
-    )
-    .padding([6, 0]);
-
-    // ── Body: toggles between raw code input and rendered preview ────────
+    // ── Body: the rendered preview (the editor is preview-only) ─────────
     const VIEW_H: f32 = 150.0;
-    let body: Element<'a, Message> = if ed.show_preview {
+    let body: Element<'a, Message> = {
         let segments = mtext_preview_segments(ed);
         let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-        for (seg, _) in &segments {
+        for (seg, _, _) in &segments {
             for &(x, y) in seg {
                 minx = minx.min(x);
                 miny = miny.min(y);
@@ -685,17 +619,9 @@ pub(super) fn mtext_editor_overlay<'a>(
             .padding(2)
             .width(Fill)
             .into()
-    } else {
-        text_editor(&ed.content)
-            .id(iced::widget::Id::new(MTEXT_TEXT_ID))
-            .on_action(Message::MTextEdit)
-            .height(iced::Length::Fixed(VIEW_H))
-            .padding(6)
-            .size(13)
-            .into()
     };
 
-    let panel = container(column![row1, row2, toggle, body].spacing(5))
+    let panel = container(column![row1, row2, body].spacing(5))
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(PANEL_BG)),
             border: Border {

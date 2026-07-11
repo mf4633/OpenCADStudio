@@ -275,6 +275,8 @@ pub struct RunState {
     pub underline: bool,
     pub overline: bool,
     pub strike: bool,
+    /// Bold run — rendered with a wider SDF pen (thicker strokes).
+    pub bold: bool,
 }
 
 impl Default for RunState {
@@ -290,6 +292,7 @@ impl Default for RunState {
             underline: false,
             overline: false,
             strike: false,
+            bold: false,
         }
     }
 }
@@ -435,6 +438,7 @@ pub fn adapt_mtext_paragraphs(
                     _ => 0,
                 },
                 font: p.font.as_ref().map(|f| font_stem(&f.name)),
+                bold: p.font.as_ref().map(|f| f.bold).unwrap_or(false),
                 color: color_of(p),
                 underline: p.stroke.underline(),
                 overline: p.stroke.overline(),
@@ -1108,6 +1112,7 @@ pub fn layout_mtext(opts: &MTextRenderOpts) -> MTextLayout {
                             width_factor: signed_wf,
                             oblique,
                             tracking,
+                            bold: atom.state.bold,
                         }),
                     });
                     if opts.want_glyph_boxes {

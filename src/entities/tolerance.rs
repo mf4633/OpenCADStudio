@@ -289,6 +289,7 @@ impl TruckConvertible for Tolerance {
                     width_factor: 1.0,
                     oblique: 0.0,
                     tracking: 0.0,
+                    bold: false,
                 }),
             });
         }
