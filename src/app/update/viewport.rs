@@ -3050,7 +3050,7 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                                 }
                             }
                         }
-                        self.tabs[i].scene.current_layout = new_name.clone();
+                        self.tabs[i].scene.set_current_layout(new_name.clone());
                         // Safety net — `add_layout` already creates the overall
                         // sheet viewport; this covers any path that doesn't.
                         self.tabs[i].scene.ensure_sheet_viewport(&new_name);
@@ -3085,7 +3085,7 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                             self.push_undo_snapshot(i, "LAYOUT RENAME");
                             self.tabs[i].scene.rename_layout(&orig, &new_name);
                             if self.tabs[i].scene.current_layout == orig {
-                                self.tabs[i].scene.current_layout = new_name.clone();
+                                self.tabs[i].scene.set_current_layout(new_name.clone());
                             }
                             self.tabs[i].dirty = true;
                             self.command_line

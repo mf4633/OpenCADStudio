@@ -1333,9 +1333,20 @@ impl Scene {
     pub fn set_current_layout(&mut self, name: String) {
         if self.current_layout != name {
             self.current_layout = name;
+            self.sync_active_space_to_document();
             self.recolor_meshes();
             self.bump_geometry();
         }
+    }
+
+    /// Mirror the active space (Model tile-mode vs a paper layout) into the
+    /// document's persisted settings so it round-trips on save: the `$TILEMODE`
+    /// header (`show_model_space`) and the `CTAB` current-tab variable. The
+    /// reader restores it via [`current_layout`] on open. Called whenever the
+    /// active layout changes; the file otherwise always reopened in Model.
+    pub fn sync_active_space_to_document(&mut self) {
+        self.document.header.show_model_space = self.current_layout == "Model";
+        crate::io::set_saved_active_layout(&mut self.document, &self.current_layout);
     }
 
     /// Returns true if this viewport should display model-space content

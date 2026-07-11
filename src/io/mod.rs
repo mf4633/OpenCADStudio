@@ -530,6 +530,20 @@ fn set_vardict_value(doc: &mut CadDocument, name: &str, value: &str) {
     }
 }
 
+/// The layout tab that was active when the drawing was saved — the `CTAB`
+/// system variable (stored in the variable dictionary as a `DICTIONARYVAR`).
+/// `None` when the file recorded no current tab.
+pub fn saved_active_layout(doc: &CadDocument) -> Option<String> {
+    vardict_value(doc, "CTAB").filter(|s| !s.is_empty())
+}
+
+/// Record `name` as the active layout tab (`CTAB`) so the next save round-trips
+/// which space was open. No-op when the document has no `CTAB` entry yet; the
+/// `$TILEMODE` header (model vs paper) remains the guaranteed fallback.
+pub fn set_saved_active_layout(doc: &mut CadDocument, name: &str) {
+    set_vardict_value(doc, "CTAB", name);
+}
+
 /// Materialise the current-style choices into their format-specific storage
 /// before saving, treating the current-style *names* as the single source of
 /// truth:

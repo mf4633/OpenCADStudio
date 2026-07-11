@@ -2569,7 +2569,7 @@ impl OpenCADStudio {
                     self.push_undo_snapshot(i, "LAYOUT RENAME");
                     self.tabs[i].scene.rename_layout(&old_name, &new_name);
                     if self.tabs[i].scene.current_layout == old_name {
-                        self.tabs[i].scene.current_layout = new_name.clone();
+                        self.tabs[i].scene.set_current_layout(new_name.clone());
                     }
                     self.layout_manager_selected = new_name.clone();
                     self.tabs[i].dirty = true;
@@ -2610,8 +2610,7 @@ impl OpenCADStudio {
                     self.tabs[i].dirty = true;
                     // Switch to Model if active layout was deleted.
                     if self.tabs[i].scene.current_layout == name {
-                        self.tabs[i].scene.current_layout = "Model".to_string();
-                        self.tabs[i].scene.bump_geometry();
+                        self.tabs[i].scene.set_current_layout("Model".to_string());
                     }
                     self.layout_manager_selected = "Model".to_string();
                     self.layout_manager_rename_buf = String::new();
@@ -2658,8 +2657,7 @@ impl OpenCADStudio {
             Message::LayoutManagerSetCurrent => {
                 let i = self.active_tab;
                 let name = self.layout_manager_selected.clone();
-                self.tabs[i].scene.current_layout = name.clone();
-                self.tabs[i].scene.bump_geometry();
+                self.tabs[i].scene.set_current_layout(name.clone());
                 self.command_line
                     .push_output(&format!("Switched to layout '{name}'."));
                 Task::none()

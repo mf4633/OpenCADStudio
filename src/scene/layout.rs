@@ -89,6 +89,7 @@ impl Scene {
         // If the deleted layout was active, fall back to Model space.
         if self.current_layout == name {
             self.current_layout = "Model".to_string();
+            self.sync_active_space_to_document();
         }
 
         self.bump_geometry();

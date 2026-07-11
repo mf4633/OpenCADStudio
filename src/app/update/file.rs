@@ -489,7 +489,28 @@ pub(super) fn on_open_file(&mut self) -> Task<Message> {
                 }
                 self.tabs[i].scene.selected = rustc_hash::FxHashSet::default();
                 self.tabs[i].scene.preview_wires = vec![];
-                self.tabs[i].scene.current_layout = "Model".to_string();
+                // Reopen in whichever space the file was saved in — the CTAB
+                // tab name when recorded, else the $TILEMODE model/paper flag —
+                // instead of always landing in Model.
+                {
+                    let names = self.tabs[i].scene.layout_names();
+                    let saved = crate::io::saved_active_layout(&self.tabs[i].scene.document)
+                        .and_then(|n| {
+                            names.iter().find(|x| x.eq_ignore_ascii_case(&n)).cloned()
+                        });
+                    self.tabs[i].scene.current_layout = match saved {
+                        Some(n) => n,
+                        None if self.tabs[i].scene.document.header.show_model_space => {
+                            "Model".to_string()
+                        }
+                        // Paper was active but no CTAB — fall back to the first
+                        // paper layout (names[0] is always "Model").
+                        None => names
+                            .into_iter()
+                            .nth(1)
+                            .unwrap_or_else(|| "Model".to_string()),
+                    };
+                }
                 // Rebuild the Isolate/Hide set from the entities the file itself
                 // marks invisible (DXF code 60), so hidden objects stay hidden on
                 // reopen and End Isolation can bring them back.
