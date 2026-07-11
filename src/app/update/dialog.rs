@@ -91,6 +91,17 @@ impl OpenCADStudio {
 
 
 pub(super) fn on_ribbon_tool_click(&mut self, tool_id: String, event: ModuleEvent) -> Task<Message> {
+                // On the Start page there is no drawing to act on — ribbon
+                // commands are inert. Point the user at New / Open instead of
+                // running a command into the empty welcome tab (#299). The
+                // quick-access New / Open / Save buttons use a separate path and
+                // stay available.
+                if self.tabs[self.active_tab].is_start {
+                    self.ribbon.close_dropdown();
+                    self.command_line
+                        .push_info("No drawing open — use New or Open first.");
+                    return Task::none();
+                }
                 // Dismiss any open dropdown / collapsed-panel flyout on tool use,
                 // and remember this tool as its panel's last-used one.
                 self.ribbon.close_dropdown();
