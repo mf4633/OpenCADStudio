@@ -481,6 +481,60 @@ impl OpenCADStudio {
                         _ => {}
                     }
 
+                    // Annotative Yes/No + a conditional "Annotative scale" row.
+                    // Read-only: annotative state comes from the entity's style
+                    // (or its own flag) and the assigned annotation-scale name(s)
+                    // are walked from the entity's extension dictionary — both
+                    // need the document, so they are resolved here.
+                    {
+                        let anno = match entity {
+                            acadrust::EntityType::Text(t) => {
+                                Some((text_style_annotative(doc, &t.style), "annotative"))
+                            }
+                            acadrust::EntityType::MText(t) => Some((
+                                t.is_annotative || text_style_annotative(doc, &t.style),
+                                "annotative",
+                            )),
+                            acadrust::EntityType::Leader(l) => {
+                                Some((dim_style_annotative(doc, &l.dimension_style), "annotative"))
+                            }
+                            acadrust::EntityType::MultiLeader(ml) => Some((
+                                ml.enable_annotation_scale
+                                    || mleader_style_annotative(doc, ml.style_handle),
+                                "enable_annotation_scale",
+                            )),
+                            _ => None,
+                        };
+                        if let Some((is_anno, anno_field)) = anno {
+                            // MLeader keeps its editable toggle; the read-only
+                            // text rows get an explicit Yes/No.
+                            if anno_field == "annotative" {
+                                set_row(
+                                    &mut sections,
+                                    "annotative",
+                                    if is_anno { "Yes" } else { "No" }.to_string(),
+                                );
+                            }
+                            if is_anno {
+                                let names = entity_scale_names(doc, entity.common());
+                                let display = if names.is_empty() {
+                                    doc.header.current_annotation_scale.clone()
+                                } else {
+                                    names.join(", ")
+                                };
+                                insert_row_after(
+                                    &mut sections,
+                                    anno_field,
+                                    crate::entities::common::ro_prop(
+                                        "Annotative scale",
+                                        "annotative_scale",
+                                        display,
+                                    ),
+                                );
+                            }
+                        }
+                    }
+
                     if !group_names.is_empty() {
                         let label = group_names.join(", ");
                         if let Some(general) = sections.first_mut() {
@@ -1187,6 +1241,107 @@ fn find_dim_style<'a>(
         s.name.eq_ignore_ascii_case(name)
             || (name.trim().is_empty() && s.name.eq_ignore_ascii_case("Standard"))
     })
+}
+
+/// Is the named text style annotative?
+fn text_style_annotative(doc: &acadrust::CadDocument, name: &str) -> bool {
+    doc.text_styles
+        .iter()
+        .find(|s| {
+            s.name.eq_ignore_ascii_case(name)
+                || (name.trim().is_empty() && s.name.eq_ignore_ascii_case("Standard"))
+        })
+        .map_or(false, |s| s.annotative)
+}
+
+/// Is the named dimension style annotative?
+fn dim_style_annotative(doc: &acadrust::CadDocument, name: &str) -> bool {
+    find_dim_style(doc, name).map_or(false, |s| s.annotative)
+}
+
+/// Is the multileader style (by handle) annotative?
+fn mleader_style_annotative(doc: &acadrust::CadDocument, handle: Option<acadrust::Handle>) -> bool {
+    let Some(h) = handle else {
+        return false;
+    };
+    doc.objects.iter().any(|(oh, o)| {
+        matches!(o, acadrust::objects::ObjectType::MultiLeaderStyle(s) if *oh == h && s.is_annotative)
+    })
+}
+
+/// Resolve a handle to a `Dictionary` object, if it is one.
+fn as_dict(
+    doc: &acadrust::CadDocument,
+    handle: acadrust::Handle,
+) -> Option<&acadrust::objects::Dictionary> {
+    match doc.objects.get(&handle) {
+        Some(acadrust::objects::ObjectType::Dictionary(d)) => Some(d),
+        _ => None,
+    }
+}
+
+/// Case-insensitive dictionary entry lookup by key.
+fn dict_get(dict: &acadrust::objects::Dictionary, key: &str) -> Option<acadrust::Handle> {
+    dict.entries
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(key))
+        .map(|(_, h)| *h)
+}
+
+/// The AcDbScale object's ratio name (e.g. "1:50"), by handle.
+fn scale_name(doc: &acadrust::CadDocument, handle: acadrust::Handle) -> Option<String> {
+    match doc.objects.get(&handle) {
+        Some(acadrust::objects::ObjectType::Scale(s)) => Some(s.name.clone()),
+        _ => None,
+    }
+}
+
+/// The annotation-scale name(s) assigned to an entity, walked from its extension
+/// dictionary → AcDbContextDataManager → ACDB_ANNOTATIONSCALES.
+///
+/// The collection's entry keys are internal anonymous names (e.g. "*A1"); the
+/// real scale is each leaf's group-340 SCALE handle, which acadrust surfaces via
+/// `doc.context_scales` (context-leaf handle → AcDbScale handle). We resolve each
+/// leaf handle to its scale, then the scale to its ratio name. Empty when the
+/// entity has no per-scale context (it then uses the drawing's current scale).
+fn entity_scale_names(
+    doc: &acadrust::CadDocument,
+    common: &acadrust::entities::EntityCommon,
+) -> Vec<String> {
+    let Some(xd) = common.xdictionary_handle else {
+        return Vec::new();
+    };
+    let Some(coll) = as_dict(doc, xd)
+        .and_then(|d| dict_get(d, "AcDbContextDataManager"))
+        .and_then(|h| as_dict(doc, h))
+        .and_then(|m| dict_get(m, "ACDB_ANNOTATIONSCALES"))
+        .and_then(|h| as_dict(doc, h))
+    else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = Vec::new();
+    for (_, leaf) in &coll.entries {
+        if let Some(name) = doc.context_scales.get(leaf).and_then(|sh| scale_name(doc, *sh)) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+/// Insert `row` immediately after the first property whose field matches.
+fn insert_row_after(
+    sections: &mut [crate::scene::model::object::PropSection],
+    field: &str,
+    row: crate::scene::model::object::Property,
+) {
+    for section in sections.iter_mut() {
+        if let Some(idx) = section.props.iter().position(|p| p.field == field) {
+            section.props.insert(idx + 1, row);
+            return;
+        }
+    }
 }
 
 /// Vertical text placement (DIMTAD) label.
