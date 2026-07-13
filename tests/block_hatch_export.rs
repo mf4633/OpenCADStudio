@@ -266,3 +266,57 @@ fn app_created_hatch_roundtrips_catalog_spacing() {
          — build_dxf_pattern must store the world-frame offset, not the local step"
     );
 }
+
+// Regression: a picked "big minus small" hatch must serialize the outer ring
+// with the external / outermost flags and each hole ring WITHOUT them. If every
+// NaN-separated ring were flagged external, DXF/DWG consumers would treat the
+// inner loop as another outer island instead of a hole.
+#[test]
+fn nested_hatch_serializes_only_outer_as_external() {
+    use std::sync::Arc;
+
+    use OpenCADStudio::scene::model::hatch_model::HatchModel;
+
+    let outer: Vec<[f64; 2]> = vec![[-10.0, -10.0], [10.0, -10.0], [10.0, 10.0], [-10.0, 10.0]];
+    let hole: Vec<[f64; 2]> = vec![[-5.0, -5.0], [5.0, -5.0], [5.0, 5.0], [-5.0, 5.0]];
+
+    // Outer boundary + hole, NaN-separated, exactly as the HATCH command packs
+    // them in `boundary_wcs`.
+    let mut wcs: Vec<[f64; 2]> = outer.clone();
+    wcs.push([f64::NAN, f64::NAN]);
+    wcs.extend(hole.iter().copied());
+
+    let boundary_f32: Vec<[f32; 2]> = wcs.iter().map(|&[x, y]| [x as f32, y as f32]).collect();
+
+    let model = HatchModel {
+        world_origin: [0.0, 0.0],
+        boundary: Arc::new(boundary_f32),
+        boundary_wcs: Some(Arc::new(wcs)),
+        pattern: HatchPattern::Solid,
+        name: "SOLID".into(),
+        color: [0.45, 0.45, 0.45, 0.60],
+        angle_offset: 0.0,
+        scale: 1.0,
+        vp_scissor: None,
+        draw_depth: 0.0,
+    };
+
+    let mut scene = Scene::new();
+    scene.add_hatch(model);
+
+    let dxf = scene
+        .document
+        .entities()
+        .find_map(|e| if let EntityType::Hatch(h) = e { Some(h) } else { None })
+        .expect("nested hatch written to document");
+
+    assert_eq!(dxf.paths.len(), 2, "outer boundary + one hole path");
+
+    let ex = BoundaryPathFlags::EXTERNAL.bits();
+    let out = BoundaryPathFlags::OUTERMOST.bits();
+
+    assert!(dxf.paths[0].flags.bits() & ex != 0, "outer path must be flagged external");
+    assert!(dxf.paths[0].flags.bits() & out != 0, "outer path must be flagged outermost");
+    assert!(dxf.paths[1].flags.bits() & ex == 0, "hole path must NOT be flagged external");
+    assert!(dxf.paths[1].flags.bits() & out == 0, "hole path must NOT be flagged outermost");
+}

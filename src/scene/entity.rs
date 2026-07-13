@@ -1655,13 +1655,26 @@ impl Scene {
         // the outer boundary from its holes with NaN sentinels in
         // `boundary_wcs`; split on those so nested hatches (e.g. a small
         // rectangle inside a big one) persist with real holes instead of a
-        // single self-intersecting polyline.
+        // single self-intersecting polyline. Only the FIRST ring carries the
+        // external / outermost flags — every later ring is a hole and must not
+        // be flagged external, or DXF/DWG consumers treat the inner loop as
+        // another outer island rather than a hole.
         if let Some(wcs) = &model.boundary_wcs {
             let mut ring: Vec<Vector2> = Vec::new();
-            let mut push_ring = |r: &mut Vec<Vector2>| {
+            let mut first = true;
+            let mut push_ring = |r: &mut Vec<Vector2>, is_outer: bool| {
                 if !r.is_empty() {
                     let edge = PolylineEdge::new(std::mem::take(r), true);
-                    let mut path = BoundaryPath::external();
+                    let mut path = if is_outer {
+                        let mut p = BoundaryPath::external();
+                        p.flags = acadrust::entities::hatch::BoundaryPathFlags::from_bits(
+                            p.flags.bits()
+                                | acadrust::entities::hatch::BoundaryPathFlags::OUTERMOST.bits(),
+                        );
+                        p
+                    } else {
+                        BoundaryPath::new()
+                    };
                     path.add_edge(BoundaryEdge::Polyline(edge));
                     dxf.paths.push(path);
                 }
@@ -1670,10 +1683,12 @@ impl Scene {
                 if x.is_finite() && y.is_finite() {
                     ring.push(Vector2::new(x, y));
                 } else {
-                    push_ring(&mut ring);
+                    let is_outer = first;
+                    first = false;
+                    push_ring(&mut ring, is_outer);
                 }
             }
-            push_ring(&mut ring);
+            push_ring(&mut ring, first);
         }
         if dxf.paths.is_empty() {
             let wx = model.world_origin[0];
