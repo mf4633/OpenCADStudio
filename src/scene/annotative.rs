@@ -18,6 +18,60 @@ pub fn as_dict(doc: &CadDocument, handle: Handle) -> Option<&Dictionary> {
     }
 }
 
+/// Set the per-object annotative flag on the entity types that carry one
+/// (MTEXT, MULTILEADER). Turning it off also strips the per-object annotation
+/// context and legacy markers via [`clear_annotation_context`] so the object
+/// stops resolving annotative; turning it on leaves the base geometry as the
+/// single (implicit, current-scale) representation. Other entity types get
+/// their annotative state from a style and are not toggled here.
+pub fn set_entity_annotative(doc: &mut CadDocument, handle: Handle, want: bool) {
+    if let Some(e) = doc.get_entity_mut(handle) {
+        match e {
+            EntityType::MText(t) => t.is_annotative = want,
+            EntityType::MultiLeader(m) => m.enable_annotation_scale = want,
+            _ => {}
+        }
+    }
+    if !want {
+        clear_annotation_context(doc, handle);
+    }
+}
+
+/// Remove an entity's per-object annotation context — the extension-dictionary
+/// `AcDbContextDataManager` → `ACDB_ANNOTATIONSCALES` → per-scale leaf subtree —
+/// and the legacy annotative XDATA markers, so [`is_annotative`] no longer fires
+/// on it. The shared `SCALE` objects in `ACAD_SCALELIST` are document-level and
+/// left intact.
+pub fn clear_annotation_context(doc: &mut CadDocument, handle: Handle) {
+    if let Some(xdict_h) = doc.get_entity(handle).and_then(|e| e.common().xdictionary_handle) {
+        // Collect the manager subtree (manager dict, its scales dict, the leaves)
+        // before mutating, then drop them.
+        let mut remove = Vec::new();
+        if let Some(mgr_h) = as_dict(doc, xdict_h).and_then(|d| d.get("AcDbContextDataManager")) {
+            remove.push(mgr_h);
+            if let Some(scales_h) =
+                as_dict(doc, mgr_h).and_then(|d| d.get("ACDB_ANNOTATIONSCALES"))
+            {
+                remove.push(scales_h);
+                if let Some(scales) = as_dict(doc, scales_h) {
+                    for (_, leaf) in &scales.entries {
+                        remove.push(*leaf);
+                    }
+                }
+            }
+        }
+        if let Some(ObjectType::Dictionary(xd)) = doc.objects.get_mut(&xdict_h) {
+            xd.entries.retain(|(k, _)| k != "AcDbContextDataManager");
+        }
+        for h in remove {
+            doc.objects.remove(&h);
+        }
+    }
+    // Strip the legacy annotative XDATA markers the detection also honours.
+    crate::scene::view::dispatch::set_entity_xdata(doc, handle, "AcAnnoPO", None);
+    crate::scene::view::dispatch::set_entity_xdata(doc, handle, "AcAnnotativeData", None);
+}
+
 /// Does a style name resolve to `name` (or to "Standard" when `name` is blank)?
 fn name_matches(style_name: &str, name: &str) -> bool {
     style_name.eq_ignore_ascii_case(name)

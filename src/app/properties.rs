@@ -680,14 +680,26 @@ impl OpenCADStudio {
                                     ),
                                 );
                             }
-                            // The read-only text rows get an explicit Yes/No; MLeader
-                            // keeps its editable toggle.
+                            // MTEXT carries a per-object annotative flag, so its
+                            // row is an editable toggle (like MLeader's); the
+                            // style-derived types stay read-only Yes/No.
                             if anno_field == "annotative" {
-                                set_row(
-                                    &mut sections,
-                                    "annotative",
-                                    if is_anno { "Yes" } else { "No" }.to_string(),
-                                );
+                                if let acadrust::EntityType::MText(t) = entity {
+                                    set_row_value(
+                                        &mut sections,
+                                        "annotative",
+                                        crate::scene::model::object::PropValue::BoolToggle {
+                                            field: "is_annotative",
+                                            value: t.is_annotative,
+                                        },
+                                    );
+                                } else {
+                                    set_row(
+                                        &mut sections,
+                                        "annotative",
+                                        if is_anno { "Yes" } else { "No" }.to_string(),
+                                    );
+                                }
                             }
                             if is_anno {
                                 // The applied annotation scale follows the current

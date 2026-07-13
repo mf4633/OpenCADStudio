@@ -2296,14 +2296,39 @@ impl OpenCADStudio {
                 if !handles.is_empty() {
                     self.push_undo_snapshot(i, "CHPROP");
                     for &handle in &handles {
-                        if let Some(entity) = self.tabs[i].scene.document.get_entity_mut(handle) {
-                            match field {
-                                "invisible" => {
-                                    crate::scene::view::dispatch::toggle_invisible(entity)
+                        match field {
+                            // Per-object annotative flag (MTEXT / MULTILEADER): a
+                            // doc-aware toggle so turning it off also removes the
+                            // per-object annotation context, not just the flag.
+                            "is_annotative" | "enable_annotation_scale" => {
+                                let cur = match self.tabs[i].scene.document.get_entity(handle) {
+                                    Some(acadrust::EntityType::MText(t)) => t.is_annotative,
+                                    Some(acadrust::EntityType::MultiLeader(m)) => {
+                                        m.enable_annotation_scale
+                                    }
+                                    _ => continue,
+                                };
+                                crate::scene::annotative::set_entity_annotative(
+                                    &mut self.tabs[i].scene.document,
+                                    handle,
+                                    !cur,
+                                );
+                            }
+                            "invisible" => {
+                                if let Some(entity) =
+                                    self.tabs[i].scene.document.get_entity_mut(handle)
+                                {
+                                    crate::scene::view::dispatch::toggle_invisible(entity);
                                 }
-                                _ => crate::scene::view::dispatch::apply_geom_prop(
-                                    entity, field, "toggle",
-                                ),
+                            }
+                            _ => {
+                                if let Some(entity) =
+                                    self.tabs[i].scene.document.get_entity_mut(handle)
+                                {
+                                    crate::scene::view::dispatch::apply_geom_prop(
+                                        entity, field, "toggle",
+                                    );
+                                }
                             }
                         }
                     }
