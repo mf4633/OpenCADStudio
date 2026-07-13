@@ -669,6 +669,7 @@ impl OpenCADStudio {
                         let anno: Option<(&str, Option<&str>)> = match entity {
                             acadrust::EntityType::Text(_)
                             | acadrust::EntityType::MText(_)
+                            | acadrust::EntityType::Insert(_)
                             | acadrust::EntityType::Leader(_) => Some(("annotative", None)),
                             acadrust::EntityType::MultiLeader(_) => {
                                 Some(("enable_annotation_scale", None))
@@ -696,25 +697,35 @@ impl OpenCADStudio {
                                     ),
                                 );
                             }
-                            // MTEXT carries a per-object annotative flag, so its
-                            // row is an editable toggle (like MLeader's); the
-                            // style-derived types stay read-only Yes/No.
+                            // Objects that carry a per-object annotation context
+                            // (MTEXT via its native flag, single-line TEXT via the
+                            // context alone) get an editable toggle: turning it on
+                            // synthesizes a real per-scale representation. The
+                            // remaining types are style-driven and stay read-only.
                             if anno_field == "annotative" {
-                                if let acadrust::EntityType::MText(t) = entity {
-                                    set_row_value(
+                                match entity {
+                                    acadrust::EntityType::MText(t) => set_row_value(
                                         &mut sections,
                                         "annotative",
                                         crate::scene::model::object::PropValue::BoolToggle {
                                             field: "is_annotative",
                                             value: t.is_annotative,
                                         },
-                                    );
-                                } else {
-                                    set_row(
+                                    ),
+                                    acadrust::EntityType::Text(_)
+                                    | acadrust::EntityType::Insert(_) => set_row_value(
+                                        &mut sections,
+                                        "annotative",
+                                        crate::scene::model::object::PropValue::BoolToggle {
+                                            field: "annotative_ctx",
+                                            value: is_anno,
+                                        },
+                                    ),
+                                    _ => set_row(
                                         &mut sections,
                                         "annotative",
                                         if is_anno { "Yes" } else { "No" }.to_string(),
-                                    );
+                                    ),
                                 }
                             }
                             if is_anno {

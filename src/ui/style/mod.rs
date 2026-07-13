@@ -7,4 +7,5 @@ pub mod tablestyle;
 pub mod point_style;
 pub mod style_list;
 pub mod scale_manager;
+pub mod anno_object_scale;
 pub mod style_manager;

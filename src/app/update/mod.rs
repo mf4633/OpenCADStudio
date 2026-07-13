@@ -1681,6 +1681,57 @@ impl OpenCADStudio {
                 self.active_modal = Some(crate::app::ModalKind::ScaleManager);
                 Task::none()
             }
+            Message::AnnoObjectScaleOpen => {
+                // The dialog edits a single object's per-scale memberships.
+                let i = self.active_tab;
+                let handles = self.property_target_handles(i);
+                if handles.len() == 1 {
+                    // Only object types that carry a per-object context.
+                    let ok = matches!(
+                        self.tabs[i].scene.document.get_entity(handles[0]),
+                        Some(
+                            acadrust::EntityType::Text(_)
+                                | acadrust::EntityType::MText(_)
+                                | acadrust::EntityType::Insert(_)
+                        )
+                    );
+                    if ok {
+                        self.anno_object_scale_target = Some(handles[0]);
+                        self.active_modal = Some(crate::app::ModalKind::AnnoObjectScale);
+                    } else {
+                        self.command_line.push_info(
+                            "OBJECTSCALE applies to a single Text, MText or block reference.",
+                        );
+                    }
+                } else {
+                    self.command_line
+                        .push_info("Select one object first, then run OBJECTSCALE.");
+                }
+                Task::none()
+            }
+            Message::AnnoObjectScaleToggle(name) => {
+                let i = self.active_tab;
+                if let Some(entity) = self.anno_object_scale_target {
+                    if let Some(sh) = self.tabs[i].scene.scale_handle_ensuring(&name) {
+                        self.push_undo_snapshot(i, "OBJECTSCALE");
+                        let doc = &mut self.tabs[i].scene.document;
+                        let is_member = crate::scene::annotative::object_scale_memberships(doc, entity)
+                            .iter()
+                            .any(|(_, h)| *h == sh);
+                        if is_member {
+                            crate::scene::annotative::remove_annotation_context_for_scale(
+                                doc, entity, sh,
+                            );
+                        } else {
+                            crate::scene::annotative::create_annotation_context(doc, entity, sh);
+                        }
+                        self.tabs[i].dirty = true;
+                        self.invalidate_property_targets(i, &[entity]);
+                        self.refresh_properties();
+                    }
+                }
+                Task::none()
+            }
             Message::ScaleManagerSelect(name) => {
                 // Stage the current editor edits before switching so they aren't
                 // lost, then load the newly-selected scale.
@@ -2472,22 +2523,45 @@ impl OpenCADStudio {
                     self.push_undo_snapshot(i, "CHPROP");
                     for &handle in &handles {
                         match field {
-                            // Per-object annotative flag (MTEXT / MULTILEADER): a
-                            // doc-aware toggle so turning it off also removes the
-                            // per-object annotation context, not just the flag.
-                            "is_annotative" | "enable_annotation_scale" => {
-                                let cur = match self.tabs[i].scene.document.get_entity(handle) {
+                            // Per-object annotative toggle: MTEXT/MULTILEADER carry
+                            // a native flag; single-line TEXT is annotative purely
+                            // by the presence of a per-object context. A doc-aware
+                            // toggle so turning it on synthesizes a real per-scale
+                            // representation and turning it off removes it (not just
+                            // the flag).
+                            "is_annotative" | "enable_annotation_scale" | "annotative_ctx" => {
+                                let doc = &self.tabs[i].scene.document;
+                                let cur = match doc.get_entity(handle) {
                                     Some(acadrust::EntityType::MText(t)) => t.is_annotative,
                                     Some(acadrust::EntityType::MultiLeader(m)) => {
                                         m.enable_annotation_scale
                                     }
-                                    _ => continue,
+                                    // TEXT (and any other context-only type): its
+                                    // annotative state is whether a context exists.
+                                    Some(e) => crate::scene::annotative::is_annotative(doc, e),
+                                    None => continue,
                                 };
                                 crate::scene::annotative::set_entity_annotative(
                                     &mut self.tabs[i].scene.document,
                                     handle,
                                     !cur,
                                 );
+                                // Turning it on also gives the object a real
+                                // per-scale representation at the current
+                                // annotation scale (not just the native flag),
+                                // so it interoperates as a genuine annotative
+                                // object. Off is handled inside set_entity_*.
+                                if !cur {
+                                    if let Some(sh) =
+                                        self.tabs[i].scene.current_annotation_scale_handle()
+                                    {
+                                        crate::scene::annotative::create_annotation_context(
+                                            &mut self.tabs[i].scene.document,
+                                            handle,
+                                            sh,
+                                        );
+                                    }
+                                }
                             }
                             "invisible" => {
                                 if let Some(entity) =

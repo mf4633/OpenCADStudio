@@ -95,6 +95,52 @@ impl OpenCADStudio {
                     360,
                 )
             }
+            super::super::ModalKind::AnnoObjectScale => {
+                let tab = &self.tabs[self.active_tab];
+                let entity = self.anno_object_scale_target;
+                // Which scales the object currently has a representation for.
+                let members: Vec<acadrust::types::Handle> = entity
+                    .map(|h| {
+                        crate::scene::annotative::object_scale_memberships(
+                            &tab.scene.document,
+                            h,
+                        )
+                        .into_iter()
+                        .map(|(_, sh)| sh)
+                        .collect()
+                    })
+                    .unwrap_or_default();
+                let label = entity
+                    .and_then(|h| tab.scene.document.get_entity(h))
+                    .map(|e| match e {
+                        acadrust::EntityType::Text(_) => "TEXT",
+                        acadrust::EntityType::MText(_) => "MTEXT",
+                        acadrust::EntityType::Insert(_) => "BLOCK",
+                        acadrust::EntityType::MultiLeader(_) => "MULTILEADER",
+                        _ => "OBJECT",
+                    })
+                    .unwrap_or("—");
+                let scales: Vec<(String, String, bool)> = tab
+                    .scene
+                    .scale_list()
+                    .into_iter()
+                    .map(|(name, _, _)| {
+                        let sh = tab.scene.scale_object_handle(&name);
+                        let ratio = tab
+                            .scene
+                            .scale_paper_drawing(&name)
+                            .map(|(p, d)| format!("{p}:{d}"))
+                            .unwrap_or_default();
+                        let is_member = sh.map(|h| members.contains(&h)).unwrap_or(false);
+                        (name, ratio, is_member)
+                    })
+                    .collect();
+                sized(
+                    crate::ui::style::anno_object_scale::view_window(&label, &scales),
+                    360,
+                    420,
+                )
+            }
             super::super::ModalKind::Plotstyle => sized(
                 crate::ui::style::plotstyle::view_window(
                     self.active_plot_style.as_ref(),

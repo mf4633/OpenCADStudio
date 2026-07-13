@@ -311,6 +311,7 @@ inventory::submit!(crate::command::CommandRegistration {
         "ANNOSCALE",
         "CANNOSCALE",
         "SCALELISTEDIT",
+        "OBJECTSCALE",
         // Import CSV into a table + LandXML survey points.
         "DATALINK",
         "LANDXMLIMPORT",

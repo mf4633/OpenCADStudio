@@ -666,6 +666,9 @@ pub(super) struct OpenCADStudio {
     /// The scale row being renamed inline (double-click), + its edit buffer.
     scale_rename: Option<String>,
     scale_rename_buf: String,
+    /// The entity the Annotation Object Scale dialog is editing (its per-object
+    /// annotation-scale membership).
+    anno_object_scale_target: Option<acadrust::types::Handle>,
     /// Open transaction for the scale manager — restored if the window closes
     /// without Apply, mirroring the style managers' staging.
     scale_stage: Option<crate::app::style_ops::ScaleStage>,
@@ -1118,6 +1121,9 @@ pub enum ModalKind {
     LayerDeleteWarning,
     Aliases,
     ScaleManager,
+    /// Add / remove the annotation scales a single selected object has a
+    /// per-object representation for.
+    AnnoObjectScale,
 }
 
 /// Identifies a DimStyle field that can be edited in the dialog.
@@ -1469,6 +1475,10 @@ pub enum Message {
     CloseScalePopup,
     /// Open the annotation-scale manager (from the scale popup's Manage row).
     ScaleManagerOpen,
+    /// Open the Annotation Object Scale dialog for the current single selection.
+    AnnoObjectScaleOpen,
+    /// Toggle whether the dialog's object has a representation for this scale.
+    AnnoObjectScaleToggle(String),
     /// Select a scale row in the manager (loads it into the editor).
     ScaleManagerSelect(String),
     /// Add a new scale to the list (staged) and select it for editing.
@@ -2269,6 +2279,7 @@ impl OpenCADStudio {
             scale_manager_paper_buf: String::new(),
             scale_manager_drawing_buf: String::new(),
             scale_rename: None,
+            anno_object_scale_target: None,
             scale_rename_buf: String::new(),
             scale_stage: None,
             layout_manager_rename_buf: String::new(),

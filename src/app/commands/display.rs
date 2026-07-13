@@ -780,6 +780,12 @@ impl OpenCADStudio {
                 }
             }
 
+            // OBJECTSCALE — open the Annotation Object Scale dialog for the
+            // selected object (add / remove its per-object scale representations).
+            "OBJECTSCALE" => {
+                return Some(Task::done(Message::AnnoObjectScaleOpen));
+            }
+
             // DATALINK <path.csv> — import a CSV file into a table placed at the
             // origin (one-time import; a live re-reading link is future work).
             cmd if cmd == "DATALINK" || cmd.starts_with("DATALINK ") => {
@@ -873,7 +879,7 @@ impl OpenCADStudio {
                 }
             }
 
-            "POINTCLOUDATTACH" | "RECAP" | "SYNCPVIEWPORTS" | "UNDERLAYLAYERS" | "OBJECTSCALE"
+            "POINTCLOUDATTACH" | "RECAP" | "SYNCPVIEWPORTS" | "UNDERLAYLAYERS"
             | "UOSNAP" => {
                 self.command_line
                     .push_info(&format!("{cmd}: not yet implemented."));

@@ -1943,7 +1943,7 @@ impl Scene {
     /// Scales are matched by their `name` field, not the dictionary key — some
     /// files key the entries by an internal identifier (`*A1`, `A0`, …) that
     /// bears no relation to the scale name.
-    fn scale_object_handle(&self, name: &str) -> Option<Handle> {
+    pub(crate) fn scale_object_handle(&self, name: &str) -> Option<Handle> {
         use acadrust::objects::ObjectType;
         self.document.objects.iter().find_map(|(h, o)| match o {
             ObjectType::Scale(s) if !s.is_temporary && s.name.eq_ignore_ascii_case(name) => {
@@ -1951,6 +1951,32 @@ impl Scene {
             }
             _ => None,
         })
+    }
+
+    /// Resolve the current annotation scale (CANNOSCALE) to a real `Scale`
+    /// object handle, materializing the object from the scale list when the
+    /// drawing names the scale but has no `Scale` object for it. Returns `None`
+    /// when there is no current annotation scale. Used when giving an object a
+    /// per-object annotation context (the context's `340` must point at a real
+    /// `AcDbScale`).
+    pub(crate) fn current_annotation_scale_handle(&mut self) -> Option<Handle> {
+        let name = self.document.header.current_annotation_scale.clone();
+        if name.trim().is_empty() {
+            return None;
+        }
+        self.scale_handle_ensuring(&name)
+    }
+
+    /// Resolve a named annotation scale to a real `Scale` object handle,
+    /// materializing the object from the scale list when the drawing names the
+    /// scale (e.g. a virtual fallback scale) but has no `Scale` object for it.
+    pub(crate) fn scale_handle_ensuring(&mut self, name: &str) -> Option<Handle> {
+        if let Some(h) = self.scale_object_handle(name) {
+            return Some(h);
+        }
+        let (paper, drawing) = self.scale_paper_drawing(name).unwrap_or((1.0, 1.0));
+        self.add_scale(name, paper, drawing);
+        self.scale_object_handle(name)
     }
 
     /// Add a named annotation scale to the drawing's `ACAD_SCALELIST`. Returns
