@@ -517,7 +517,7 @@ impl Scene {
                                 m.scale = dxf.pattern_scale as f32 * anno;
                             }
                             model::hatch_model::HatchPattern::Gradient { angle_deg, .. } => {
-                                *angle_deg = dxf.pattern_angle.to_degrees() as f32;
+                                *angle_deg = dxf.gradient_color.angle.to_degrees() as f32;
                             }
                             model::hatch_model::HatchPattern::Pattern(_)
                             | model::hatch_model::HatchPattern::Solid => {}
@@ -1291,7 +1291,10 @@ impl Scene {
                 .and_then(|e| e.color.rgb())
                 .map(|(r, g, b)| [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
                 .unwrap_or(color);
-            let angle_deg = dxf.pattern_angle.to_degrees() as f32;
+            // Gradient angle lives on gradient_color (what the property editor
+            // writes), not pattern_angle — reading pattern_angle made the
+            // "Angle" edit (and a file's stored gradient angle) have no effect.
+            let angle_deg = dxf.gradient_color.angle.to_degrees() as f32;
             model::hatch_model::HatchPattern::Gradient { angle_deg, color2 }
         } else if dxf.is_solid {
             model::hatch_model::HatchPattern::Solid
@@ -1427,6 +1430,21 @@ impl Scene {
                 }
             })
             .collect();
+
+        // Gradient color 1 is the model's base colour (the shader reads it as
+        // the first stop, color2 as the second). Source it from the gradient's
+        // first stop so a "Color 1" edit actually renders — it previously used
+        // the entity's object colour, so Color-1 edits were silently dropped.
+        let color = if dxf.gradient_color.is_enabled() {
+            dxf.gradient_color
+                .colors
+                .first()
+                .and_then(|e| e.color.rgb())
+                .map(|(r, g, b)| [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
+                .unwrap_or(color)
+        } else {
+            color
+        };
 
         Some(HatchModel {
             boundary: std::sync::Arc::new(boundary_f32),
