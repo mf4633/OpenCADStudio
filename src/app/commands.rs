@@ -2461,6 +2461,11 @@ impl OpenCADStudio {
                 self.command_line.push_info("Opening Patreon page...");
             }
 
+            "COFFEE" => {
+                let _ = open::that("https://buy.stripe.com/14A3cudxo91z1qo0OHdAk00");
+                self.command_line.push_info("Opening Buy Me a Coffee page...");
+            }
+
             // ── DWGPROPS — print round-trip-only HeaderVariables ─────────
             // No UI dialog for these yet; the command surfaces them so
             // users can confirm the values that the parser populated and
