@@ -11,6 +11,7 @@ pub mod lengthen;
 pub mod mirror;
 pub mod offset;
 pub mod pedit;
+pub mod block_edit;
 pub mod refedit;
 pub mod reverse;
 pub mod rotate;

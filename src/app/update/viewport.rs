@@ -2592,9 +2592,9 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                             }
                             // Double-clicking a block with attributes opens the
                             // attribute editor (edit its values); a block with
-                            // no attributes enters in-place block edit (REFEDIT),
-                            // so its geometry can be edited and the change
-                            // reflects in every instance. (#136, #192)
+                            // no attributes opens the block editor (BEDIT) — a
+                            // space tab scoped to the block's own geometry, so
+                            // edits reflect in every instance. (#136, #192, #261)
                             let insert_has_attrs = matches!(
                                 self.tabs[i].scene.document.get_entity(handle),
                                 Some(AcadEntityType::Insert(ins)) if !ins.attributes.is_empty()
@@ -2606,9 +2606,12 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                                 self.tabs[i].scene.document.get_entity(handle),
                                 Some(AcadEntityType::Insert(_))
                             );
-                            if is_insert && self.tabs[i].refedit_session.is_none() {
+                            if is_insert
+                                && self.tabs[i].refedit_session.is_none()
+                                && self.tabs[i].block_edit.is_none()
+                            {
                                 return Task::done(Message::Command(format!(
-                                    "REFEDIT_BEGIN:{}",
+                                    "BEDIT_BEGIN:{}",
                                     handle.value()
                                 )));
                             }
@@ -2989,6 +2992,14 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
 
     pub(super) fn on_layout_switch(&mut self, name: String) -> Task<Message> {
                 let i = self.active_tab;
+                // A BEDIT block editor locks the active space; finish it with
+                // Save Block or Discard before switching spaces. (#261)
+                if self.tabs[i].block_edit.is_some() {
+                    self.command_line.push_info(
+                        "Finish the block editor (Save Block or Discard) before switching spaces.",
+                    );
+                    return Task::none();
+                }
                 let going_to_paper = name != "Model";
                 // Persist the camera of the layout we're leaving BEFORE switching
                 // so returning to it restores where the user left off (the
@@ -3073,6 +3084,33 @@ pub(super) fn on_tick(&mut self, t: Instant) -> Task<Message> {
                     let new_name = new_name.trim().to_string();
                     if !new_name.is_empty() && new_name != orig {
                         let i = self.active_tab;
+                        // BEDIT block tab: renaming it renames the BLOCK itself —
+                        // its record, marker and every INSERT reference. (#261)
+                        let is_block_tab = self.tabs[i]
+                            .block_edit
+                            .as_ref()
+                            .map(|be| be.block_name == orig)
+                            .unwrap_or(false);
+                        if is_block_tab {
+                            if self.tabs[i].scene.document.block_records.get(&new_name).is_some() {
+                                self.command_line
+                                    .push_error(&format!("\"{}\" name already in use", new_name));
+                            } else {
+                                self.push_undo_snapshot(i, "BLOCK RENAME");
+                                if self.tabs[i].scene.rename_block(&orig, &new_name) {
+                                    if let Some(be) = self.tabs[i].block_edit.as_mut() {
+                                        be.block_name = new_name.clone();
+                                    }
+                                    self.tabs[i].dirty = true;
+                                    self.command_line
+                                        .push_output(&format!("Block \"{orig}\" → \"{new_name}\""));
+                                } else {
+                                    self.command_line
+                                        .push_error(&format!("Could not rename block \"{orig}\""));
+                                }
+                            }
+                            return Task::none();
+                        }
                         let exists = self.tabs[i]
                             .scene
                             .layout_names()

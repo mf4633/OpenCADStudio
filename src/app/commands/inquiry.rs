@@ -289,6 +289,196 @@ impl OpenCADStudio {
                 }
             }
 
+            "BEDIT" => {
+                use crate::modules::draw::modify::block_edit::BlockEditPickCommand;
+                if self.tabs[i].block_edit.is_some() {
+                    self.command_line.push_error(
+                        "BEDIT: a block editor is already open. Save or discard it first.",
+                    );
+                } else if self.tabs[i].refedit_session.is_some() {
+                    self.command_line
+                        .push_error("BEDIT: finish the active REFEDIT (REFCLOSE) first.");
+                } else {
+                    // Jump straight to begin when a single INSERT is preselected.
+                    let selected: Vec<_> =
+                        self.tabs[i].scene.selected_entities().into_iter().collect();
+                    if selected.len() == 1 {
+                        if let Some(acadrust::EntityType::Insert(_)) =
+                            selected.first().map(|(_, e)| e)
+                        {
+                            let handle = selected[0].0;
+                            let _ =
+                                self.dispatch_command(&format!("BEDIT_BEGIN:{}", handle.value()));
+                            return Some(Task::none());
+                        }
+                    }
+                    let cmd_obj = BlockEditPickCommand::new();
+                    self.command_line.push_info(&cmd_obj.prompt());
+                    self.tabs[i].active_cmd = Some(Box::new(cmd_obj));
+                }
+            }
+
+            cmd if cmd.starts_with("BEDIT_BEGIN:") => {
+                use crate::modules::draw::modify::block_edit::BlockEditSession;
+                use acadrust::Handle;
+
+                let handle_u64: u64 = cmd["BEDIT_BEGIN:".len()..].parse().unwrap_or(0);
+                let insert_handle = Handle::new(handle_u64);
+
+                let insert = match self.tabs[i].scene.document.get_entity(insert_handle) {
+                    Some(acadrust::EntityType::Insert(ins)) => ins.clone(),
+                    _ => {
+                        self.command_line
+                            .push_error("BEDIT: selected object is not a block reference.");
+                        return Some(Task::none());
+                    }
+                };
+
+                // Resolve the block record; reject external references (xrefs).
+                let (br_handle, is_xref) = match self.tabs[i]
+                    .scene
+                    .document
+                    .block_records
+                    .get(&insert.block_name)
+                {
+                    Some(br) => (br.handle, br.flags.is_xref),
+                    None => {
+                        self.command_line.push_error(&format!(
+                            "BEDIT: block \"{}\" not found.",
+                            insert.block_name
+                        ));
+                        return Some(Task::none());
+                    }
+                };
+                if is_xref {
+                    self.command_line
+                        .push_error("BEDIT: cannot edit an external reference (xref).");
+                    return Some(Task::none());
+                }
+
+                // Snapshot the block's block-local entities so Discard can restore
+                // them (skip structural Block/BlockEnd/AttDef, mirroring REFEDIT).
+                let snapshot: Vec<_> = {
+                    let br = self.tabs[i]
+                        .scene
+                        .document
+                        .block_records
+                        .get(&insert.block_name)
+                        .unwrap();
+                    br.entity_handles
+                        .iter()
+                        .filter_map(|h| self.tabs[i].scene.document.get_entity(*h).cloned())
+                        .filter(|e| {
+                            !matches!(
+                                e,
+                                acadrust::EntityType::Block(_)
+                                    | acadrust::EntityType::BlockEnd(_)
+                                    | acadrust::EntityType::AttributeDefinition(_)
+                            )
+                        })
+                        .collect()
+                };
+
+                self.push_undo_snapshot(i, "BEDIT");
+
+                let return_layout = self.tabs[i].scene.current_layout.clone();
+                // A block editor renders in model style; switch to Model first so
+                // the paper-space code paths stay off, then scope to the block.
+                if return_layout != "Model" {
+                    self.tabs[i].scene.set_current_layout("Model".to_string());
+                }
+                self.tabs[i].scene.block_edit_block = Some(br_handle);
+                self.tabs[i].block_edit = Some(BlockEditSession {
+                    block_name: insert.block_name.clone(),
+                    br_handle,
+                    return_layout,
+                    snapshot,
+                });
+
+                self.tabs[i].scene.deselect_all();
+                self.tabs[i].scene.bump_geometry();
+                // Frame the camera on the block's own geometry (block-local, near
+                // origin) — fit_all() goes through current_layout_block_handle so
+                // it already scopes to the edited block. Without this the view
+                // stays wherever model/paper space was. (#261)
+                self.tabs[i].scene.fit_all();
+                self.tabs[i].active_cmd = None;
+                self.tabs[i].dirty = true;
+                self.command_line.push_info(&format!(
+                    "BEDIT: Editing block \"{}\". Use Save Block or Discard to finish.",
+                    insert.block_name
+                ));
+            }
+
+            "BEDIT_SAVE" => {
+                let session = match self.tabs[i].block_edit.take() {
+                    Some(s) => s,
+                    None => {
+                        self.command_line
+                            .push_error("BEDIT_SAVE: no block editor is open.");
+                        return Some(Task::none());
+                    }
+                };
+                // Edits are live on the block record — just leave the block space.
+                self.tabs[i].scene.block_edit_block = None;
+                self.tabs[i].scene.deselect_all();
+                self.tabs[i].scene.set_current_layout(session.return_layout.clone());
+                self.tabs[i].scene.rebuild_derived_caches();
+                self.tabs[i].dirty = true;
+                self.command_line.push_output(&format!(
+                    "BEDIT: Block \"{}\" saved. All references updated.",
+                    session.block_name
+                ));
+            }
+
+            "BEDIT_DISCARD" => {
+                let session = match self.tabs[i].block_edit.take() {
+                    Some(s) => s,
+                    None => {
+                        self.command_line
+                            .push_error("BEDIT_DISCARD: no block editor is open.");
+                        return Some(Task::none());
+                    }
+                };
+                // Restore the block definition to its on-entry snapshot: remove the
+                // block's current entities, then re-add the snapshot ones (mirrors
+                // the REFCLOSE_SAVE write-back).
+                let old_handles: Vec<_> = match self.tabs[i]
+                    .scene
+                    .document
+                    .block_records
+                    .get(&session.block_name)
+                {
+                    Some(br) => br.entity_handles.clone(),
+                    None => vec![],
+                };
+                for h in &old_handles {
+                    self.tabs[i].scene.document.remove_entity(*h);
+                }
+                if let Some(br) = self.tabs[i]
+                    .scene
+                    .document
+                    .block_records
+                    .get_mut(&session.block_name)
+                {
+                    br.entity_handles.clear();
+                }
+                for mut entity in session.snapshot {
+                    entity.common_mut().handle = acadrust::Handle::NULL;
+                    entity.common_mut().owner_handle = session.br_handle;
+                    let _ = self.tabs[i].scene.document.add_entity(entity);
+                }
+                self.tabs[i].scene.block_edit_block = None;
+                self.tabs[i].scene.deselect_all();
+                self.tabs[i].scene.set_current_layout(session.return_layout.clone());
+                self.tabs[i].scene.rebuild_derived_caches();
+                self.tabs[i].dirty = true;
+                self.command_line.push_output(&format!(
+                    "BEDIT: Block \"{}\" edit discarded.",
+                    session.block_name
+                ));
+            }
+
             cmd if cmd.starts_with("REFEDIT_BEGIN:") => {
                 use crate::modules::draw::modify::refedit::{
                     apply_insert_transform, RefEditSession,

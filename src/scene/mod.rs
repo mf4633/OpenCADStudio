@@ -835,6 +835,12 @@ pub struct Scene {
     paper_projected_cache: RefCell<HashMap<Handle, (u64, Vec<WireModel>)>>,
     /// Active layout name — "Model" or a paper space layout name.
     pub current_layout: String,
+    /// When `Some`, the active space is a BEDIT block editor (issue #261):
+    /// rendering, picking and new-entity ownership are scoped to this block
+    /// record's handle instead of the layout's, so only the block's own
+    /// (block-local) entities are drawn and edited. `current_layout` stays
+    /// "Model" so the rest of the Model-vs-paper code keeps model behaviour.
+    pub block_edit_block: Option<Handle>,
     /// UCS→world rotation for the ViewCube, kept in sync with the tab's active
     /// UCS by `DocumentTab::sync_ucs_to_scene`. Identity = WCS. Applied only in
     /// model space so the cube's faces follow the user's coordinate system.
@@ -1019,6 +1025,7 @@ impl Scene {
             paper_sheet_cache: RefCell::new(None),
             paper_projected_cache: RefCell::new(HashMap::default()),
             current_layout: "Model".to_string(),
+            block_edit_block: None,
             viewcube_ucs: glam::Mat4::IDENTITY,
             hatches: HashMap::default(),
             meshes: HashMap::default(),
@@ -1523,6 +1530,13 @@ impl Scene {
     ///   second paper tab → "*Paper_Space0"
     ///   Nth paper tab    → "*Paper_Space{N-2}"
     fn current_layout_block_handle(&self) -> Handle {
+        // BEDIT block editor: the active space IS a block record — draw / pick /
+        // own only its own (block-local) entities (issue #261).
+        if let Some(h) = self.block_edit_block {
+            if !h.is_null() {
+                return h;
+            }
+        }
         // Locate the Layout object for the active layout name.
         let layout = self.document.objects.values().find_map(|obj| {
             if let ObjectType::Layout(l) = obj {
@@ -2401,7 +2415,11 @@ impl Scene {
         }
         // Build once: full tessellation, no cull (region = None), no zoom LOD
         // (wpp = None). Held for the life of this geometry epoch.
-        let block = self.model_space_block_handle();
+        // In a BEDIT block editor the resident set is the edited block's own
+        // (block-local) entities; otherwise model space. (#261)
+        let block = self
+            .block_edit_block
+            .unwrap_or_else(|| self.model_space_block_handle());
         let t_tess = iced::time::Instant::now();
         let mut wires = self.wires_for_block_culled(block, None, None, None, None);
         self.apply_refedit_fade(&mut wires, self.bg_color);
@@ -2678,9 +2696,14 @@ impl Scene {
             .filter(|(&h, _)| self.mesh_entity_visible(h))
             .map(|(_, set)| set.clone())
             .collect();
-        // Block-definition solids are instanced per model-space INSERT so a
-        // block placed at an INSERT scale renders at the right size. (#123)
-        all.extend(self.instanced_block_meshes(self.model_space_block_handle()));
+        // Block-definition solids are instanced per INSERT of the ACTIVE space's
+        // block so a block placed at an INSERT scale renders at the right size
+        // (#123) — model space normally, the edited block in a BEDIT editor so
+        // model-space solids don't leak into it (#261).
+        all.extend(self.instanced_block_meshes(
+            self.block_edit_block
+                .unwrap_or_else(|| self.model_space_block_handle()),
+        ));
         let arc = Arc::new(all);
         *self.mesh_cache.borrow_mut() = Some((self.geometry_epoch, Arc::clone(&arc)));
         arc
@@ -2940,7 +2963,8 @@ impl Scene {
                 // matters when the layout block handle differs from the
                 // entity's owner (issue: hatch fill not selectable).
                 if self.belongs_to_visible_block(h, c.owner_handle, layout_block)
-                    || self.belongs_to_visible_block(h, c.owner_handle, model_block)
+                    || (self.block_edit_block.is_none()
+                        && self.belongs_to_visible_block(h, c.owner_handle, model_block))
                 {
                     Some((h, m.clone()))
                 } else {

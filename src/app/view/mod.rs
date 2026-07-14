@@ -1097,6 +1097,15 @@ impl OpenCADStudio {
             }
         }
 
+        // BEDIT block editor: right-edge Save Block / Discard toolbar (#261).
+        if tab.block_edit.is_some() && !tab.is_start {
+            if let Some(tb) = crate::ui::side_toolbar::view(
+                &crate::modules::draw::modify::block_edit::block_edit_tools(),
+            ) {
+                viewport_stack = viewport_stack.push(tb);
+            }
+        }
+
         // Quick Properties: compact floating property panel on selection,
         // anchored at the canvas top-left so it doesn't track the cursor.
         if self.quick_properties && !tab.is_start {
@@ -1328,8 +1337,19 @@ impl OpenCADStudio {
                         self.polar_popup_open,
                         self.dyn_input,
                         self.snapper.otrack_enabled,
-                        tab.scene.layout_names(),
-                        tab.scene.current_layout.clone(),
+                        {
+                            // In a BEDIT block editor, show the block as an extra
+                            // active space tab alongside Model/layouts. (#261)
+                            let mut names = tab.scene.layout_names();
+                            if let Some(be) = &tab.block_edit {
+                                names.push(be.block_name.clone());
+                            }
+                            names
+                        },
+                        tab.block_edit
+                            .as_ref()
+                            .map(|be| be.block_name.clone())
+                            .unwrap_or_else(|| tab.scene.current_layout.clone()),
                         self.layout_rename_state.as_ref(),
                         tab.scene.first_viewport_scale(),
                         tab.scene.viewport_count(),

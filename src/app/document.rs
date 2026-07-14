@@ -1,5 +1,6 @@
 use crate::command::CadCommand;
 use crate::io::linetypes;
+use crate::modules::draw::modify::block_edit::BlockEditSession;
 use crate::modules::draw::modify::refedit::RefEditSession;
 use crate::scene::pick::grip::GripEdit;
 use crate::scene::GripDef;
@@ -205,6 +206,8 @@ pub(super) struct DocumentTab {
     pub(super) paper_bg_color: Option<[f32; 4]>,
     /// Active REFEDIT session, if any.
     pub(super) refedit_session: Option<RefEditSession>,
+    /// Active BEDIT block-editor space session, if any (issue #261).
+    pub(super) block_edit: Option<BlockEditSession>,
     /// Currently active MLeader style name.
     pub(super) active_mleader_style: String,
     /// Last camera_generation value written back to the document.
@@ -437,6 +440,7 @@ impl DocumentTab {
             bg_color: None,
             paper_bg_color: None,
             refedit_session: None,
+            block_edit: None,
             active_mleader_style: "Standard".to_string(),
             last_synced_camera_gen: 0,
             is_start: false,

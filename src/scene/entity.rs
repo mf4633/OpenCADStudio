@@ -109,9 +109,14 @@ impl Scene {
         self.ensure_layer(&layer);
 
         // Route to the correct block based on current editing mode:
+        //   - BEDIT block editor: geometry belongs to the edited block record,
+        //     so it becomes part of the block definition (issue #261).
         //   - PSPACE (paper layout, no active viewport): paper-space layout block.
         //   - MSPACE or model layout: model space (document default).
-        let handle = if self.current_layout != "Model" && self.active_viewport.is_none() {
+        let handle = if let Some(br) = self.block_edit_block {
+            entity.common_mut().owner_handle = br;
+            self.document.add_entity(entity).unwrap_or(Handle::NULL)
+        } else if self.current_layout != "Model" && self.active_viewport.is_none() {
             let layout_name = self.current_layout.clone();
             self.document
                 .add_entity_to_layout(entity, &layout_name)
@@ -137,6 +142,41 @@ impl Scene {
             }
         }
         handle
+    }
+
+    /// Rename a block definition: re-key its record, update the Block marker's
+    /// name, and repoint every INSERT that referenced the old name so all
+    /// instances keep resolving. Returns false if `old` is missing, `new` is
+    /// already taken, or the names are equal (case-insensitive). (#261)
+    pub fn rename_block(&mut self, old: &str, new: &str) -> bool {
+        if old.eq_ignore_ascii_case(new) {
+            return false;
+        }
+        if self.document.block_records.get(new).is_some() {
+            return false;
+        }
+        let Some(mut br) = self.document.block_records.remove(old) else {
+            return false;
+        };
+        let block_marker = br.block_entity_handle;
+        br.name = new.to_string();
+        if self.document.block_records.add(br).is_err() {
+            return false;
+        }
+        // Keep the Block marker entity's name in sync (used on DXF/DWG save).
+        if let Some(EntityType::Block(b)) = self.document.get_entity_mut(block_marker) {
+            b.name = new.to_string();
+        }
+        // Repoint every INSERT reference so all instances keep resolving.
+        for e in self.document.entities_mut() {
+            if let EntityType::Insert(ins) = e {
+                if ins.block_name.eq_ignore_ascii_case(old) {
+                    ins.block_name = new.to_string();
+                }
+            }
+        }
+        self.bump_geometry();
+        true
     }
 
     /// Replace the entity stored under `entity`'s handle with `entity`, keeping
@@ -478,11 +518,12 @@ impl Scene {
                 // block) — they're tessellated separately via Insert
                 // explosion and only the laid-out copies should appear.
                 self.belongs_to_visible_block(handle, c.owner_handle, layout_block)
-                    || self.belongs_to_visible_block(
-                        handle,
-                        c.owner_handle,
-                        self.model_space_block_handle(),
-                    )
+                    || (self.block_edit_block.is_none()
+                        && self.belongs_to_visible_block(
+                            handle,
+                            c.owner_handle,
+                            self.model_space_block_handle(),
+                        ))
             })
             .flat_map(|(&handle, model)| {
                 let entity = self.document.get_entity(handle);
