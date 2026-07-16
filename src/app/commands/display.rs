@@ -688,11 +688,16 @@ impl OpenCADStudio {
             // ANNOSCALE / CANNOSCALE <ratio> — set the current annotation scale
             // (e.g. 1:50, 2:1, or a plain factor). Drives annotative-object size
             // in model space and is written to the drawing header.
-            cmd if cmd == "ANNOSCALE"
-                || cmd == "CANNOSCALE"
-                || cmd.starts_with("ANNOSCALE ")
-                || cmd.starts_with("CANNOSCALE ") =>
-            {
+            "ANNOSCALE" | "CANNOSCALE" => {
+                use crate::command::ValuePromptCommand;
+                let c = ValuePromptCommand::new(
+                    "ANNOSCALE",
+                    "ANNOSCALE  new annotation scale  (e.g. 1:50, 2:1, or a factor):",
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("ANNOSCALE ") || cmd.starts_with("CANNOSCALE ") => {
                 let arg = cmd
                     .split_whitespace()
                     .nth(1)

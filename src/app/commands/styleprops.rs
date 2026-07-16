@@ -5,11 +5,18 @@ impl OpenCADStudio {
         match cmd {
             // COLOR <ByLayer|ByBlock|1-255|name> — the colour applied to new
             // objects (CECOLOR). Bare COLOR reports the current value.
-            cmd if cmd == "COLOR"
-                || cmd == "COLOUR"
-                || cmd == "CECOLOR"
-                || cmd == "DDCOLOR"
-                || cmd == "BYLAYER"
+            "COLOR" | "COLOUR" | "CECOLOR" | "DDCOLOR" => {
+                use crate::command::ValuePromptCommand;
+                let c = ValuePromptCommand::new(
+                    "COLOR",
+                    "COLOR  new object colour  [ByLayer / ByBlock / 1-255 / red / yellow / green / cyan / blue / magenta / white]:",
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            // BYLAYER is an immediate shortcut (sets ByLayer without prompting);
+            // the `<name> <value>` forms and the bare-Enter getter route here too.
+            cmd if cmd == "BYLAYER"
                 || cmd.starts_with("COLOR ")
                 || cmd.starts_with("COLOUR ")
                 || cmd.starts_with("CECOLOR ")
@@ -1474,7 +1481,13 @@ impl OpenCADStudio {
             // TEXTSTYLE [name] — already handled above under STYLE SET
             // DIMSTYLE [name]  — get or set active dim style
             // LTSCALE [val]    — global linetype scale
-            cmd if cmd == "CLAYER" || cmd.starts_with("CLAYER ") => {
+            "CLAYER" => {
+                use crate::command::ValuePromptCommand;
+                let c = ValuePromptCommand::new("CLAYER", "CLAYER  new current layer name:");
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("CLAYER ") => {
                 let name_arg = cmd.trim_start_matches("CLAYER").trim();
                 if name_arg.is_empty() {
                     let cur = &self.tabs[i].scene.document.header.current_layer_name;
@@ -1493,11 +1506,14 @@ impl OpenCADStudio {
                     }
                 }
             }
-            cmd if cmd == "CDIMSTY"
-                || cmd == "DIMCURRENT"
-                || cmd.starts_with("CDIMSTY ")
-                || cmd.starts_with("DIMCURRENT ") =>
-            {
+            "CDIMSTY" | "DIMCURRENT" => {
+                use crate::command::ValuePromptCommand;
+                let c =
+                    ValuePromptCommand::new("CDIMSTY", "CDIMSTY  new current dimension style name:");
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("CDIMSTY ") || cmd.starts_with("DIMCURRENT ") => {
                 let name_arg = cmd.split_whitespace().skip(1).collect::<Vec<_>>().join(" ");
                 if name_arg.is_empty() {
                     let cur = &self.tabs[i].scene.document.header.current_dimstyle_name;
@@ -1587,11 +1603,18 @@ impl OpenCADStudio {
                 }
             }
             "ISAVEBAK" => {
-                let v = if self.backup_on_save { 1 } else { 0 };
-                self.command_line.push_output(&format!("ISAVEBAK = {v}"));
+                use crate::command::ValuePromptCommand;
+                let c =
+                    ValuePromptCommand::new("ISAVEBAK", "ISAVEBAK  write a .bak on save?  [1 / 0]:");
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
             }
             cmd if cmd.starts_with("ISAVEBAK ") => {
                 match cmd.trim_start_matches("ISAVEBAK").trim() {
+                    "" => {
+                        let v = if self.backup_on_save { 1 } else { 0 };
+                        self.command_line.push_output(&format!("ISAVEBAK = {v}"));
+                    }
                     "0" => {
                         self.backup_on_save = false;
                         self.persist_settings_if_changed();
@@ -1606,11 +1629,20 @@ impl OpenCADStudio {
                 }
             }
             "FILEASSOC" => {
-                let v = if self.file_assoc_enabled { 1 } else { 0 };
-                self.command_line.push_output(&format!("FILEASSOC = {v}"));
+                use crate::command::ValuePromptCommand;
+                let c = ValuePromptCommand::new(
+                    "FILEASSOC",
+                    "FILEASSOC  register as a .dwg/.dxf handler?  [1 / 0]:",
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
             }
             cmd if cmd.starts_with("FILEASSOC ") => {
                 match cmd.trim_start_matches("FILEASSOC").trim() {
+                    "" => {
+                        let v = if self.file_assoc_enabled { 1 } else { 0 };
+                        self.command_line.push_output(&format!("FILEASSOC = {v}"));
+                    }
                     "1" => {
                         self.file_assoc_enabled = true;
                         self.persist_settings_if_changed();
@@ -1639,11 +1671,22 @@ impl OpenCADStudio {
                 }
             }
             "SAVETIME" => {
-                self.command_line
-                    .push_output(&format!("SAVETIME = {}", self.savetime_min));
+                use crate::command::ValuePromptCommand;
+                let c = ValuePromptCommand::new(
+                    "SAVETIME",
+                    "SAVETIME  autosave interval in minutes (0 = off):",
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
             }
             cmd if cmd.starts_with("SAVETIME ") => {
-                match cmd.trim_start_matches("SAVETIME").trim().parse::<i32>() {
+                let arg = cmd.trim_start_matches("SAVETIME").trim();
+                if arg.is_empty() {
+                    self.command_line
+                        .push_output(&format!("SAVETIME = {}", self.savetime_min));
+                    return Some(Task::none());
+                }
+                match arg.parse::<i32>() {
                     Ok(v) if v >= 0 => {
                         self.savetime_min = v;
                         self.persist_settings_if_changed();
@@ -1695,7 +1738,14 @@ impl OpenCADStudio {
                 self.point_size_buf = format!("{}", pdsize.abs());
                 self.active_modal = Some(super::super::ModalKind::PointStyle);
             }
-            cmd if cmd == "LWDISPLAY" || cmd.starts_with("LWDISPLAY ") => {
+            "LWDISPLAY" => {
+                use crate::command::ValuePromptCommand;
+                let c =
+                    ValuePromptCommand::new("LWDISPLAY", "LWDISPLAY  show lineweights?  [ON / OFF]:");
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("LWDISPLAY ") => {
                 let val_str = cmd.trim_start_matches("LWDISPLAY").trim();
                 let parsed: Result<Option<bool>, ()> = match val_str.to_ascii_uppercase().as_str() {
                     "" => Ok(None),
