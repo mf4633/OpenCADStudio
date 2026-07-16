@@ -554,10 +554,11 @@ impl OpenCADStudio {
             // still being built. Acknowledge them with an honest status so the
             // button responds instead of reporting an unknown command; each is
             // replaced by its real handler as the feature lands.
-            // OBJECTSCALE — mark the selected objects annotative by attaching the
-            // AcAnnotativeData XData record the tessellator already honours, so
-            // they scale with the current annotation scale.
-            cmd if cmd == "OBJECTSCALE" || cmd.starts_with("OBJECTSCALE ") => {
+            // OBJECTSCALE ADD — the ribbon "Add Scale" quick action: mark the
+            // selected objects annotative by attaching the AcAnnotativeData XData
+            // record the tessellator already honours, so they scale with the
+            // current annotation scale. Bare OBJECTSCALE opens the dialog below.
+            "OBJECTSCALE ADD" => {
                 use acadrust::xdata::{ExtendedDataRecord, XDataValue};
                 let handles: Vec<acadrust::Handle> = self.tabs[i]
                     .scene
@@ -819,6 +820,8 @@ impl OpenCADStudio {
 
             // OBJECTSCALE — open the Annotation Object Scale dialog for the
             // selected object (add / remove its per-object scale representations).
+            // Reachable now that the immediate "add current scale" quick action
+            // moved to the explicit `OBJECTSCALE ADD` keyword above.
             "OBJECTSCALE" => {
                 return Some(Task::done(Message::AnnoObjectScaleOpen));
             }
