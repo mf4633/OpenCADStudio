@@ -761,7 +761,19 @@ impl OpenCADStudio {
 
             // POLYSOLID <width> <height> — extrude a selected polyline into a
             // wall-like solid.
-            cmd if cmd == "POLYSOLID" || cmd.starts_with("POLYSOLID ") => {
+            "POLYSOLID" => {
+                use crate::command::SelectThenTwoValueCommand;
+                let has_sel = !self.tabs[i].scene.selected_entities().is_empty();
+                let c = SelectThenTwoValueCommand::new(
+                    "POLYSOLID",
+                    "POLYSOLID  wall width:",
+                    "POLYSOLID  wall height:",
+                    has_sel,
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("POLYSOLID ") => {
                 let nums: Vec<f64> = cmd
                     .split_whitespace()
                     .skip(1)

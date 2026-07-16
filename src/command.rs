@@ -673,6 +673,98 @@ impl CadCommand for SelectThenValueCommand {
     }
 }
 
+/// Generic front-end for a two-value command that operates on the current
+/// selection (POLYSOLID width + height on a selected polyline). Gathers a
+/// selection first when none is set, prompts for two values, and dispatches
+/// `<name> <first> <second>` to the inline handler.
+pub struct SelectThenTwoValueCommand {
+    name: &'static str,
+    prompt1: &'static str,
+    prompt2: &'static str,
+    gathering: bool,
+    selected: Vec<Handle>,
+    first: Option<String>,
+}
+
+impl SelectThenTwoValueCommand {
+    pub fn new(
+        name: &'static str,
+        prompt1: &'static str,
+        prompt2: &'static str,
+        has_selection: bool,
+    ) -> Self {
+        Self {
+            name,
+            prompt1,
+            prompt2,
+            gathering: !has_selection,
+            selected: Vec::new(),
+            first: None,
+        }
+    }
+}
+
+impl CadCommand for SelectThenTwoValueCommand {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn prompt(&self) -> String {
+        if self.gathering {
+            format!("{}  select objects, then press Enter:", self.name)
+        } else if self.first.is_none() {
+            self.prompt1.to_string()
+        } else {
+            self.prompt2.to_string()
+        }
+    }
+
+    fn wants_text_input(&self) -> bool {
+        !self.gathering
+    }
+
+    fn is_selection_gathering(&self) -> bool {
+        self.gathering
+    }
+
+    fn on_selection_complete(&mut self, handles: Vec<Handle>) -> CmdResult {
+        self.selected = handles;
+        CmdResult::NeedPoint
+    }
+
+    fn on_text_input(&mut self, text: &str) -> Option<CmdResult> {
+        if self.gathering {
+            return None;
+        }
+        let t = text.trim();
+        if t.is_empty() {
+            return None;
+        }
+        match &self.first {
+            None => {
+                self.first = Some(t.to_string());
+                None
+            }
+            Some(first) => Some(CmdResult::Dispatch(format!("{} {first} {t}", self.name))),
+        }
+    }
+
+    fn on_point(&mut self, _pt: DVec3) -> CmdResult {
+        CmdResult::NeedPoint
+    }
+
+    fn on_enter(&mut self) -> CmdResult {
+        if self.gathering {
+            if self.selected.is_empty() {
+                return CmdResult::Cancel;
+            }
+            self.gathering = false;
+            return CmdResult::NeedPoint;
+        }
+        CmdResult::Cancel
+    }
+}
+
 // ── Result token ──────────────────────────────────────────────────────────
 
 /// Returned by every `CadCommand` method to tell main.rs what to do.
