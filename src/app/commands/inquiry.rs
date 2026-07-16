@@ -875,7 +875,17 @@ impl OpenCADStudio {
             }
 
             // ── COUNT — entity statistics ─────────────────────────────────────
-            cmd if cmd == "COUNT" || cmd.starts_with("COUNT ") => {
+            "COUNT" => {
+                use crate::command::KeywordCommand;
+                let c = KeywordCommand::new(
+                    "COUNT",
+                    "COUNT  tally  [All (by type) / by Layer]:",
+                    vec![("All", "TYPE", None), ("By layer", "LAYER", None)],
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[self.active_tab].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("COUNT ") => {
                 let filter = cmd.split_once(' ').map(|(_, r)| r.trim().to_uppercase());
                 let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
                 for e in self.tabs[i].scene.document.entities() {
