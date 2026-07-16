@@ -8,4 +8,4 @@ Type=Application
 Categories=Graphics;Engineering;
 MimeType=image/vnd.dwg;image/vnd.dxf;
 Keywords=CAD;DWG;DXF;drawing;design;engineering;2D;3D;
-StartupWMClass=OpenCADStudio
+StartupWMClass=io.github.HakanSeven12.OpenCadStudio

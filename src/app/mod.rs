@@ -2501,6 +2501,17 @@ impl OpenCADStudio {
             maximized: true,
             icon: window::icon::from_rgba(build_window_icon(), 32, 32).ok(),
             exit_on_close_request: false,
+            // A Wayland compositor has no StartupWMClass to go on: it resolves a
+            // window's dock icon by matching the window's app_id against the
+            // basename of an installed .desktop file. iced defaults the id to an
+            // empty string, so nothing matched and the dock button came up blank
+            // even though the AppImage ships both the .desktop and the icon.
+            // (X11 uses the .desktop's StartupWMClass and was unaffected.)
+            #[cfg(target_os = "linux")]
+            platform_specific: window::settings::PlatformSpecific {
+                application_id: crate::io::file_association::APP_ID.to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         });
         let mut s = state;
