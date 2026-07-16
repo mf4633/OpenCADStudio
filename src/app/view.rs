@@ -3224,10 +3224,41 @@ pub(super) fn start_page_view<'a>() -> Element<'a, Message> {
         })
     };
 
+    // Buy me a coffee — a lighter secondary support action, distinct from the
+    // upstream author's Donate call-to-action above.
+    let coffee_btn = {
+        button(
+            row![
+                text("☕ ").size(15),
+                text("Buy me a coffee").size(14),
+            ]
+            .align_y(iced::Center),
+        )
+        .on_press(Message::RibbonToolClick {
+            tool_id: "COFFEE".to_string(),
+            event: crate::modules::ModuleEvent::Command("COFFEE".to_string()),
+        })
+        .padding([12, 22])
+        .style(|_: &Theme, status| button::Style {
+            background: Some(Background::Color(match status {
+                button::Status::Hovered => Color { r: 0.85, g: 0.62, b: 0.28, a: 1.0 },
+                _ => Color { r: 0.78, g: 0.55, b: 0.22, a: 1.0 },
+            })),
+            text_color: Color::WHITE,
+            border: Border {
+                color: Color { r: 0.62, g: 0.43, b: 0.16, a: 1.0 },
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        })
+    };
+
     let primary_row = row![
         outline_btn("New Drawing", Message::TabNew),
         outline_btn("Open File…", Message::OpenFile),
         donate_btn,
+        coffee_btn,
     ]
     .spacing(12)
     .align_y(iced::Center);
