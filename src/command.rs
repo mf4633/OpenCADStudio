@@ -479,6 +479,122 @@ impl CadCommand for TwoValuePromptCommand {
     }
 }
 
+/// Generic interactive front-end for a keyword command that operates on the
+/// current selection (CHPROP, ADJUST, XDATA, UNDERLAY, DRAWORDER…). If nothing
+/// is selected when it starts it first gathers a selection (Enter confirms),
+/// then shows the sub-verbs as buttons exactly like [`KeywordCommand`] and
+/// dispatches `<name> <verb> [value]` to the inline handler, which reads the
+/// (still-selected) set. Verbs the generic form can't express — a second value
+/// (XDATA SET) or a reference pick (DRAWORDER ABOVE) — stay available by typing
+/// the full argument line.
+pub struct SelectThenKeywordCommand {
+    name: &'static str,
+    prompt: &'static str,
+    options: Vec<(&'static str, &'static str, Option<&'static str>)>,
+    gathering: bool,
+    selected: Vec<Handle>,
+    pending: Option<(&'static str, &'static str)>,
+}
+
+impl SelectThenKeywordCommand {
+    pub fn new(
+        name: &'static str,
+        prompt: &'static str,
+        options: Vec<(&'static str, &'static str, Option<&'static str>)>,
+        has_selection: bool,
+    ) -> Self {
+        Self {
+            name,
+            prompt,
+            options,
+            gathering: !has_selection,
+            selected: Vec::new(),
+            pending: None,
+        }
+    }
+}
+
+impl CadCommand for SelectThenKeywordCommand {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn prompt(&self) -> String {
+        if self.gathering {
+            return format!("{}  select objects, then press Enter:", self.name);
+        }
+        match self.pending {
+            Some((_, value_prompt)) => value_prompt.to_string(),
+            None => self.prompt.to_string(),
+        }
+    }
+
+    fn options(&self) -> Vec<CmdOption> {
+        if self.gathering || self.pending.is_some() {
+            return Vec::new();
+        }
+        self.options
+            .iter()
+            .map(|(label, keyword, _)| CmdOption::new(label, keyword))
+            .collect()
+    }
+
+    fn wants_text_input(&self) -> bool {
+        !self.gathering
+    }
+
+    fn is_selection_gathering(&self) -> bool {
+        self.gathering
+    }
+
+    fn on_selection_complete(&mut self, handles: Vec<Handle>) -> CmdResult {
+        // The normal selection system has set the scene selection; remember the
+        // set so Enter knows whether anything was picked, and keep gathering.
+        self.selected = handles;
+        CmdResult::NeedPoint
+    }
+
+    fn on_enter(&mut self) -> CmdResult {
+        if self.gathering {
+            if self.selected.is_empty() {
+                return CmdResult::Cancel;
+            }
+            self.gathering = false;
+            return CmdResult::NeedPoint;
+        }
+        CmdResult::Cancel
+    }
+
+    fn on_text_input(&mut self, text: &str) -> Option<CmdResult> {
+        let t = text.trim();
+        if t.is_empty() {
+            return None;
+        }
+        match self.pending {
+            Some((keyword, _)) => Some(CmdResult::Dispatch(format!("{} {keyword} {t}", self.name))),
+            None => {
+                let up = t.to_uppercase();
+                let Some((_, keyword, value_prompt)) =
+                    self.options.iter().find(|(_, k, _)| k.eq_ignore_ascii_case(&up))
+                else {
+                    return None;
+                };
+                match value_prompt {
+                    Some(vp) => {
+                        self.pending = Some((keyword, vp));
+                        None
+                    }
+                    None => Some(CmdResult::Dispatch(format!("{} {keyword}", self.name))),
+                }
+            }
+        }
+    }
+
+    fn on_point(&mut self, _pt: DVec3) -> CmdResult {
+        CmdResult::NeedPoint
+    }
+}
+
 // ── Result token ──────────────────────────────────────────────────────────
 
 /// Returned by every `CadCommand` method to tell main.rs what to do.

@@ -750,7 +750,19 @@ impl OpenCADStudio {
                 );
             }
 
-            cmd if cmd.starts_with("DRAWORDER") => {
+            "DRAWORDER" => {
+                use crate::command::SelectThenKeywordCommand;
+                let has_sel = !self.tabs[i].scene.selected_entities().is_empty();
+                let c = SelectThenKeywordCommand::new(
+                    "DRAWORDER",
+                    "DRAWORDER  [Front / Back]  (Above/Under <handle> by typing):",
+                    vec![("Front", "FRONT", None), ("Back", "BACK", None)],
+                    has_sel,
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("DRAWORDER ") => {
                 use acadrust::objects::{ObjectType, SortEntitiesTable};
                 let parts: Vec<&str> = cmd.split_whitespace().collect();
                 let option = parts.get(1).unwrap_or(&"").to_uppercase();

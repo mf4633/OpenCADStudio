@@ -334,7 +334,25 @@ impl OpenCADStudio {
             }
 
             // ── CHPROP — change entity properties from command line ───────
-            cmd if cmd == "CHPROP" || cmd.starts_with("CHPROP ") => {
+            "CHPROP" => {
+                use crate::command::SelectThenKeywordCommand;
+                let has_sel = !self.tabs[i].scene.selected_entities().is_empty();
+                let c = SelectThenKeywordCommand::new(
+                    "CHPROP",
+                    "CHPROP  property  [Layer / Color / Linetype / LtScale / Transparency]:",
+                    vec![
+                        ("Layer", "LAYER", Some("CHPROP  new layer name:")),
+                        ("Color", "COLOR", Some("CHPROP  new colour (name / 1-255 / ByLayer):")),
+                        ("Linetype", "LINETYPE", Some("CHPROP  new linetype name:")),
+                        ("LtScale", "LTSCALE", Some("CHPROP  new linetype scale:")),
+                        ("Transparency", "TRANSPARENCY", Some("CHPROP  transparency 0-90:")),
+                    ],
+                    has_sel,
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("CHPROP ") => {
                 // Usage: CHPROP <property> <value>
                 // Applies to currently selected entities.
                 // Properties: LAYER, COLOR, LINETYPE, LTSCALE

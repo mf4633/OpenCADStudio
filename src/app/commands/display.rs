@@ -207,7 +207,19 @@ impl OpenCADStudio {
             // XDATA SET <app> <str>  — append a string xdata value for <app>
             // XDATA CLEAR            — remove all xdata from selected entities
             // XDATA CLEAR <app>      — remove xdata for a specific application
-            cmd if cmd == "XDATA" || cmd.starts_with("XDATA ") => {
+            "XDATA" => {
+                use crate::command::SelectThenKeywordCommand;
+                let has_sel = !self.tabs[i].scene.selected_entities().is_empty();
+                let c = SelectThenKeywordCommand::new(
+                    "XDATA",
+                    "XDATA  [List / Clear]  (SET <app> <value> by typing):",
+                    vec![("List", "LIST", None), ("Clear", "CLEAR", None)],
+                    has_sel,
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("XDATA ") => {
                 use acadrust::xdata::{ExtendedDataRecord, XDataValue};
                 let rest = cmd.trim_start_matches("XDATA").trim();
                 let parts: Vec<&str> = rest.splitn(3, char::is_whitespace).collect();
@@ -461,7 +473,26 @@ impl OpenCADStudio {
             //   UNDERLAY ON | OFF
             //   UNDERLAY CLIP ON | OFF
             //   UNDERLAY MONO ON | OFF
-            cmd if cmd == "UNDERLAY" || cmd.starts_with("UNDERLAY ") => {
+            "UNDERLAY" => {
+                use crate::command::SelectThenKeywordCommand;
+                let has_sel = !self.tabs[i].scene.selected_entities().is_empty();
+                let c = SelectThenKeywordCommand::new(
+                    "UNDERLAY",
+                    "UNDERLAY  [Fade / Contrast / On / Off / Mono / Clip]:",
+                    vec![
+                        ("Fade", "FADE", Some("UNDERLAY  fade 0-100:")),
+                        ("Contrast", "CONTRAST", Some("UNDERLAY  contrast 0-100:")),
+                        ("On", "ON", None),
+                        ("Off", "OFF", None),
+                        ("Mono", "MONO", Some("UNDERLAY MONO  [On / Off]:")),
+                        ("Clip", "CLIP", Some("UNDERLAY CLIP  [On / Off]:")),
+                    ],
+                    has_sel,
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("UNDERLAY ") => {
                 let sub = cmd
                     .split_once(' ')
                     .map(|(_, r)| r.trim().to_uppercase())
@@ -641,7 +672,23 @@ impl OpenCADStudio {
 
             // ADJUST — set brightness / contrast / fade on selected raster images
             //   ADJUST BRIGHTNESS|CONTRAST|FADE <0-100>
-            cmd if cmd == "ADJUST" || cmd.starts_with("ADJUST ") => {
+            "ADJUST" => {
+                use crate::command::SelectThenKeywordCommand;
+                let has_sel = !self.tabs[i].scene.selected_entities().is_empty();
+                let c = SelectThenKeywordCommand::new(
+                    "ADJUST",
+                    "ADJUST  [Brightness / Contrast / Fade]:",
+                    vec![
+                        ("Brightness", "BRIGHTNESS", Some("ADJUST  brightness 0-100:")),
+                        ("Contrast", "CONTRAST", Some("ADJUST  contrast 0-100:")),
+                        ("Fade", "FADE", Some("ADJUST  fade 0-100:")),
+                    ],
+                    has_sel,
+                );
+                self.command_line.push_info(&c.prompt());
+                self.tabs[i].active_cmd = Some(Box::new(c));
+            }
+            cmd if cmd.starts_with("ADJUST ") => {
                 let rest = cmd.trim_start_matches("ADJUST").trim();
                 let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
                 let action = parts.first().map(|s| s.to_uppercase()).unwrap_or_default();
