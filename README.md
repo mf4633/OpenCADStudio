@@ -1,13 +1,30 @@
-# Open CAD Studio
+# OpenCivil
 
-[![Release](https://img.shields.io/github/v/release/HakanSeven12/OpenCADStudio)](https://github.com/HakanSeven12/OpenCADStudio/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/HakanSeven12/OpenCADStudio/total)](https://github.com/HakanSeven12/OpenCADStudio/releases)
-[![Stars](https://img.shields.io/github/stars/HakanSeven12/OpenCADStudio)](https://github.com/HakanSeven12/OpenCADStudio/stargazers)
-[![License](https://img.shields.io/github/license/HakanSeven12/OpenCADStudio)](LICENSE)
+**Open-source civil engineering CAD, built with Rust.** An open alternative to
+Autodesk® Civil 3D® — 2D drafting, 3D modeling, and native DWG/DXF I/O, extended
+with a civil-engineering plugin suite (storm sewer, hydrology, and more to come).
 
-OCS is a CAD application for 2D drafting and 3D modeling, built with Rust. Reads and writes DWG and DXF files natively. Also has a web version now!
+> **Built on [OpenCADStudio](https://github.com/HakanSeven12/OpenCADStudio)** by
+> HakanSeven12. OpenCivil tracks the OpenCADStudio core and adds civil workflows
+> as plugins on top of it. Huge thanks to the upstream project and its
+> contributors — see [ATTRIBUTION](#attribution-and-license) below.
+>
+> *"Civil 3D" and "AutoCAD" are trademarks of Autodesk, Inc. OpenCivil is not
+> affiliated with, endorsed by, or derived from Autodesk software.*
 
-## OCS Web try it in the browser: https://hakanseven12.github.io/OpenCADStudio/
+## The civil layer
+
+OpenCivil keeps everything the CAD core already does (below) and layers
+civil-engineering tooling as plugins via the OpenCADStudio plugin host:
+
+- **Storm sewer** — interactive network design with the Rational method,
+  Manning's equation, and HGL/EGL analysis
+- **Hydrology** — drainage-area and runoff tooling (in progress)
+- *Planned:* surfaces & TINs, alignments, profiles, corridors, grading, parcels,
+  and pipe networks
+
+Civil features live in separate plugin packages so the CAD core can keep
+tracking upstream OpenCADStudio releases.
 
 <img width="1920" height="940" alt="resim" src="https://github.com/user-attachments/assets/10635ad0-454b-4c87-935f-1a3a46f24ccb" />
 <img width="1920" height="940" alt="resim2" src="https://github.com/user-attachments/assets/2a037a09-e8e8-498c-8ed3-58ecb8ae958d" />
@@ -166,6 +183,13 @@ cargo build --release --bin OpenCADStudio
  </picture>
 </a>
 
-## License
+## Attribution and License
 
-GPL-3.0-only — see [LICENSE](LICENSE)
+OpenCivil is a derivative of **[OpenCADStudio](https://github.com/HakanSeven12/OpenCADStudio)**
+(© HakanSeven12 and contributors), used and redistributed under the GPL-3.0.
+All original OpenCADStudio copyright notices are retained. The CAD core is
+OpenCADStudio's work; OpenCivil adds the civil-engineering plugin layer and
+project-specific fixes.
+
+GPL-3.0-only — see [LICENSE](LICENSE). As required by the GPL, OpenCivil is also
+released under GPL-3.0-only, and its source is available to all users.

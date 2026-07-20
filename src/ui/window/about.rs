@@ -57,8 +57,8 @@ pub fn view_window<'a>() -> Element<'a, Message> {
 
     let logo = container(
         column![
-            text("Open CAD Studio").size(32).color(ACCENT),
-            text("CAD application for Architecture & Engineering")
+            text("OpenCivil").size(32).color(ACCENT),
+            text("Open-source civil engineering CAD — based on OpenCADStudio")
                 .size(11)
                 .color(DIM),
         ]
