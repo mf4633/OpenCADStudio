@@ -171,55 +171,45 @@ impl OpenCADStudio {
                 self.tabs[i].scene.annotation_scale =
                     if cannoscale_value > 1e-9 { (1.0 / cannoscale_value) as f32 } else { 1.0 };
 
-                // Auto-resolve XREFs relative to the opened file's directory.
-                let mut xref_ms = 0u32;
-                if let Some(base_dir) = path.parent() {
-                    // xref content arrives un-purged: parser-garbage entities
-                    // inside the referenced file can trigger infinite loops in
-                    // tessellation. `resolve_xrefs` runs the corrupt-entity
-                    // guard inline as it merges each xref, so no second
-                    // full-document walk is needed here.
-                    let t_xref = Instant::now();
-                    let (xrefs, extra_dropped) =
-                        crate::io::xref::resolve_xrefs(&mut self.tabs[i].scene.document, base_dir);
-                    xref_ms = t_xref.elapsed().as_millis() as u32;
-                    if extra_dropped > 0 {
-                        self.command_line.push_error(&format!(
-                            "Warning: {extra_dropped} corrupt xref entities dropped"
-                        ));
-                    }
-                    for info in &xrefs {
-                        match info.status {
-                            crate::io::xref::XrefStatus::Loaded => {
-                                self.command_line
-                                    .push_output(&format!("XREF  Loaded \"{}\"", info.name));
-                            }
-                            crate::io::xref::XrefStatus::NotFound => {
-                                self.command_line.push_error(&format!(
-                                    "XREF  Not found: \"{}\" ({})",
-                                    info.name, info.path
-                                ));
-                            }
-                            crate::io::xref::XrefStatus::Unloaded => {
-                                self.command_line.push_info(&format!(
-                                    "XREF  Unloaded (skipped): \"{}\"",
-                                    info.name
-                                ));
-                            }
+                // XREFs are now resolved on the background thread (Roadmap
+                // 1.2) so a large external reference no longer freezes the UI.
+                // The UI thread only logs the results carried back in `caches`.
+                if caches.xref_dropped > 0 {
+                    self.command_line.push_error(&format!(
+                        "Warning: {} corrupt xref entities dropped",
+                        caches.xref_dropped
+                    ));
+                }
+                for info in &caches.xrefs {
+                    match info.status {
+                        crate::io::xref::XrefStatus::Loaded => {
+                            self.command_line
+                                .push_output(&format!("XREF  Loaded \"{}\"", info.name));
+                        }
+                        crate::io::xref::XrefStatus::NotFound => {
+                            self.command_line.push_error(&format!(
+                                "XREF  Not found: \"{}\" ({})",
+                                info.name, info.path
+                            ));
+                        }
+                        crate::io::xref::XrefStatus::Unloaded => {
+                            self.command_line
+                                .push_info(&format!("XREF  Unloaded (skipped): \"{}\"", info.name));
                         }
                     }
                 }
 
                 // Open-time breakdown so regressions are visible immediately.
-                // `total` is wall time from the Open click to here (post-xref,
-                // pre-first-frame); the phase figures are the background-thread
-                // parse/purge/cache spans plus the UI-thread xref resolve.
+                // `total` is wall time from the Open click to here (pre-first
+                // -frame); the phase figures are all background-thread spans
+                // (parse / xref resolve / derived-cache build, the last of
+                // which now includes the corrupt-entity purge — Roadmap 1.3).
                 let total_ms = open_started
                     .map(|s| s.elapsed().as_millis() as u32)
                     .unwrap_or(0);
                 self.command_line.push_info(&format!(
-                    "  parse {}ms · purge {}ms · caches {}ms · xref {}ms · total {}ms",
-                    timings.parse_ms, timings.purge_ms, timings.caches_ms, xref_ms, total_ms
+                    "  parse {}ms · xref {}ms · caches {}ms · total {}ms",
+                    timings.parse_ms, timings.xref_ms, timings.caches_ms, total_ms
                 ));
 
                 // Caches were built on the background thread inside open_path().

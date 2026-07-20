@@ -69,24 +69,42 @@ pub async fn open_path_with_phase(
             load_file(&path2)?
         };
         let parse_ms = t_parse.elapsed().as_millis() as u32;
-        let t_purge = Instant::now();
-        let dropped = {
-            crate::profile_scope!("io::purge");
-            purge_corrupt_entities(&mut doc)
+
+        // Resolve XREFs here, on the background thread (Roadmap 1.2). It used
+        // to run on the UI thread in the `FileOpened` handler, so a large
+        // external reference (its own file parse + merge) froze the UI. Doing
+        // it before `build_derived_caches` also means xref hatch/image/mesh
+        // entities are folded into the derived caches — the old ordering built
+        // caches first, so merged xref content was missing from them.
+        // `resolve_xrefs` runs the corrupt-entity guard inline as it merges, so
+        // no extra full-document walk is needed. Paths resolve relative to the
+        // opened file's directory; a file with no parent has no xrefs to find.
+        let t_xref = Instant::now();
+        let (xrefs, xref_dropped) = match path2.parent() {
+            Some(base_dir) => {
+                crate::profile_scope!("io::xref");
+                xref::resolve_xrefs(&mut doc, base_dir)
+            }
+            None => (Vec::new(), 0),
         };
-        let purge_ms = t_purge.elapsed().as_millis() as u32;
+        let xref_ms = t_xref.elapsed().as_millis() as u32;
+
         phase2.store(PHASE_CACHING, Ordering::Relaxed);
         let t_caches = Instant::now();
+        // `build_derived_caches` now also purges corrupt entities in its single
+        // planning pass (Roadmap 1.3) and reports the count in
+        // `caches.corrupt_dropped`, so the purge time is part of `caches_ms`.
         let mut caches = {
             crate::profile_scope!("io::caches");
-            crate::scene::build_derived_caches(&doc)
+            crate::scene::build_derived_caches(&mut doc)
         };
         caches.timings = crate::scene::OpenTimings {
             parse_ms,
-            purge_ms,
             caches_ms: t_caches.elapsed().as_millis() as u32,
+            xref_ms,
         };
-        caches.corrupt_dropped = dropped;
+        caches.xrefs = xrefs;
+        caches.xref_dropped = xref_dropped;
         phase2.store(PHASE_FINALIZING, Ordering::Relaxed);
         Ok((doc, caches))
     })
@@ -350,6 +368,16 @@ pub(crate) fn is_entity_corrupt(e: &EntityType) -> bool {
                 || !e.minor_axis_ratio.is_finite()
                 || e.minor_axis_ratio.abs() < 1.0e-10
         }
+        E::Spline(sp) => {
+            // Non-finite control/fit points or weights make truck's
+            // BSpline/NURBS construction produce NaNs (or diverge) during
+            // tessellation; a desync'd parser also emits absurd point counts.
+            sp.control_points.len() >= MAX_VERTS
+                || sp.fit_points.len() >= MAX_VERTS
+                || sp.control_points.iter().any(|v| !finite_vec3(v))
+                || sp.fit_points.iter().any(|v| !finite_vec3(v))
+                || sp.weights.iter().any(|w| !w.is_finite())
+        }
         _ => false,
     }
 }
@@ -411,5 +439,40 @@ fn fix_dxf_dimension_rotations(doc: &mut CadDocument) {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod corrupt_tests {
+    use super::*;
+    use acadrust::entities::Spline;
+    use acadrust::types::Vector3;
+
+    #[test]
+    fn spline_with_nonfinite_control_point_is_corrupt() {
+        // A NaN control point makes truck's BSpline/NURBS tessellation emit
+        // NaNs; the guard must drop the entity on load like it does for the
+        // other curve kinds.
+        let sp = Spline {
+            control_points: vec![
+                Vector3::new(0.0, 0.0, 0.0),
+                Vector3::new(f64::NAN, 1.0, 0.0),
+            ],
+            ..Default::default()
+        };
+        assert!(is_entity_corrupt(&EntityType::Spline(sp)));
+    }
+
+    #[test]
+    fn spline_with_finite_control_points_is_kept() {
+        let sp = Spline {
+            control_points: vec![
+                Vector3::new(0.0, 0.0, 0.0),
+                Vector3::new(1.0, 1.0, 0.0),
+                Vector3::new(2.0, 0.0, 0.0),
+            ],
+            ..Default::default()
+        };
+        assert!(!is_entity_corrupt(&EntityType::Spline(sp)));
     }
 }
